@@ -342,4 +342,12 @@ def run(ids, fields, apps, fmt, rest, argv):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    # Like the real tool: Ctrl-C ends dmon / -l loops quietly, and output into
+    # a closed pipe (e.g. `| head`) is not an error.
+    try:
+        main(sys.argv[1:])
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        sys.stdout = None
+        sys.exit(0)
