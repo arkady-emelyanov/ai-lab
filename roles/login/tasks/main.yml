@@ -1,0 +1,5 @@
+# User-facing tools on the login node; Slurm client and munge come from the
+# common and slurm roles.
+- name: Install login node tools
+  ansible.builtin.apt:
+    name: "{{ login_packages }}"

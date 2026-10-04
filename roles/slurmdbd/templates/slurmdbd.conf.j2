@@ -1,0 +1,12 @@
+# {{ ansible_managed }}
+AuthType=auth/munge
+DbdHost=localhost
+SlurmUser=slurm
+PidFile=/run/slurmdbd.pid
+LogFile=/var/log/slurm/slurmdbd.log
+
+StorageType=accounting_storage/mysql
+StorageHost=localhost
+StorageUser=slurm
+StoragePass={{ slurmdbd_password }}
+StorageLoc={{ slurmdbd_db }}

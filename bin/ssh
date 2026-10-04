@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# ssh, scp and ssh-copy-id for the cluster; arguments are passed through.
+# bin/scp and bin/ssh-copy-id are symlinks to this script.
+#
+#   bin/ssh slurm                      login node as joe (password: joe, or joe's own key
+#                                      once installed with bin/ssh-copy-id)
+#   bin/ssh root@slurm                 login node as root (admin key: .secrets/ssh/id_ed25519)
+#   bin/ssh slurm-control              controller as root (also slurm-worker1, slurm-worker2,
+#                                      and the tray BMCs slurm-worker1-bmc, slurm-worker2-bmc)
+#   bin/ssh slurm sbatch < job.sh      run a command
+#   bin/scp job.sh slurm:              copy files
+#   bin/ssh-copy-id -i ~/.ssh/key.pub slurm
+#
+# Host addresses are looked up in Incus on every call, so it keeps working
+# after instances are recreated.
+set -euo pipefail
+
+repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+key="$repo/.secrets/ssh/id_ed25519"
+config="$repo/.secrets/ssh/config"
+[[ -f $key ]] || { echo "missing $key: run make init" >&2; exit 1; }
+
+incus_list() {
+    incus list --all-projects --format json 2>/dev/null || sg incus-admin -c 'incus list --all-projects --format json'
+}
+
+instances=$(incus_list | jq -r '
+    .[] | select(.name | startswith("slurm-")) | select(.status == "Running")
+    | [.name, ((.state.network.eth0.addresses // [])[] | select(.family == "inet") | .address)]
+    | select(length == 2) | @tsv')
+[[ -n $instances ]] || { echo "no running slurm-* instances: run make up" >&2; exit 1; }
+
+{
+    while IFS=$'\t' read -r name ip; do
+        if [[ $name == slurm-login ]]; then
+            printf 'Host slurm slurm-login\n    HostName %s\n    User joe\n\n' "$ip"
+        else
+            printf 'Host %s\n    HostName %s\n    User root\n\n' "$name" "$ip"
+        fi
+    done <<< "$instances"
+    # The admin key is for root only; users authenticate with their own keys
+    # (ssh-agent / ~/.ssh) or their LDAP password.
+    cat <<EOF
+Match user root
+    IdentityFile $key
+    IdentitiesOnly yes
+
+# Instances are disposable and get new host keys when recreated.
+Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+EOF
+} > "$config"
+
+case $(basename "$0") in
+    scp) exec scp -F "$config" "$@" ;;
+    ssh-copy-id) exec ssh-copy-id -F "$config" "$@" ;;
+    *) exec ssh -F "$config" "$@" ;;
+esac

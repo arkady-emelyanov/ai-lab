@@ -1,0 +1,26 @@
+- name: Restart nvidia_gpu_exporter
+  ansible.builtin.systemd_service:
+    name: nvidia_gpu_exporter
+    state: restarted
+    daemon_reload: true
+
+- name: Reload prometheus
+  ansible.builtin.service:
+    name: prometheus
+    state: reloaded
+
+- name: Restart prometheus
+  ansible.builtin.service:
+    name: prometheus
+    state: restarted
+
+- name: Restart slurm exporter
+  ansible.builtin.systemd_service:
+    name: prometheus-slurm-exporter
+    state: restarted
+    daemon_reload: true
+
+- name: Restart node exporter
+  ansible.builtin.service:
+    name: prometheus-node-exporter
+    state: restarted

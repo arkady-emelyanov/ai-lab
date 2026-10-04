@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""GPU (GRES) allocation from Slurm for node_exporter's textfile collector.
+
+The Slurm exporter has no GPU metrics; this fills the gap:
+  slurm_node_gpus{node,type}              GPUs configured on the node
+  slurm_node_gpus_alloc{node,type}        GPUs allocated to jobs
+  slurm_partition_gpus{partition}         GPUs in the partition
+  slurm_partition_gpus_alloc{partition}   allocated GPUs in the partition
+  slurm_job_gpus{job_id,user,account,partition}  GPUs of each running job
+"""
+import os
+import re
+import subprocess
+import sys
+from collections import defaultdict
+
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/var/lib/prometheus/node-exporter/slurm_gpus.prom"
+
+
+def run(*cmd):
+    return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=10).stdout
+
+
+def gpus(gres):
+    """Sum gpu counts in a GRES string such as 'gpu:gb200:4' or 'gpu:gb200:2(IDX:0-1)'."""
+    total, kinds = 0, set()
+    for item in gres.split(","):
+        m = re.match(r"gpu(?::([^:(]+))?:(\d+)", item.strip())
+        if m:
+            total += int(m.group(2))
+            kinds.add(m.group(1) or "gpu")
+    return total, ",".join(sorted(kinds)) or "gpu"
+
+
+def esc(v):
+    return v.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def main():
+    lines = []
+    nodes = {}
+    part_total, part_alloc = defaultdict(int), defaultdict(int)
+    for row in run("sinfo", "-N", "-h", "-O", "NodeHost:|,Partition:|,Gres:|,GresUsed:").splitlines():
+        node, part, gres, used = (f.strip() for f in row.split("|")[:4])
+        part = part.rstrip("*")
+        total, kind = gpus(gres)
+        alloc, _ = gpus(used)
+        nodes[node] = (total, alloc, kind)
+        part_total[part] += total
+        part_alloc[part] += alloc
+
+    def metric(name, help_, samples):
+        lines.append(f"# HELP {name} {help_}")
+        lines.append(f"# TYPE {name} gauge")
+        for labels, value in samples:
+            lab = ",".join(f'{k}="{esc(v)}"' for k, v in labels.items())
+            lines.append(f"{name}{{{lab}}} {value}")
+
+    metric("slurm_node_gpus", "GPUs configured on the node.",
+           [({"node": n, "type": k}, t) for n, (t, a, k) in sorted(nodes.items())])
+    metric("slurm_node_gpus_alloc", "GPUs on the node allocated to jobs.",
+           [({"node": n, "type": k}, a) for n, (t, a, k) in sorted(nodes.items())])
+    metric("slurm_partition_gpus", "GPUs in the partition.", [({"partition": p}, v) for p, v in sorted(part_total.items())])
+    metric("slurm_partition_gpus_alloc", "Allocated GPUs in the partition.",
+           [({"partition": p}, v) for p, v in sorted(part_alloc.items())])
+
+    jobs = []
+    for row in run("squeue", "-h", "-t", "R", "-O", "JobID:|,UserName:|,Account:|,Partition:|,tres-alloc:").splitlines():
+        job, user, account, part, tres = (f.strip() for f in row.split("|")[:5])
+        m = re.search(r"gres/gpu=(\d+)", tres)
+        if m:
+            jobs.append(({"job_id": job, "user": user, "account": account, "partition": part}, int(m.group(1))))
+    metric("slurm_job_gpus", "GPUs allocated to the running job.", jobs)
+
+    tmp = OUT + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(tmp, OUT)  # node_exporter never reads a half-written file
+
+
+if __name__ == "__main__":
+    main()

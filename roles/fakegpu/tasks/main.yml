@@ -1,0 +1,76 @@
+# Emulated NVIDIA userspace for a GPU tray. /dev/nvidia* device nodes are
+# created by Incus at provision time (containers may not mknod).
+- name: Install build tools
+  ansible.builtin.apt:
+    name: [build-essential, python3]
+
+- name: Create the source directory
+  ansible.builtin.file:
+    path: /usr/local/src/fakegpu/symbols
+    state: directory
+    mode: "0755"
+
+# Sources only: build outputs and editor/tool state in the checkout would
+# otherwise force a rebuild on every run.
+- name: Copy fakegpu sources
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /usr/local/src/fakegpu/{{ item | relpath(repo_root ~ '/fakegpu') }}
+    mode: preserve
+  loop: >-
+    {{ query('fileglob', repo_root ~ '/fakegpu/*.[ch]')
+       + query('fileglob', repo_root ~ '/fakegpu/symbols/*.syms')
+       + [repo_root ~ '/fakegpu/Makefile', repo_root ~ '/fakegpu/nvidia-smi'] }}
+  loop_control:
+    label: "{{ item | relpath(repo_root ~ '/fakegpu') }}"
+  register: fakegpu_src
+
+- name: Build and install fakegpu
+  ansible.builtin.shell: make clean && make -j4 && make install PREFIX={{ fakegpu_prefix }}
+  args:
+    chdir: /usr/local/src/fakegpu
+  when: fakegpu_src.changed
+
+# Every CUDA process creates/updates the occupancy file here.
+- name: Make the telemetry directory writable by all users
+  ansible.builtin.file:
+    path: "{{ telemetry_tray_path }}"
+    state: directory
+    mode: "1777"
+
+- name: Configure the emulated tray
+  ansible.builtin.template:
+    src: fakegpu.conf.j2
+    dest: /etc/fakegpu.conf
+    mode: "0644"
+
+- name: Put the fake driver on the linker path
+  ansible.builtin.copy:
+    content: "{{ fakegpu_prefix }}/lib/fakegpu\n"
+    dest: /etc/ld.so.conf.d/00-fakegpu.conf
+    mode: "0644"
+  register: ldconf
+
+- name: Refresh the linker cache
+  ansible.builtin.command: ldconfig
+  when: ldconf.changed or fakegpu_src.changed
+
+# Framework wheels (torch, jax, ...) bundle cuBLAS/NCCL/cuDNN and load them
+# through RPATH; preloading stubs with the same SONAMEs makes every process
+# bind to the stubs instead.
+- name: Read the preload list
+  ansible.builtin.slurp:
+    src: "{{ fakegpu_prefix }}/lib/fakegpu/preload.list"
+  register: preload_list
+
+- name: Preload the CUDA library stubs in every process
+  ansible.builtin.copy:
+    content: "{{ preload_list.content | b64decode }}"
+    dest: /etc/ld.so.preload
+    mode: "0644"
+
+- name: Check the fake GPUs are visible
+  ansible.builtin.command: nvidia-smi -L
+  register: smi
+  changed_when: false
+  failed_when: smi.stdout_lines | length != fakegpu_count

@@ -1,0 +1,63 @@
+- name: Install slurmctld
+  ansible.builtin.apt:
+    name: slurmctld
+  when: inventory_hostname in groups['controller']
+
+- name: Install slurmd
+  ansible.builtin.apt:
+    name: slurmd
+  when: inventory_hostname in groups['workers']
+
+- name: Write Slurm configuration
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/slurm/{{ item }}
+    mode: "0644"
+  loop: [slurm.conf, cgroup.conf, gres.conf]
+  notify:
+    - Restart slurmctld
+    - Restart slurmd
+
+# Initial topology only: topograph (update-topology) owns it afterwards.
+- name: Write the initial topology.conf
+  ansible.builtin.template:
+    src: topology.conf.j2
+    dest: /etc/slurm/topology.conf
+    mode: "0644"
+    force: false
+  notify:
+    - Restart slurmctld
+    - Restart slurmd
+
+- name: Install the task prolog
+  ansible.builtin.copy:
+    content: |
+      #!/bin/sh
+      # Lines printed as "export NAME=value" become part of each task's environment.
+      echo "export SCRATCH={{ scratch_mount }}"
+    dest: /etc/slurm/task_prolog.sh
+    mode: "0755"
+  when: inventory_hostname in groups['workers']
+
+- name: Create Slurm state and log directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: slurm
+    group: slurm
+    mode: "0755"
+  loop: [/var/lib/slurm/slurmctld, /var/lib/slurm/slurmd, /var/log/slurm]
+
+- name: Start slurmctld
+  ansible.builtin.service:
+    name: slurmctld
+    state: started
+    enabled: true
+  when: inventory_hostname in groups['controller']
+
+- name: Start slurmd
+  ansible.builtin.service:
+    name: slurmd
+    state: started
+    enabled: true
+  when: inventory_hostname in groups['workers']

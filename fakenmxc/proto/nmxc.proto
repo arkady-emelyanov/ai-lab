@@ -1,0 +1,210 @@
+// Lab NVLink partition controller API.
+//
+// Modelled on the RPCs and semantics of NVIDIA's NMX Controller (NMX-C) as
+// described in its public documentation (Hello handshake, domain and GPU
+// inventory, partitions with ids 1..32765 and the default partition 32766,
+// GPUs addressed by UID or location). It is not NVIDIA's wire format: the
+// official .proto ships with NMX-C and is not reused here.
+syntax = "proto3";
+
+package nmxlab.v1;
+
+option go_package = "fakenmxc/gen/nmxlabv1";
+
+service NMXController {
+  // First call on a connection: identifies the client (gateway).
+  rpc Hello(ClientHello) returns (ServerHello);
+
+  rpc GetDomainProperties(DomainRequest) returns (DomainProperties);
+  rpc GetDomainStateInfo(DomainRequest) returns (DomainStateInfo);
+  rpc GetComputeNodeInfoList(DomainRequest) returns (ComputeNodeInfoList);
+  rpc GetSwitchNodeInfoList(DomainRequest) returns (SwitchNodeInfoList);
+  rpc GetGpuInfoList(GpuInfoListRequest) returns (GpuInfoList);
+  rpc GetTopologyInfo(DomainRequest) returns (TopologyInfo);
+
+  rpc GetPartitionCount(DomainRequest) returns (PartitionCount);
+  rpc GetPartitionIdList(DomainRequest) returns (PartitionIdList);
+  rpc GetPartitionInfoList(PartitionInfoListRequest) returns (PartitionInfoList);
+  rpc CreatePartition(CreatePartitionRequest) returns (PartitionResult);
+  rpc DeletePartition(DeletePartitionRequest) returns (PartitionResult);
+  rpc AddGpusToPartition(GpuMembershipRequest) returns (PartitionResult);
+  rpc RemoveGpusFromPartition(GpuMembershipRequest) returns (PartitionResult);
+}
+
+enum ReturnCode {
+  NMX_ST_SUCCESS = 0;
+  NMX_ST_INVALID_ARGUMENT = 1;
+  NMX_ST_NOT_FOUND = 2;
+  NMX_ST_ALREADY_EXISTS = 3;
+  NMX_ST_GPU_IN_USE = 4;          // GPU already belongs to another partition
+  NMX_ST_NOT_HELLO = 5;           // Hello was not called first
+}
+
+enum ControlPlaneState {
+  NMX_CONTROL_PLANE_STATE_UNKNOWN = 0;
+  NMX_CONTROL_PLANE_STATE_CONFIGURED = 1;
+}
+
+enum GpuHealth {
+  NMX_GPU_HEALTH_UNKNOWN = 0;
+  NMX_GPU_HEALTH_HEALTHY = 1;
+  NMX_GPU_HEALTH_DEGRADED_BANDWIDTH = 2; // some NVLinks down
+}
+
+message ClientHello {
+  string gateway_id = 1;
+  uint32 major_version = 2;
+  uint32 minor_version = 3;
+}
+
+message ServerHello {
+  ReturnCode return_code = 1;
+  uint32 major_version = 2;
+  uint32 minor_version = 3;
+  string domain_uuid = 4;
+}
+
+message DomainRequest {
+  string gateway_id = 1;
+}
+
+message DomainProperties {
+  ReturnCode return_code = 1;
+  string domain_uuid = 2;
+  string domain_name = 3;
+  uint32 compute_node_count = 4;
+  uint32 switch_node_count = 5;
+  uint32 gpu_count = 6;
+  uint32 nvlinks_per_gpu = 7;
+  uint32 default_partition_id = 8;
+  uint32 max_partitions = 9;
+}
+
+message DomainStateInfo {
+  ReturnCode return_code = 1;
+  ControlPlaneState control_plane_state = 2;
+  string config_status_description = 3;
+}
+
+// Physical location of a GPU in the domain.
+message Location {
+  uint32 chassis_id = 1;
+  uint32 slot_id = 2;   // compute tray
+  uint32 host_id = 3;
+  uint32 gpu_id = 4;    // GPU index within the tray
+}
+
+message ComputeNodeInfo {
+  string hostname = 1;
+  Location location = 2;   // gpu_id unset
+  uint32 gpu_count = 3;
+}
+
+message ComputeNodeInfoList {
+  ReturnCode return_code = 1;
+  repeated ComputeNodeInfo nodes = 2;
+}
+
+message SwitchNodeInfo {
+  string hostname = 1;
+  uint32 switch_count = 2;
+  uint32 ports_per_switch = 3;
+  uint32 disabled_ports = 4;
+}
+
+message SwitchNodeInfoList {
+  ReturnCode return_code = 1;
+  repeated SwitchNodeInfo nodes = 2;
+}
+
+message GpuInfo {
+  uint64 gpu_uid = 1;
+  string uuid = 2;             // as reported by nvidia-smi, GPU-...
+  Location location = 3;
+  string hostname = 4;
+  uint32 partition_id = 5;     // 0 when in no partition
+  uint32 clique_id = 6;        // as reported by NVML on the tray
+  uint32 active_nvlinks = 7;
+  GpuHealth health = 8;
+}
+
+message GpuInfoListRequest {
+  string gateway_id = 1;
+  // Optional filters: GPUs in these trays (slot ids) and/or this partition.
+  repeated uint32 slot_ids = 2;
+  optional uint32 partition_id = 3;
+}
+
+message GpuInfoList {
+  ReturnCode return_code = 1;
+  repeated GpuInfo gpus = 2;
+}
+
+message NvlinkConnection {
+  uint64 gpu_uid = 1;
+  uint32 gpu_link = 2;
+  uint32 switch_id = 3;
+  uint32 switch_port = 4;
+  bool active = 5;
+}
+
+message TopologyInfo {
+  ReturnCode return_code = 1;
+  repeated NvlinkConnection connections = 2;
+}
+
+message PartitionCount {
+  ReturnCode return_code = 1;
+  uint32 count = 2;
+}
+
+message PartitionIdList {
+  ReturnCode return_code = 1;
+  repeated uint32 partition_ids = 2;
+}
+
+message PartitionInfo {
+  uint32 partition_id = 1;
+  string partition_name = 2;
+  repeated uint64 gpu_uids = 3;
+  bool is_default = 4;
+  string state = 5;            // ACTIVE
+  GpuHealth health = 6;        // worst GPU health in the partition
+}
+
+message PartitionInfoListRequest {
+  string gateway_id = 1;
+  repeated uint32 partition_ids = 2;   // empty = all
+}
+
+message PartitionInfoList {
+  ReturnCode return_code = 1;
+  repeated PartitionInfo partitions = 2;
+}
+
+message CreatePartitionRequest {
+  string gateway_id = 1;
+  string partition_name = 2;           // unique in the domain
+  uint32 partition_id = 3;             // 0 = next free id
+  // Members by UID or by location; not both.
+  repeated uint64 gpu_uids = 4;
+  repeated Location locations = 5;
+}
+
+message DeletePartitionRequest {
+  string gateway_id = 1;
+  uint32 partition_id = 2;
+}
+
+message GpuMembershipRequest {
+  string gateway_id = 1;
+  uint32 partition_id = 2;
+  repeated uint64 gpu_uids = 3;
+  repeated Location locations = 4;
+}
+
+message PartitionResult {
+  ReturnCode return_code = 1;
+  string message = 2;
+  PartitionInfo partition = 3;
+}

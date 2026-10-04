@@ -1,0 +1,28 @@
+# SSH: root logs in with the admin key from `make init` (.secrets/ssh),
+# cluster users with their LDAP password (checked by SSSD via PAM).
+- name: Install the SSH server
+  ansible.builtin.apt:
+    name: openssh-server
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Authorise the cluster key for root
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ lookup('file', ssh_key_dir ~ '/id_ed25519.pub') }}"
+
+- name: Root by key only, users by password
+  ansible.builtin.copy:
+    content: |
+      PermitRootLogin prohibit-password
+      PasswordAuthentication yes
+      KbdInteractiveAuthentication no
+    dest: /etc/ssh/sshd_config.d/10-cluster.conf
+    mode: "0644"
+  notify: Restart ssh
+
+- name: Start the SSH server
+  ansible.builtin.service:
+    name: ssh
+    state: started
+    enabled: true

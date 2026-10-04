@@ -1,0 +1,124 @@
+# JuiceFS shared filesystem: data in a RustFS bucket, metadata in Redis on the
+# storage node, mounted at juicefs_mount on every Slurm node.
+- name: Install FUSE
+  ansible.builtin.apt:
+    name: fuse3
+
+- name: Allow mounts visible to all users
+  ansible.builtin.lineinfile:
+    path: /etc/fuse.conf
+    regexp: '^#?\s*user_allow_other'
+    line: user_allow_other
+
+- name: Download JuiceFS
+  ansible.builtin.get_url:
+    url: "{{ juicefs_base }}/juicefs-{{ juicefs_version }}-linux-amd64.tar.gz"
+    dest: /usr/local/src/juicefs-{{ juicefs_version }}.tar.gz
+    checksum: "sha256:{{ juicefs_base }}/checksums.txt"
+    mode: "0644"
+  vars:
+    juicefs_base: https://github.com/juicedata/juicefs/releases/download/v{{ juicefs_version }}
+
+- name: Unpack JuiceFS
+  ansible.builtin.unarchive:
+    src: /usr/local/src/juicefs-{{ juicefs_version }}.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    include: [juicefs]
+  notify: Restart juicefs
+
+# Credentials for the metadata engine (META_PASSWORD) stay out of process
+# arguments and unit files.
+- name: Store JuiceFS credentials
+  ansible.builtin.copy:
+    content: |
+      META_PASSWORD={{ redis_password }}
+    dest: /etc/default/juicefs
+    mode: "0600"
+  notify: Restart juicefs
+
+- name: Check whether the filesystem exists
+  ansible.builtin.command: juicefs status {{ juicefs_meta_url }}
+  environment:
+    META_PASSWORD: "{{ redis_password }}"
+  register: status
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == groups['controller'][0]
+
+- name: Format the filesystem (once, from the controller)
+  ansible.builtin.command: >-
+    juicefs format --storage s3
+    --bucket http://{{ storage_host }}:{{ rustfs_port }}/{{ juicefs_bucket }}
+    --access-key {{ rustfs_access_key }} --secret-key {{ rustfs_secret_key }}
+    {{ juicefs_meta_url }} {{ juicefs_name }}
+  environment:
+    META_PASSWORD: "{{ redis_password }}"
+  when: inventory_hostname == groups['controller'][0] and status.rc != 0
+  no_log: true
+
+# Once mounted, the mount point is JuiceFS' root; leave its mode alone.
+- name: Create the mount point
+  ansible.builtin.file:
+    path: "{{ juicefs_mount }}"
+    state: directory
+
+- name: Create the cache directory
+  ansible.builtin.file:
+    path: "{{ juicefs_cache_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Install the mount unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=JuiceFS {{ juicefs_name }} at {{ juicefs_mount }}
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      EnvironmentFile=/etc/default/juicefs
+      ExecStart=/usr/local/bin/juicefs mount {{ juicefs_meta_url }} {{ juicefs_mount }} \
+          --cache-dir {{ juicefs_cache_dir }} --cache-size {{ juicefs_cache_mib }} \
+          --metrics 0.0.0.0:9567 --no-usage-report -o allow_other
+      ExecStop=/usr/local/bin/juicefs umount {{ juicefs_mount }}
+      Restart=always
+      RestartSec=3
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/juicefs.service
+    mode: "0644"
+  notify: Restart juicefs
+
+- name: Mount JuiceFS
+  ansible.builtin.systemd_service:
+    name: juicefs
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the mount
+  ansible.builtin.command: mountpoint -q {{ juicefs_mount }}
+  register: mounted
+  retries: 15
+  delay: 2
+  until: mounted.rc == 0
+  changed_when: false
+
+# Per-user directories, created once (the filesystem is shared).
+- name: Create user directories
+  ansible.builtin.file:
+    path: "{{ juicefs_mount }}/{{ item.name }}"
+    state: directory
+    owner: "{{ item.uid }}"
+    group: "{{ item.uid }}"
+    mode: "0755"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: inventory_hostname == groups['login'][0]

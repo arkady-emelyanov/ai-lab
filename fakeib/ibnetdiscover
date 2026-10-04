@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""ibnetdiscover look-alike for the lab's emulated InfiniBand compute fabric.
+
+Prints the whole fabric in ibnetdiscover's text format (switch blocks with
+their port connections, then HCA blocks), as seen from any node. The fabric
+is described in /etc/fakeib.json:
+
+    {"spine": "LAB-IBSPINE-01", "leaf": "LAB-IBLEAF-01",
+     "nodes": [{"name": "slurm-worker1", "hcas": 4}, ...]}
+
+Every node's HCAs (mlx5_0..N-1, 4xNDR) connect to the leaf switch; the leaf
+has uplinks to the spine. GUIDs and LIDs are derived from names, so output
+is stable.
+"""
+import hashlib
+import json
+import sys
+import time
+
+CONFIG = "/etc/fakeib.json"
+SWITCH_PORTS = 64
+UPLINKS = 4  # leaf -> spine
+
+
+def guid(name):
+    return "e09d7303" + hashlib.sha1(name.encode()).hexdigest()[:8]
+
+
+def sguid(name):
+    return "2c5eab03" + hashlib.sha1(name.encode()).hexdigest()[:8]
+
+
+def switch_desc(name):
+    return f"MF0;{name}:MQM9701/U1"
+
+
+def main():
+    if any(a in ("-h", "--help") for a in sys.argv[1:]):
+        print(__doc__)
+        return
+    with open(CONFIG) as f:
+        cfg = json.load(f)
+    spine, leaf = cfg["spine"], cfg["leaf"]
+    hcas = [(n["name"], i) for n in cfg["nodes"] for i in range(n.get("hcas", 4))]
+    if len(hcas) + UPLINKS > SWITCH_PORTS:
+        sys.exit("ibnetdiscover: too many HCAs for one leaf switch")
+
+    lids = {spine: 1, leaf: 2}
+    for k, (node, i) in enumerate(hcas):
+        lids[(node, i)] = 100 + k
+    leaf_g, spine_g = sguid(leaf), sguid(spine)
+    out = [
+        "#",
+        f"# Topology file: generated on {time.strftime('%a %b %d %H:%M:%S %Y')}",
+        "#",
+        f"# Initiated from node {guid(hcas[0][0] + ' mlx5_0')} port {guid(hcas[0][0] + ' mlx5_0')}",
+        "",
+    ]
+
+    def switch_header(name, g):
+        out.extend(["vendid=0x2c9", "devid=0xd2f2", f"sysimgguid=0x{g}", f"switchguid=0x{g}({g})",
+                    f'Switch\t{SWITCH_PORTS + 1} "S-{g}"\t\t# "{switch_desc(name)}" enhanced port 0 lid {lids[name]} lmc 0'])
+
+    # Spine: its first ports go down to the leaf.
+    switch_header(spine, spine_g)
+    for p in range(1, UPLINKS + 1):
+        out.append(f'[{p}]\t"S-{leaf_g}"[{len(hcas) + p}]\t\t# "{switch_desc(leaf)}" lid {lids[leaf]} 4xNDR')
+    out.append("")
+
+    # Leaf: HCAs first, then the uplinks.
+    switch_header(leaf, leaf_g)
+    for p, (node, i) in enumerate(hcas, start=1):
+        g = guid(f"{node} mlx5_{i}")
+        out.append(f'[{p}]\t"H-{g}"[1]({g}) \t\t# "{node} mlx5_{i}" lid {lids[(node, i)]} 4xNDR')
+    for p in range(1, UPLINKS + 1):
+        out.append(f'[{len(hcas) + p}]\t"S-{spine_g}"[{p}]\t\t# "{switch_desc(spine)}" lid {lids[spine]} 4xNDR')
+    out.append("")
+
+    for p, (node, i) in enumerate(hcas, start=1):
+        g = guid(f"{node} mlx5_{i}")
+        out.append(f'Ca\t1 "H-{g}"\t\t# "{node} mlx5_{i}"')
+        out.append(f'[1]({g}) \t"S-{leaf_g}"[{p}]\t\t# lid {lids[(node, i)]} lmc 0 "{switch_desc(leaf)}" lid {lids[leaf]} 4xNDR')
+        out.append("")
+    print("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()

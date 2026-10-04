@@ -1,0 +1,39 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# Regenerates /etc/slurm/topology.conf with topograph from the live fabric:
+# the InfiniBand switch tree (ibnetdiscover) and the NVLink domains/cliques
+# (nvidia-smi) of the trays, as topology/block. Then reconfigures Slurm.
+#   update-topology            generate, install, reconfigure
+#   update-topology --dry-run  print the generated topology only
+set -euo pipefail
+
+api=http://localhost:{{ topograph_port }}
+payload='{"provider": {"name": "infiniband-bm", "params": {"accelerator": {"source": "nvidia-smi"}}},
+          "engine": {"name": "slurm", "params": {"plugin": "topology/block"}}}'
+
+uid=$(curl -sf -X POST -H "Content-Type: application/json" -d "$payload" "$api/v1/generate")
+for _ in $(seq 1 60); do
+    code=$(curl -s -o /tmp/topology.$$ -w '%{http_code}' "$api/v1/topology?uid=$uid")
+    [ "$code" = 202 ] && { sleep 1; continue; }
+    break
+done
+if [ "$code" != 200 ]; then
+    echo "update-topology: topograph returned HTTP $code:" >&2
+    cat /tmp/topology.$$ >&2; rm -f /tmp/topology.$$
+    exit 1
+fi
+
+# Slurm 23.11 predates the BlockSizes keyword; it uses the default block sizes.
+new=$(grep -v '^BlockSizes=' /tmp/topology.$$); rm -f /tmp/topology.$$
+if [ "${1:-}" = "--dry-run" ]; then
+    echo "$new"
+    exit 0
+fi
+if [ "$new" = "$(cat /etc/slurm/topology.conf 2>/dev/null)" ]; then
+    echo "topology unchanged"
+    exit 0
+fi
+printf '%s\n' "$new" > /etc/slurm/topology.conf.new
+mv /etc/slurm/topology.conf.new /etc/slurm/topology.conf
+scontrol reconfigure
+echo "topology updated:"; cat /etc/slurm/topology.conf

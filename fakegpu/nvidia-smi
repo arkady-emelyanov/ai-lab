@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""nvidia-smi look-alike backed by NVML (the fakegpu stub on emulated nodes).
+
+Supported: default table, -L, topo -m, nvlink -s, -q [-d FABRIC], dmon [-c N],
+--query-gpu=FIELDS / --query-compute-apps=FIELDS --format=csv[,noheader][,nounits],
+-i IDS, -l SECONDS.
+"""
+import ctypes
+import datetime
+import socket
+import sys
+import time
+
+nvml = ctypes.CDLL("libnvidia-ml.so.1")
+
+
+class PciInfo(ctypes.Structure):
+    _fields_ = [("busIdLegacy", ctypes.c_char * 16), ("domain", ctypes.c_uint), ("bus", ctypes.c_uint),
+                ("device", ctypes.c_uint), ("pciDeviceId", ctypes.c_uint), ("pciSubSystemId", ctypes.c_uint),
+                ("busId", ctypes.c_char * 32)]
+
+
+class Memory(ctypes.Structure):
+    _fields_ = [("total", ctypes.c_ulonglong), ("free", ctypes.c_ulonglong), ("used", ctypes.c_ulonglong)]
+
+
+class Utilization(ctypes.Structure):
+    _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
+
+
+class ProcessInfo(ctypes.Structure):
+    _fields_ = [("pid", ctypes.c_uint), ("usedGpuMemory", ctypes.c_ulonglong),
+                ("gpuInstanceId", ctypes.c_uint), ("computeInstanceId", ctypes.c_uint)]
+
+
+class FabricInfo(ctypes.Structure):
+    _fields_ = [("version", ctypes.c_uint), ("clusterUuid", ctypes.c_ubyte * 16), ("status", ctypes.c_int),
+                ("cliqueId", ctypes.c_uint), ("state", ctypes.c_ubyte), ("healthMask", ctypes.c_uint),
+                ("healthSummary", ctypes.c_ubyte)]
+
+
+NVLINKS = 18
+
+
+def check(ret):
+    if ret != 0:
+        nvml.nvmlErrorString.restype = ctypes.c_char_p
+        sys.exit(f"NVML error: {nvml.nvmlErrorString(ret).decode()}")
+
+
+def string(fn, dev, size=96):
+    buf = ctypes.create_string_buffer(size)
+    check(getattr(nvml, fn)(dev, buf, size))
+    return buf.value.decode()
+
+
+def uint(fn, dev, *args):
+    v = ctypes.c_uint()
+    check(getattr(nvml, fn)(dev, *args, ctypes.byref(v)))
+    return v.value
+
+
+class Gpu:
+    def __init__(self, index):
+        self.index = index
+        self.handle = ctypes.c_void_p()
+        check(nvml.nvmlDeviceGetHandleByIndex_v2(index, ctypes.byref(self.handle)))
+        h = self.handle
+        self.name = string("nvmlDeviceGetName", h)
+        self.uuid = string("nvmlDeviceGetUUID", h)
+        self.serial = string("nvmlDeviceGetSerial", h, 32)
+        self.vbios = string("nvmlDeviceGetVbiosVersion", h, 32)
+        pci = PciInfo()
+        check(nvml.nvmlDeviceGetPciInfo_v3(h, ctypes.byref(pci)))
+        self.bus_id = pci.busId.decode()
+        self.pci_device_id = pci.pciDeviceId
+        mem = Memory()
+        check(nvml.nvmlDeviceGetMemoryInfo(h, ctypes.byref(mem)))
+        self.mem_total, self.mem_used = mem.total >> 20, mem.used >> 20
+        util = Utilization()
+        check(nvml.nvmlDeviceGetUtilizationRates(h, ctypes.byref(util)))
+        self.util = util.gpu
+        self.mem_util = util.memory
+        self.temp = uint("nvmlDeviceGetTemperature", h, 0)
+        self.power = uint("nvmlDeviceGetPowerUsage", h) // 1000
+        self.power_limit = uint("nvmlDeviceGetPowerManagementLimit", h) // 1000
+        self.pstate = uint("nvmlDeviceGetPerformanceState", h)
+        self.sm_clock = uint("nvmlDeviceGetClockInfo", h, 1)
+        self.mem_clock = uint("nvmlDeviceGetClockInfo", h, 2)
+        fab = FabricInfo(version=(ctypes.sizeof(FabricInfo) | (3 << 24)))
+        check(nvml.nvmlDeviceGetGpuFabricInfoV(h, ctypes.byref(fab)))
+        self.cluster_uuid = "-".join(bytes(fab.clusterUuid).hex()[a:b] for a, b in ((0, 8), (8, 12), (12, 16), (16, 20), (20, 32)))
+        self.clique = fab.cliqueId
+        self.fabric_state = {0: "N/A", 1: "Not Started", 2: "In Progress", 3: "Completed"}.get(fab.state, "Unknown")
+        self.links = [uint("nvmlDeviceGetNvLinkState", h, link) for link in range(NVLINKS)]
+        self.procs = processes(h)
+
+
+def process_name(pid):
+    buf = ctypes.create_string_buffer(256)
+    return buf.value.decode() if nvml.nvmlSystemGetProcessName(pid, buf, 256) == 0 else "[N/A]"
+
+
+def processes(handle):
+    count = ctypes.c_uint(64)
+    infos = (ProcessInfo * 64)()
+    check(nvml.nvmlDeviceGetComputeRunningProcesses_v3(handle, ctypes.byref(count), infos))
+    return [(infos[i].pid, process_name(infos[i].pid), infos[i].usedGpuMemory >> 20) for i in range(count.value)]
+
+
+def driver_version():
+    buf = ctypes.create_string_buffer(80)
+    check(nvml.nvmlSystemGetDriverVersion(buf, 80))
+    return buf.value.decode()
+
+
+def cuda_version():
+    v = ctypes.c_int()
+    check(nvml.nvmlSystemGetCudaDriverVersion_v2(ctypes.byref(v)))
+    return f"{v.value // 1000}.{v.value % 1000 // 10}"
+
+
+def gpus(ids=None):
+    n = ctypes.c_uint()
+    check(nvml.nvmlDeviceGetCount_v2(ctypes.byref(n)))
+    return [Gpu(i) for i in range(n.value) if ids is None or i in ids]
+
+
+def table(devs):
+    now = datetime.datetime.now().strftime("%a %b %d %H:%M:%S %Y")
+    sep = "+-----------------------------------------+------------------------+----------------------+"
+    print(now)
+    print("+-----------------------------------------------------------------------------------------+")
+    print(f"| NVIDIA-SMI {driver_version():<18} Driver Version: {driver_version():<18} CUDA Version: {cuda_version():<8} |")
+    print(sep)
+    print("| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |")
+    print("| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |")
+    print("|                                         |                        |               MIG M. |")
+    print(sep.replace("-", "="))
+    for g in devs:
+        left1 = f" {g.index:>3}  {g.name[:24]:<24}"
+        left2 = f" N/A   {g.temp:>2}C    P{g.pstate:<2}"
+        power = f"{g.power}W / {g.power_limit}W"
+        print(f"|{left1}{'On':>{40 - len(left1)}} | {g.bus_id[4:]:<16}   Off | {0:>20} |")
+        print(f"|{left2}{power:>{40 - len(left2)}} | {f'{g.mem_used}MiB / {g.mem_total}MiB':>22} | {g.util:>6}%      Default |")
+        print(f"|{'':41}|{'':24}|{'Disabled':>21} |")
+        print(sep)
+    print()
+    print("+-----------------------------------------------------------------------------------------+")
+    print("| Processes:                                                                              |")
+    print("|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |")
+    print("|        ID   ID                                                               Usage      |")
+    print("|=========================================================================================|")
+    rows = [(g.index, pid, name, mib) for g in devs for pid, name, mib in g.procs]
+    if not rows:
+        print("|  No running processes found                                                             |")
+    for idx, pid, name, mib in rows:
+        name = name if len(name) <= 36 else "..." + name[-33:]
+        print(f"|  {idx:>3}   N/A  N/A  {pid:>14}      C   {name:<36} {mib:>8}MiB |")
+    print("+-----------------------------------------------------------------------------------------+")
+
+
+def topo(devs):
+    names = [f"GPU{g.index}" for g in devs]
+    print("\t" + "\t".join(names) + "\tCPU Affinity\tNUMA Affinity\tGPU NUMA ID")
+    for g in devs:
+        # Through NVSwitch, a pair is bonded by the links both ends still have up.
+        row = ["X" if o.index == g.index else f"NV{min(sum(g.links), sum(o.links))}" for o in devs]
+        print(f"GPU{g.index}\t" + "\t".join(row) + "\t0-{}\t0\t\tN/A".format(__import__("os").cpu_count() - 1))
+    print("""
+Legend:
+
+  X    = Self
+  SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+  NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+  PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+  PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+  PIX  = Connection traversing at most a single PCIe bridge
+  NV#  = Connection traversing a bonded set of # NVLinks""")
+
+
+def nvlink_status(devs):
+    for g in devs:
+        print(f"GPU {g.index}: {g.name} (UUID: {g.uuid})")
+        for link, up in enumerate(g.links):
+            print(f"\t Link {link}: {'50 GB/s' if up else '<inactive>'}")
+
+
+def query(devs):
+    print(f"\n==============NVSMI LOG==============\n")
+    print(f"Timestamp                                 : {datetime.datetime.now().ctime()}")
+    print(f"Driver Version                            : {driver_version()}")
+    print(f"CUDA Version                              : {cuda_version()}\n")
+    print(f"Attached GPUs                             : {len(gpus())}")
+    for g in devs:
+        print(f"GPU {g.bus_id}")
+        print(f"    Product Name                          : {g.name}")
+        print(f"    Product Architecture                  : Blackwell")
+        print(f"    Serial Number                         : {g.serial}")
+        print(f"    GPU UUID                              : {g.uuid}")
+        print(f"    Minor Number                          : {g.index}")
+        print(f"    VBIOS Version                         : {g.vbios}")
+        print(f"    Fabric")
+        print(f"        State                             : {g.fabric_state}")
+        print(f"        Status                            : Success")
+        print(f"        CliqueId                          : {g.clique}")
+        print(f"        ClusterUUID                       : {g.cluster_uuid}")
+        print(f"        Health")
+        print(f"            Bandwidth                     : Full")
+        print(f"            Summary                       : Healthy")
+        print(f"    FB Memory Usage")
+        print(f"        Total                             : {g.mem_total} MiB")
+        print(f"        Used                              : {g.mem_used} MiB")
+        print(f"        Free                              : {g.mem_total - g.mem_used} MiB")
+
+
+FIELDS = {
+    "index": lambda g: g.index, "name": lambda g: g.name, "uuid": lambda g: g.uuid,
+    "serial": lambda g: g.serial, "pci.bus_id": lambda g: g.bus_id,
+    "driver_version": lambda g: driver_version(), "vbios_version": lambda g: g.vbios,
+    "memory.total": lambda g: (g.mem_total, "MiB"), "memory.used": lambda g: (g.mem_used, "MiB"),
+    "memory.free": lambda g: (g.mem_total - g.mem_used, "MiB"),
+    "utilization.gpu": lambda g: (g.util, "%"), "utilization.memory": lambda g: (g.mem_util, "%"),
+    "temperature.gpu": lambda g: g.temp, "power.draw": lambda g: (f"{g.power:.2f}", "W"),
+    "power.limit": lambda g: (f"{g.power_limit:.2f}", "W"), "pstate": lambda g: f"P{g.pstate}",
+    "clocks.sm": lambda g: (g.sm_clock, "MHz"), "clocks.mem": lambda g: (g.mem_clock, "MHz"),
+    "compute_cap": lambda g: "10.0", "persistence_mode": lambda g: "Enabled",
+    "mig.mode.current": lambda g: "Disabled", "fabric.state": lambda g: g.fabric_state,
+    "fabric.clique_id": lambda g: g.clique, "fabric.cluster_uuid": lambda g: g.cluster_uuid,
+    "count": lambda g: len(gpus()),
+    "temperature.memory": lambda g: g.temp + 4, "power.max_limit": lambda g: (f"{g.power_limit:.2f}", "W"),
+    "power.default_limit": lambda g: (f"{g.power_limit:.2f}", "W"), "fan.speed": lambda g: "[N/A]",
+    "clocks.max.sm": lambda g: (1965, "MHz"), "clocks.max.memory": lambda g: (3996, "MHz"),
+    "timestamp": lambda g: datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3],
+}
+APP_FIELDS = {"pid", "process_name", "used_memory", "used_gpu_memory", "gpu_uuid", "gpu_bus_id", "gpu_name"}
+ALIASES = {"fabric.clusterUuid": "fabric.cluster_uuid", "fabric.cliqueId": "fabric.clique_id",
+           "gpu_name": "name", "gpu_uuid": "uuid", "gpu_serial": "serial", "gpu_bus_id": "pci.bus_id",
+           "memory_total": "memory.total", "memory_used": "memory.used", "memory_free": "memory.free"}
+
+
+def query_gpu(devs, fields, fmt):
+    fields = [ALIASES.get(f.strip(), f.strip()) for f in fields.split(",") if f.strip()]
+    for f in fields:
+        if f not in FIELDS:
+            sys.exit(f'Field "{f}" is not a valid field to query.')
+    opts = set(fmt.split(","))
+    if "noheader" not in opts:
+        print(", ".join(f + (f" [{u}]" if isinstance(FIELDS[f](devs[0]), tuple) and "nounits" not in opts else "")
+                        for f in fields for u in [FIELDS[f](devs[0])[1] if isinstance(FIELDS[f](devs[0]), tuple) else ""]))
+    for g in devs:
+        out = []
+        for f in fields:
+            v = FIELDS[f](g)
+            out.append(str(v[0]) if "nounits" in opts and isinstance(v, tuple) else
+                       f"{v[0]} {v[1]}" if isinstance(v, tuple) else str(v))
+        print(", ".join(out))
+
+
+def query_apps(devs, fields, fmt):
+    fields = [f.strip() for f in fields.split(",") if f.strip()]
+    for f in fields:
+        if f not in APP_FIELDS:
+            sys.exit(f'Field "{f}" is not a valid field to query.')
+    opts = set(fmt.split(","))
+    if "noheader" not in opts:
+        print(", ".join(f + (" [MiB]" if f in ("used_memory", "used_gpu_memory") and "nounits" not in opts else "") for f in fields))
+    for g in devs:
+        for pid, name, mib in g.procs:
+            vals = {"pid": pid, "process_name": name, "gpu_uuid": g.uuid, "gpu_bus_id": g.bus_id, "gpu_name": g.name,
+                    "used_memory": mib if "nounits" in opts else f"{mib} MiB"}
+            vals["used_gpu_memory"] = vals["used_memory"]
+            print(", ".join(str(vals[f]) for f in fields))
+
+
+def dmon(ids, count):
+    print("# gpu    pwr  gtemp  mtemp     sm    mem    enc    dec   mclk   pclk")
+    print("# Idx      W      C      C      %      %      %      %    MHz    MHz")
+    n = 0
+    while count is None or n < count:
+        for g in gpus(ids):
+            print(f"  {g.index:>3} {g.power:>6} {g.temp:>6} {g.temp + 4:>6} {g.util:>6} {g.mem_util:>6} {0:>6} {0:>6} "
+                  f"{g.mem_clock:>6} {g.sm_clock:>6}", flush=True)
+        n += 1
+        if count is None or n < count:
+            time.sleep(1)
+
+
+def main(argv):
+    check(nvml.nvmlInit_v2())
+    ids, fmt, fields, apps, loop, count, rest = None, "csv", None, None, None, None, []
+    it = iter(argv)
+    for a in it:
+        if a in ("-i", "--id"):
+            ids = {int(x) for x in next(it).split(",")}
+        elif a.startswith("--id="):
+            ids = {int(x) for x in a.split("=", 1)[1].split(",")}
+        elif a.startswith("--query-gpu="):
+            fields = a.split("=", 1)[1]
+        elif a.startswith("--query-compute-apps="):
+            apps = a.split("=", 1)[1]
+        elif a in ("-l", "--loop"):
+            loop = float(next(it))
+        elif a.startswith("--loop="):
+            loop = float(a.split("=", 1)[1])
+        elif a == "-c":
+            count = int(next(it))
+        elif a.startswith("--format="):
+            fmt = a.split("=", 1)[1]
+        elif a in ("-d", "--display"):
+            next(it)
+        else:
+            rest.append(a)
+    if rest[:1] == ["dmon"]:
+        return dmon(ids, count)
+    while True:
+        run(ids, fields, apps, fmt, rest, argv)
+        if not loop:
+            break
+        time.sleep(loop)
+
+
+def run(ids, fields, apps, fmt, rest, argv):
+    devs = gpus(ids)
+    if apps:
+        query_apps(devs, apps, fmt)
+    elif fields:
+        query_gpu(devs, fields, fmt)
+    elif rest[:1] in (["-L"], ["--list-gpus"]):
+        for g in devs:
+            print(f"GPU {g.index}: {g.name} (UUID: {g.uuid})")
+    elif rest[:2] == ["topo", "-m"]:
+        topo(devs)
+    elif rest[:1] == ["nvlink"]:
+        nvlink_status(devs)
+    elif rest[:1] in (["-q"], ["--query"]):
+        query(devs)
+    elif not rest:
+        table(devs)
+    else:
+        sys.exit(f"nvidia-smi (fakegpu): unsupported arguments: {' '.join(argv)}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

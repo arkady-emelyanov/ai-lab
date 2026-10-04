@@ -1,0 +1,9 @@
+.venv/
+.collections/
+.secrets/
+fakegpu/build/
+fakegpu/*.so.*
+.omc/
+fakebmc/fakebmc
+.cache/
+fakenmxc/fakenmxc

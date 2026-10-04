@@ -1,0 +1,16 @@
+# The key is generated once on the host by `make init` (.secrets/, git-ignored)
+# and shared by every instance; munge rejects credentials from other keys.
+- name: Install the munge key
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/.secrets/munge.key"
+    dest: /etc/munge/munge.key
+    owner: munge
+    group: munge
+    mode: "0400"
+  notify: Restart munge
+
+- name: Start munge
+  ansible.builtin.service:
+    name: munge
+    state: started
+    enabled: true

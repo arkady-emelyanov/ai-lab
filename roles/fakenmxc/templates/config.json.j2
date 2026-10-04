@@ -1,0 +1,19 @@
+{
+  "listen": ":{{ nmxc_port }}",
+  "metrics_listen": ":{{ nmxc_metrics_port }}",
+  "domain_name": "{{ nvl_domain_name }}",
+  "domain_uuid": "{{ nvl_cluster_uuid }}",
+  "default_clique": {{ nvl_clique_id }},
+  "gpu_count": {{ fakegpu_count }},
+  "nvlinks": {{ fakegpu_nvlinks }},
+  "switches": {{ nvswitch_count }},
+  "switch_ports": {{ nvswitch_ports }},
+  "switch_host": "{{ inventory_hostname }}",
+  "state_dir": "/var/lib/fakenmxc",
+  "trays": [
+{% for tray in groups['workers'] %}
+    {"name": "{{ tray }}", "slot": {{ hostvars[tray].tray }}, "sideband_dir": "/var/lib/fakenmxc/sideband/{{ tray }}",
+     "telemetry_path": "/var/lib/fakenmxc/telemetry/{{ tray }}/occupancy"}{{ ',' if not loop.last }}
+{% endfor %}
+  ]
+}

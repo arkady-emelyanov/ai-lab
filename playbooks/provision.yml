@@ -1,0 +1,264 @@
+# Creates the Incus containers, volumes and wiring (idempotent).
+# Runs on the host; needs membership in the incus-admin group.
+- name: Provision Incus instances
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    instances: "{{ groups['cluster'] + groups['storage'] + groups['nvswitch'] + groups['bmc'] }}"
+    secrets: "{{ playbook_dir | dirname }}/.secrets"
+    # --project flag for an instance
+    proj: "--project {{ hostvars[item].ansible_incus_project }}"
+  tasks:
+    # ---- GPU trays project and Incus API for BMC power control ------------------
+
+    - name: Create the GPU trays project (shares default profiles, networks, volumes)
+      ansible.builtin.command: >-
+        incus project create {{ trays_project }}
+        -c features.images=false -c features.profiles=false
+        -c features.networks=false -c features.storage.volumes=false
+      register: project
+      changed_when: project.rc == 0
+      failed_when: project.rc != 0 and 'already exists' not in project.stderr
+
+    - name: Read the bridge address and the current API listener
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - incus network get {{ incus_bridge }} ipv4.address
+        - incus config get core.https_address
+      register: api
+      changed_when: false
+
+    - name: Expose the Incus API on the bridge only
+      ansible.builtin.command: incus config set core.https_address {{ incus_api_address }}
+      when: api.results[1].stdout != incus_api_address
+      vars:
+        incus_api_address: "{{ api.results[0].stdout.split('/')[0] }}:{{ incus_api_port }}"
+
+    - name: Create the BMC secrets directory
+      ansible.builtin.file:
+        path: "{{ secrets }}/bmc"
+        state: directory
+        mode: "0700"
+
+    - name: Generate a client certificate per BMC
+      ansible.builtin.command: >-
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650
+        -subj /CN={{ item }} -keyout {{ secrets }}/bmc/{{ item }}.key -out {{ secrets }}/bmc/{{ item }}.crt
+      args:
+        creates: "{{ secrets }}/bmc/{{ item }}.crt"
+      loop: "{{ groups['tray_bmc'] }}"
+
+    - name: List trusted certificates
+      ansible.builtin.command: incus config trust list --format json
+      register: trust
+      changed_when: false
+
+    - name: Trust BMC certificates for the trays project only
+      ansible.builtin.command: >-
+        incus config trust add-certificate {{ secrets }}/bmc/{{ item }}.crt
+        --name {{ item }} --restricted --projects {{ trays_project }}
+      loop: "{{ groups['tray_bmc'] }}"
+      when: item not in (trust.stdout | from_json | map(attribute='name'))
+
+    - name: Save the Incus server certificate for pinning
+      ansible.builtin.shell: incus query /1.0 | jq -r .environment.certificate > {{ secrets }}/bmc/incus-server.crt
+      changed_when: false
+
+    # ---- instances ----------------------------------------------------------------
+
+    - name: Check which instances exist
+      ansible.builtin.command: incus list --all-projects --format json
+      register: incus_list
+      changed_when: false
+
+    - name: Launch missing instances
+      ansible.builtin.command: >-
+        incus launch {{ incus_image }} {{ item }} {{ proj }}
+        --profile {{ incus_profile }}
+        -c limits.cpu={{ instance_limits[role].cpu }}
+        -c limits.memory={{ instance_limits[role].memory }}
+        -c security.nesting=true
+      vars:
+        role: "{{ ['controller', 'login', 'workers', 'storage', 'nvswitch', 'bmc'] | select('in', hostvars[item].group_names) | first }}"
+      loop: "{{ instances }}"
+      when: item not in (incus_list.stdout | from_json | map(attribute='name'))
+
+    # Let first boot (cloud-init) finish before restarting anything.
+    - name: Wait for first boot to finish
+      ansible.builtin.command: incus exec {{ item }} {{ proj }} -- cloud-init status --wait
+      loop: "{{ instances }}"
+      changed_when: false
+      failed_when: false
+
+    # Fixed addresses: daemons such as slurmctld resolve peers once, so a tray
+    # that reboots must come back on the same address.
+    - name: Pin static addresses
+      ansible.builtin.shell: |
+        want={{ api.results[0].stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[item].ip_host }}
+        have=$(incus config device get {{ item }} eth0 ipv4.address {{ proj }} 2>/dev/null || true)
+        [ "$have" = "$want" ] && exit 0
+        incus config device override {{ item }} eth0 ipv4.address=$want {{ proj }} 2>/dev/null \
+          || incus config device set {{ item }} eth0 ipv4.address=$want {{ proj }}
+        incus restart {{ item }} {{ proj }}
+        echo changed
+      loop: "{{ instances }}"
+      register: pin
+      changed_when: "'changed' in pin.stdout"
+
+    # ---- storage --------------------------------------------------------------------
+
+    # A custom volume rather than a host bind mount: it needs no idmapped-mount
+    # support on the host, and all instances share one ID map.
+    - name: Create the shared volume
+      ansible.builtin.command: incus storage volume create {{ shared_pool }} {{ shared_volume }}
+      register: vol
+      changed_when: vol.rc == 0
+      failed_when: vol.rc != 0 and 'already exists' not in vol.stderr
+
+    - name: Attach the shared volume
+      ansible.builtin.command: >-
+        incus storage volume attach {{ shared_pool }} {{ shared_volume }} {{ item }} {{ shared_mount }} {{ proj }}
+      loop: "{{ groups['cluster'] }}"
+      register: mount
+      changed_when: mount.rc == 0
+      failed_when: mount.rc != 0 and 'already exists' not in mount.stderr
+
+    - name: Create the node-local scratch pool
+      ansible.builtin.command: >-
+        incus storage create {{ scratch_pool }} {{ scratch_pool_driver }} size={{ scratch_pool_size }}
+      register: pool
+      changed_when: pool.rc == 0
+      failed_when: pool.rc != 0 and 'already exists' not in pool.stderr
+
+    - name: Create a scratch volume per worker
+      ansible.builtin.command: >-
+        incus storage volume create {{ scratch_pool }} scratch-{{ item }} size={{ scratch_size_gib }}GiB
+      loop: "{{ groups['workers'] }}"
+      register: scratch
+      changed_when: scratch.rc == 0
+      failed_when: scratch.rc != 0 and 'already exists' not in scratch.stderr
+
+    - name: Attach scratch volumes
+      ansible.builtin.command: >-
+        incus storage volume attach {{ scratch_pool }} scratch-{{ item }} {{ item }} {{ scratch_mount }} {{ proj }}
+      loop: "{{ groups['workers'] }}"
+      register: attach
+      changed_when: attach.rc == 0
+      failed_when: attach.rc != 0 and 'already exists' not in attach.stderr
+
+    - name: Create the object storage data volume
+      ansible.builtin.command: incus storage volume create {{ shared_pool }} {{ rustfs_volume }}
+      register: rv
+      changed_when: rv.rc == 0
+      failed_when: rv.rc != 0 and 'already exists' not in rv.stderr
+
+    - name: Attach the object storage data volume
+      ansible.builtin.command: >-
+        incus storage volume attach {{ shared_pool }} {{ rustfs_volume }} {{ storage_host }} /var/lib/rustfs
+      register: ra
+      changed_when: ra.rc == 0
+      failed_when: ra.rc != 0 and 'already exists' not in ra.stderr
+
+    # JuiceFS mounts through FUSE; unprivileged containers get /dev/fuse from Incus.
+    - name: Give Slurm nodes /dev/fuse
+      ansible.builtin.command: >-
+        incus config device add {{ item }} fuse unix-char source=/dev/fuse path=/dev/fuse mode=0666 {{ proj }}
+      loop: "{{ groups['cluster'] }}"
+      register: fuse
+      changed_when: fuse.rc == 0
+      failed_when: fuse.rc != 0 and 'already exists' not in fuse.stderr
+
+    # ---- GPU devices and BMC sideband ---------------------------------------------
+
+    # Character devices with NVIDIA's major number, as on a real GPU node. Incus
+    # creates them itself; unprivileged containers cannot mknod.
+    - name: Add /dev/nvidia* device nodes to GPU trays
+      ansible.builtin.command: >-
+        incus config device add {{ item.0 }} {{ item.1.name }} unix-char
+        path=/dev/{{ item.1.name }} major=195 minor={{ item.1.minor }} mode=0666 required=false
+        --project {{ trays_project }}
+      loop: "{{ groups['workers'] | product(gpu_devices) | list }}"
+      vars:
+        gpu_devices: >-
+          {{ range(fakegpu_count) | map('string') | map('regex_replace', '^(.*)$', '{"name": "nvidia\1", "minor": \1}')
+             | map('from_json') | list + [{'name': 'nvidiactl', 'minor': 255}] }}
+      register: dev
+      changed_when: dev.rc == 0
+      failed_when: dev.rc != 0 and 'already exists' not in dev.stderr
+
+    - name: Create a sideband volume per tray
+      ansible.builtin.command: incus storage volume create {{ shared_pool }} sideband-{{ hostvars[item].bmc_tray }}
+      loop: "{{ groups['tray_bmc'] }}"
+      register: sb
+      changed_when: sb.rc == 0
+      failed_when: sb.rc != 0 and 'already exists' not in sb.stderr
+
+    - name: Attach sideband volumes to BMCs (read-write) and trays (read-only)
+      ansible.builtin.command: >-
+        incus config device add {{ target }} sideband disk
+        pool={{ shared_pool }} source=sideband-{{ hostvars[item.0].bmc_tray }}
+        path={{ item.1.path }} readonly={{ item.1.readonly }} --project {{ hostvars[target].ansible_incus_project }}
+      vars:
+        target: "{{ item.0 if item.1.side == 'bmc' else hostvars[item.0].bmc_tray }}"
+      loop: >-
+        {{ groups['tray_bmc'] | product([{'side': 'bmc', 'path': sideband_bmc_path, 'readonly': false},
+                                         {'side': 'tray', 'path': sideband_tray_path, 'readonly': true}]) | list }}
+      loop_control:
+        label: "{{ target }}:{{ item.1.path }}"
+      register: sbdev
+      changed_when: sbdev.rc == 0
+      failed_when: sbdev.rc != 0 and 'already exists' not in sbdev.stderr
+
+    # The switch tray's BMC (switch port state) and host (partitions) write
+    # into every tray's sideband, each tray in its own directory.
+    - name: Attach every tray's sideband to the switch tray
+      ansible.builtin.command: >-
+        incus config device add {{ item.1 }} sideband-{{ item.0 }} disk
+        pool={{ shared_pool }} source=sideband-{{ item.0 }}
+        path={{ '/var/lib/fakebmc' if item.1 in groups['bmc'] else '/var/lib/fakenmxc' }}/sideband/{{ item.0 }}
+      loop: "{{ groups['workers'] | product(groups['nvswitch'] + groups['nvswitch_bmc']) | list }}"
+      register: swsb
+      changed_when: swsb.rc == 0
+      failed_when: swsb.rc != 0 and 'already exists' not in swsb.stderr
+
+    - name: Create a telemetry volume per tray
+      ansible.builtin.command: incus storage volume create {{ shared_pool }} telemetry-{{ item }}
+      loop: "{{ groups['workers'] }}"
+      register: tv
+      changed_when: tv.rc == 0
+      failed_when: tv.rc != 0 and 'already exists' not in tv.stderr
+
+    - name: Attach telemetry volumes to trays (read-write) and the switch tray host (read-only)
+      ansible.builtin.command: >-
+        incus config device add {{ item.1 }} telemetry-{{ item.0 }} disk
+        pool={{ shared_pool }} source=telemetry-{{ item.0 }}
+        path={{ telemetry_tray_path if item.1 == item.0 else '/var/lib/fakenmxc/telemetry/' ~ item.0 }}
+        readonly={{ item.1 != item.0 }} --project {{ hostvars[item.1].ansible_incus_project }}
+      loop: "{{ (groups['workers'] | zip(groups['workers']) | list) + (groups['workers'] | product(groups['nvswitch']) | list) }}"
+      loop_control:
+        label: "{{ item.1 }}: telemetry-{{ item.0 }}"
+      register: tdev
+      changed_when: tdev.rc == 0
+      failed_when: tdev.rc != 0 and 'already exists' not in tdev.stderr
+
+    # ---- wait for the instances -------------------------------------------------------
+
+    - name: Wait for an IPv4 address on every instance
+      ansible.builtin.command: incus list --all-projects --format json
+      register: incus_state
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: >-
+        incus_state.stdout | from_json
+        | selectattr('name', 'in', instances)
+        | map(attribute='state.network.eth0.addresses')
+        | map('selectattr', 'family', 'equalto', 'inet') | map('list') | select | list | length
+        == instances | length
+
+    - name: Wait for cloud-init to finish
+      ansible.builtin.command: incus exec {{ item }} {{ proj }} -- cloud-init status --wait
+      loop: "{{ instances }}"
+      changed_when: false
+      failed_when: false

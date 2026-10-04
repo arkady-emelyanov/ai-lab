@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# Slurm 23.11 always loads a cgroup plugin even though no job tracking uses
+# cgroups here (proctrack/linuxproc); Incus delegates a cgroup v2
+# namespace to the container, which is enough for slurmd to initialise.
+CgroupPlugin=autodetect

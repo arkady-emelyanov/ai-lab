@@ -1,0 +1,56 @@
+# NVLink partition controller on the switch tray host (fakenmxc, gRPC,
+# modelled on NVIDIA NMX-C). Built on the host by `make init`.
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop: [/etc/fakenmxc, /var/lib/fakenmxc]
+
+- name: Install the fakenmxc binary
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/fakenmxc/fakenmxc"
+    dest: /usr/local/sbin/fakenmxc
+    mode: "0755"
+  notify: Restart fakenmxc
+
+- name: Configure fakenmxc
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: /etc/fakenmxc/config.json
+    mode: "0644"
+  notify: Restart fakenmxc
+
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=fakenmxc NVLink partition controller
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      ExecStart=/usr/local/sbin/fakenmxc -config /etc/fakenmxc/config.json
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/fakenmxc.service
+    mode: "0644"
+  notify: Restart fakenmxc
+
+- name: Start fakenmxc
+  ansible.builtin.systemd_service:
+    name: fakenmxc
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the gRPC port
+  ansible.builtin.wait_for:
+    port: "{{ nmxc_port }}"
+    timeout: 20

@@ -1,0 +1,66 @@
+# Per-user S3 identities on RustFS: one user, one bucket, one policy each
+# (the policy allows everything on the user's bucket and nothing else).
+- name: Download the RustFS client (rc)
+  ansible.builtin.get_url:
+    url: "{{ rc_base }}/{{ rc_tarball }}"
+    dest: /usr/local/src/{{ rc_tarball }}
+    checksum: "sha256:{{ rc_base }}/{{ rc_tarball }}.sha256"
+    mode: "0644"
+
+- name: Install rc
+  ansible.builtin.unarchive:
+    src: /usr/local/src/{{ rc_tarball }}
+    dest: /usr/local/bin
+    remote_src: true
+    include: [rc]
+
+- name: Point rc at RustFS with the admin keys
+  ansible.builtin.command: rc alias set lab http://localhost:{{ rustfs_port }} {{ rustfs_access_key }} {{ rustfs_secret_key }}
+  changed_when: false
+  no_log: true
+
+- name: List S3 users
+  ansible.builtin.command: rc admin user list lab/
+  register: s3users
+  changed_when: false
+
+- name: Create S3 users
+  ansible.builtin.command: rc admin user add lab/ {{ item.name }} {{ secret }}
+  vars:
+    secret: "{{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/users/' ~ item.name ~ '.s3 length=32 chars=ascii_letters,digits') }}"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: s3users.stdout is not search('\\b' ~ item.name ~ '\\b')
+  no_log: true
+
+- name: Write per-user bucket policies
+  ansible.builtin.copy:
+    content: "{{ {'Version': '2012-10-17', 'Statement': [{'Effect': 'Allow', 'Action': ['s3:*'], 'Resource': ['arn:aws:s3:::' ~ item.name, 'arn:aws:s3:::' ~ item.name ~ '/*']}]} | to_json }}"
+    dest: /etc/rustfs-policy-{{ item.name }}.json
+    mode: "0644"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: policies
+
+- name: Create and attach policies
+  ansible.builtin.shell: |
+    rc admin policy create lab/ {{ item.item.name }}-own /etc/rustfs-policy-{{ item.item.name }}.json
+    rc admin policy attach lab/ {{ item.item.name }}-own --user {{ item.item.name }}
+  loop: "{{ policies.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.changed
+
+- name: List buckets
+  ansible.builtin.command: rc ls lab/
+  register: buckets
+  changed_when: false
+
+- name: Create user buckets
+  ansible.builtin.command: rc mb lab/{{ item.name }}
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: buckets.stdout is not search(' ' ~ item.name ~ '/$', multiline=True)

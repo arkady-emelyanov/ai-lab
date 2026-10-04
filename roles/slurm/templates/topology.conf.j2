@@ -1,0 +1,3 @@
+# {{ ansible_managed }}
+# One NVLink domain (NVL{{ fakegpu_count * groups['workers'] | length }}): all trays share an NVSwitch fabric.
+BlockName={{ nvl_domain_name }} Nodes={{ groups['workers'] | join(',') }}

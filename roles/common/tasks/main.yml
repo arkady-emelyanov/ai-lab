@@ -1,0 +1,44 @@
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - munge
+      - slurm-client
+      - python3-venv
+      - jq
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Look up the bridge network
+  ansible.builtin.command: incus network get {{ incus_bridge }} ipv4.address
+  register: bridge
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+
+# Static addresses (provision.yml) of every instance, BMCs included.
+- name: Resolve cluster hostnames via /etc/hosts
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} slurm cluster"
+    block: |
+      {% for name in groups['all'] %}
+      {{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[name].ip_host }} {{ name }}
+      {% endfor %}
+  notify: Re-resolve peers
+
+- name: Make node-local scratch world-writable (sticky, like /tmp)
+  ansible.builtin.file:
+    path: "{{ scratch_mount }}"
+    state: directory
+    mode: "1777"
+  when: inventory_hostname in groups['workers']
+
+# On every host: srun/sbatch copy the submitting (login) shell's environment
+# into the job, so the login node must define it too.
+- name: Export SCRATCH in login and job environments
+  ansible.builtin.copy:
+    content: |
+      # Node-local scratch on workers ({{ scratch_size_gib }} GiB): datasets, loader caches, spill files.
+      export SCRATCH={{ scratch_mount }}
+    dest: /etc/profile.d/scratch.sh
+    mode: "0644"

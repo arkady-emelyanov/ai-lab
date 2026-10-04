@@ -1,0 +1,48 @@
+# {{ ansible_managed }}
+ClusterName={{ slurm_cluster_name }}
+SlurmctldHost={{ groups['controller'][0] }}
+
+AuthType=auth/munge
+CredType=cred/munge
+SlurmUser=slurm
+SlurmctldPidFile=/run/slurmctld.pid
+SlurmdPidFile=/run/slurmd.pid
+StateSaveLocation=/var/lib/slurm/slurmctld
+SlurmdSpoolDir=/var/lib/slurm/slurmd
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+ReturnToService=2
+MpiDefault=none
+# Containers see an arbitrary slice of host CPUs; trust the node definition.
+SlurmdParameters=config_overrides
+
+# Unprivileged containers: track processes via /proc rather than cgroups, and
+# no CPU binding (Incus gives each container its own slice of host CPUs, so
+# Slurm's CPU ids don't match the container's cpuset).
+ProctrackType=proctrack/linuxproc
+TaskPlugin=task/none
+# Sets job environment on the workers (e.g. SCRATCH), independent of the
+# submitting shell.
+TaskProlog=/etc/slurm/task_prolog.sh
+JobAcctGatherType=jobacct_gather/linux
+JobAcctGatherFrequency=30
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost={{ groups['controller'][0] }}
+AccountingStorageEnforce=associations,limits,qos
+# Account GPUs per job, user and account (sacct, sreport, metrics).
+AccountingStorageTRES=gres/gpu
+
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+# Jobs that do not ask for memory get a per-CPU share, not the whole node.
+DefMemPerCPU={{ (slurm_node_memory_mb / instance_limits.workers.cpu) | int }}
+GresTypes=gpu
+# Each NVLink partition is a block (topology.conf, maintained by topograph via
+# update-topology); Slurm packs a job into as few blocks as possible.
+TopologyPlugin=topology/block
+# Node-local scratch; jobs can request space with --tmp.
+TmpFS={{ scratch_mount }}
+
+NodeName={{ groups['workers'] | join(',') }} Sockets=1 CoresPerSocket={{ instance_limits.workers.cpu }} ThreadsPerCore=1 RealMemory={{ slurm_node_memory_mb }} TmpDisk={{ scratch_size_gib * 1024 }} Gres=gpu:{{ fakegpu_type }}:{{ fakegpu_count }} State=UNKNOWN
+PartitionName={{ slurm_partition }} Nodes=ALL Default=YES MaxTime=INFINITE State=UP

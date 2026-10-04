@@ -1,0 +1,175 @@
+# Metrics: node_exporter on every Slurm node, the NVML-based GPU exporter on
+# the trays (reads the fake NVML, so it reports simulated load), Prometheus
+# on the controller.
+- name: Install node_exporter
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+
+- name: Enable node_exporter's textfile collector
+  ansible.builtin.copy:
+    content: |
+      ARGS="--collector.textfile.directory=/var/lib/prometheus/node-exporter"
+    dest: /etc/default/prometheus-node-exporter
+    mode: "0644"
+  notify: Restart node exporter
+
+- name: Start node_exporter
+  ansible.builtin.service:
+    name: prometheus-node-exporter
+    state: started
+    enabled: true
+
+- name: GPU exporter
+  when: inventory_hostname in groups['workers']
+  block:
+    - name: Download nvidia_gpu_exporter (NVML backend)
+      ansible.builtin.get_url:
+        url: "{{ gpu_exporter_base }}/nvidia_gpu_exporter-nvml_{{ gpu_exporter_version }}_linux_x86_64.tar.gz"
+        dest: /usr/local/src/nvidia_gpu_exporter-nvml_{{ gpu_exporter_version }}.tar.gz
+        checksum: "sha256:{{ gpu_exporter_base }}/checksums.txt"
+        mode: "0644"
+      vars:
+        gpu_exporter_base: https://github.com/utkuozdemir/nvidia_gpu_exporter/releases/download/v{{ gpu_exporter_version }}
+
+    - name: Unpack nvidia_gpu_exporter
+      ansible.builtin.unarchive:
+        src: /usr/local/src/nvidia_gpu_exporter-nvml_{{ gpu_exporter_version }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        include: [nvidia_gpu_exporter]
+      notify: Restart nvidia_gpu_exporter
+
+    - name: Install the GPU exporter unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Prometheus exporter for NVIDIA GPUs (NVML)
+          After=network-online.target
+
+          [Service]
+          ExecStart=/usr/local/bin/nvidia_gpu_exporter --collect.backend=nvml --collect.compute-apps --web.listen-address=:{{ gpu_exporter_port }}
+          Restart=always
+          RestartSec=2
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/nvidia_gpu_exporter.service
+        mode: "0644"
+      notify: Restart nvidia_gpu_exporter
+
+    - name: Start the GPU exporter
+      ansible.builtin.systemd_service:
+        name: nvidia_gpu_exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+
+- name: Slurm exporter
+  when: inventory_hostname in groups['controller']
+  block:
+    - name: Download prometheus-slurm-exporter
+      ansible.builtin.get_url:
+        url: "{{ slurm_exporter_base }}/prometheus-slurm-exporter_{{ slurm_exporter_version }}_linux_amd64.deb"
+        dest: /usr/local/src/prometheus-slurm-exporter_{{ slurm_exporter_version }}_amd64.deb
+        checksum: "sha256:{{ slurm_exporter_base }}/prometheus-slurm-exporter_{{ slurm_exporter_version }}_checksums.txt"
+        mode: "0644"
+      vars:
+        slurm_exporter_base: https://github.com/rivosinc/prometheus-slurm-exporter/releases/download/v{{ slurm_exporter_version }}
+
+    - name: Install prometheus-slurm-exporter
+      ansible.builtin.apt:
+        deb: /usr/local/src/prometheus-slurm-exporter_{{ slurm_exporter_version }}_amd64.deb
+
+    # CLI mode: the exporter parses squeue/sinfo output (no slurmrestd needed).
+    - name: Configure the Slurm exporter unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Prometheus exporter for Slurm
+          After=network-online.target slurmctld.service
+
+          [Service]
+          ExecStart=/usr/bin/prometheus-slurm-exporter -slurm.cli-fallback -web.listen-address=:{{ slurm_exporter_port }}
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/prometheus-slurm-exporter.service
+        mode: "0644"
+      notify: Restart slurm exporter
+
+    - name: Start the Slurm exporter
+      ansible.builtin.systemd_service:
+        name: prometheus-slurm-exporter
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    # GPU allocation from Slurm (the exporter has none), via node_exporter.
+    - name: Install slurm-gpu-metrics
+      ansible.builtin.copy:
+        src: slurm-gpu-metrics
+        dest: /usr/local/sbin/slurm-gpu-metrics
+        mode: "0755"
+
+    - name: Run slurm-gpu-metrics every 15 seconds
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: /etc/systemd/system/{{ item.name }}
+        mode: "0644"
+      loop:
+        - name: slurm-gpu-metrics.service
+          content: |
+            [Unit]
+            Description=Export Slurm GPU allocation for node_exporter
+            [Service]
+            Type=oneshot
+            ExecStart=/usr/local/sbin/slurm-gpu-metrics
+        - name: slurm-gpu-metrics.timer
+          content: |
+            [Unit]
+            Description=Export Slurm GPU allocation every 15 seconds
+            [Timer]
+            OnBootSec=30s
+            OnUnitActiveSec=15s
+            AccuracySec=1s
+            [Install]
+            WantedBy=timers.target
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Enable the slurm-gpu-metrics timer
+      ansible.builtin.systemd_service:
+        name: slurm-gpu-metrics.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+- name: Prometheus
+  when: inventory_hostname in groups['controller']
+  block:
+    - name: Install Prometheus
+      ansible.builtin.apt:
+        name: prometheus
+
+    - name: Configure Prometheus
+      ansible.builtin.template:
+        src: prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+        mode: "0644"
+      notify: Reload prometheus
+
+    - name: Set retention
+      ansible.builtin.copy:
+        content: |
+          ARGS="--storage.tsdb.retention.time={{ prometheus_retention }}"
+        dest: /etc/default/prometheus
+        mode: "0644"
+      notify: Restart prometheus
+
+    - name: Start Prometheus
+      ansible.builtin.service:
+        name: prometheus
+        state: started
+        enabled: true

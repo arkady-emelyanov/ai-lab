@@ -1,0 +1,137 @@
+# topograph (dsx-ai-factory/topograph) on the controller: discovers the
+# InfiniBand fabric (ibnetdiscover) and NVLink domains (nvidia-smi) on the
+# trays through pdsh, and generates Slurm's topology.conf. Built on the host
+# by `make init`.
+- name: Install pdsh
+  ansible.builtin.apt:
+    name: pdsh
+
+# pdsh reaches the trays as root with the controller's key from `make init`.
+- name: Install the controller's SSH key for pdsh
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/.secrets/ssh/{{ item.src }}"
+    dest: /root/.ssh/{{ item.dest }}
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: controller_ed25519, dest: id_ed25519, mode: "0600" }
+    - { src: controller_ed25519.pub, dest: id_ed25519.pub, mode: "0644" }
+  loop_control:
+    label: "{{ item.dest }}"
+
+- name: Trust lab hosts on first contact
+  ansible.builtin.copy:
+    content: |
+      Host {{ groups['workers'] | join(' ') }}
+          StrictHostKeyChecking accept-new
+          BatchMode yes
+    dest: /root/.ssh/config
+    mode: "0600"
+
+- name: Authorise the controller key for root on the trays
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ lookup('file', repo_root ~ '/.secrets/ssh/controller_ed25519.pub') }}"
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['workers'] }}"
+  run_once: true
+
+- name: Install topograph
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/.cache/topograph/topograph"
+    dest: /usr/local/bin/topograph
+    mode: "0755"
+  notify: Restart topograph
+
+- name: Create the configuration directory
+  ansible.builtin.file:
+    path: /etc/topograph
+    state: directory
+    mode: "0755"
+
+- name: Configure topograph
+  ansible.builtin.template:
+    src: topograph-config.yaml.j2
+    dest: /etc/topograph/topograph-config.yaml
+    mode: "0644"
+  notify: Restart topograph
+
+- name: Install the topograph unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=topograph cluster topology generator
+      After=network-online.target slurmctld.service
+
+      [Service]
+      ExecStart=/usr/local/bin/topograph -c /etc/topograph/topograph-config.yaml
+      Restart=always
+      RestartSec=3
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/topograph.service
+    mode: "0644"
+  notify: Restart topograph
+
+- name: Install update-topology
+  ansible.builtin.template:
+    src: update-topology.j2
+    dest: /usr/local/sbin/update-topology
+    mode: "0755"
+
+- name: Start topograph
+  ansible.builtin.systemd_service:
+    name: topograph
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# Partition and fabric changes reach Slurm within a minute; an unchanged
+# topology is left alone.
+- name: Install the topology refresh timer
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: /etc/systemd/system/{{ item.name }}
+    mode: "0644"
+  loop:
+    - name: update-topology.service
+      content: |
+        [Unit]
+        Description=Regenerate Slurm topology.conf with topograph
+        After=topograph.service slurmctld.service
+        Requires=topograph.service
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/update-topology
+    - name: update-topology.timer
+      content: |
+        [Unit]
+        Description=Regenerate Slurm topology.conf every minute
+
+        [Timer]
+        OnBootSec=2min
+        OnUnitActiveSec=1min
+
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Enable the topology refresh timer
+  ansible.builtin.systemd_service:
+    name: update-topology.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for topograph
+  ansible.builtin.uri:
+    url: http://localhost:{{ topograph_port }}/healthz
+  register: health
+  retries: 15
+  delay: 2
+  until: health.status == 200

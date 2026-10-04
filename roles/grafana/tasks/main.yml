@@ -1,0 +1,95 @@
+# Grafana on the controller: Prometheus as the default datasource and
+# provisioned dashboards (GPU exporter, node exporter, lab overview, Slurm & fabric).
+- name: Add the Grafana APT key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.asc
+    mode: "0644"
+
+- name: Add the Grafana repository
+  ansible.builtin.apt_repository:
+    repo: deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main
+    filename: grafana
+
+- name: Install Grafana
+  ansible.builtin.apt:
+    name: grafana
+
+- name: Provision the Prometheus datasource
+  ansible.builtin.copy:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          uid: prometheus
+          type: prometheus
+          url: http://localhost:9090
+          access: proxy
+          isDefault: true
+    dest: /etc/grafana/provisioning/datasources/prometheus.yaml
+    mode: "0644"
+  notify: Restart grafana
+
+- name: Provision dashboards from a directory
+  ansible.builtin.copy:
+    content: |
+      apiVersion: 1
+      providers:
+        - name: lab
+          folder: Slurm lab
+          type: file
+          options:
+            path: /var/lib/grafana/dashboards
+    dest: /etc/grafana/provisioning/dashboards/lab.yaml
+    mode: "0644"
+  notify: Restart grafana
+
+- name: Create the dashboards directory
+  ansible.builtin.file:
+    path: /var/lib/grafana/dashboards
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0755"
+
+- name: Download published dashboards
+  ansible.builtin.get_url:
+    url: https://grafana.com/api/dashboards/{{ item.id }}/revisions/{{ item.revision }}/download
+    dest: /var/lib/grafana/dashboards/{{ item.file }}
+    owner: grafana
+    group: grafana
+    mode: "0644"
+  loop: "{{ grafana_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+
+- name: Install the lab dashboards
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /var/lib/grafana/dashboards/{{ item }}
+    owner: grafana
+    group: grafana
+    mode: "0644"
+  loop: [lab-overview.json, slurm-fabric.json]
+
+- name: Start Grafana
+  ansible.builtin.systemd_service:
+    name: grafana-server
+    state: started
+    enabled: true
+
+- name: Apply changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Grafana
+  ansible.builtin.uri:
+    url: http://localhost:{{ grafana_port }}/api/health
+  register: health
+  retries: 30
+  delay: 2
+  until: health.status == 200
+
+- name: Set the admin password
+  ansible.builtin.command: grafana cli --homepath /usr/share/grafana admin reset-admin-password {{ grafana_admin_password }}
+  changed_when: false
+  no_log: true

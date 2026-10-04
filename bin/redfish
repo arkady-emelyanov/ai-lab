@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Redfish request to a GPU tray's BMC; extra arguments are passed to curl.
+#
+#   bin/redfish slurm-worker1 /redfish/v1/Systems/System_0
+#   bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0/Ports/NVLink_3/Settings \
+#       -X PATCH -d '{"LinkState": "Disabled"}'
+#   bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Actions/ComputerSystem.Reset \
+#       -X POST -d '{"ResetType": "ForceRestart"}'
+#
+# Uses the BMC credentials from inventory/group_vars/all.yml (bmc_username,
+# bmc_password); the BMC's certificate is self-signed.
+set -euo pipefail
+
+[[ $# -ge 2 ]] || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+tray=$1 path=$2
+shift 2
+
+repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+vars="$repo/inventory/group_vars/all.yml"
+user=$(sed -n 's/^bmc_username: *//p' "$vars")
+pass=$(sed -n 's/^bmc_password: *//p' "$vars")
+
+list() { incus list --all-projects --format json 2>/dev/null || sg incus-admin -c 'incus list --all-projects --format json'; }
+ip=$(list | jq -r --arg n "$tray-bmc" '.[] | select(.name == $n)
+    | (.state.network.eth0.addresses // [])[] | select(.family == "inet") | .address' | head -1)
+[[ -n $ip ]] || { echo "no running BMC $tray-bmc" >&2; exit 1; }
+
+exec curl -sSk -u "$user:$pass" -H 'Content-Type: application/json' "$@" "https://$ip$path"

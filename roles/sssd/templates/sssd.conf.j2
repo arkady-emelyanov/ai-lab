@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+[sssd]
+services = nss, pam
+domains = {{ ldap_domain }}
+
+[domain/{{ ldap_domain }}]
+id_provider = ldap
+auth_provider = ldap
+chpass_provider = ldap
+access_provider = permit
+ldap_uri = ldap://{{ ldap_server }}
+ldap_search_base = {{ ldap_base }}
+ldap_schema = rfc2307
+# Anonymous reads of posixAccount/posixGroup (slapd's default ACL allows it).
+ldap_id_use_start_tls = false
+# Password binds over plain LDAP (no TLS configured).
+ldap_auth_disable_tls_never_use_in_production = true
+cache_credentials = false
+enumerate = false

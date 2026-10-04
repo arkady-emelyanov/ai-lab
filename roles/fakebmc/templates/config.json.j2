@@ -1,0 +1,41 @@
+{% if inventory_hostname in groups['tray_bmc'] %}
+{
+  "role": "tray",
+  "listen": ":443",
+  "tray": "{{ bmc_tray }}",
+  "gpu_count": {{ fakegpu_count }},
+  "gpu_name": "{{ fakegpu_name }}",
+  "gpu_mem_mb": {{ fakegpu_mem_mb }},
+  "nvlinks": {{ fakegpu_nvlinks }},
+  "cluster_uuid": "{{ nvl_cluster_uuid }}",
+  "clique_id": {{ nvl_clique_id }},
+  "username": "{{ bmc_username }}",
+  "password": "{{ bmc_password }}",
+  "state_dir": "/var/lib/fakebmc",
+  "sideband_dir": "{{ sideband_bmc_path }}",
+  "incus": {
+    "url": "https://{{ bridge.stdout.split('/')[0] }}:{{ incus_api_port }}",
+    "project": "{{ trays_project }}",
+    "cert": "/etc/fakebmc/incus-client.crt",
+    "key": "/etc/fakebmc/incus-client.key",
+    "server_cert": "/etc/fakebmc/incus-server.crt"
+  }
+}
+{% else %}
+{
+  "role": "nvswitch",
+  "listen": ":443",
+  "gpu_count": {{ fakegpu_count }},
+  "nvlinks": {{ fakegpu_nvlinks }},
+  "switches": {{ nvswitch_count }},
+  "switch_ports": {{ nvswitch_ports }},
+  "username": "{{ bmc_username }}",
+  "password": "{{ bmc_password }}",
+  "state_dir": "/var/lib/fakebmc",
+  "trays": [
+{% for tray in groups['workers'] %}
+    {"name": "{{ tray }}", "sideband_dir": "/var/lib/fakebmc/sideband/{{ tray }}"}{{ ',' if not loop.last }}
+{% endfor %}
+  ]
+}
+{% endif %}

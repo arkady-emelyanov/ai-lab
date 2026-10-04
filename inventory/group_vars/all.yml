@@ -1,0 +1,175 @@
+# Repository root (inventory lives in <root>/inventory).
+repo_root: "{{ inventory_dir | dirname }}"
+
+# ---- Incus instances ----------------------------------------------------------
+incus_image: images:ubuntu/24.04/cloud
+incus_profile: default
+incus_bridge: incusbr0
+instance_limits:
+  controller: { cpu: 2, memory: 2GiB }
+  login: { cpu: 2, memory: 4GiB }
+  workers: { cpu: 4, memory: 8GiB }
+  bmc: { cpu: 1, memory: 256MiB }
+  storage: { cpu: 2, memory: 4GiB }
+  nvswitch: { cpu: 1, memory: 256MiB }
+# Project for the GPU trays; it shares the default project's profiles,
+# networks and storage volumes.
+trays_project: trays
+# Incus custom volume mounted at /shared on every instance (homes, job
+# scripts, venvs) - the cluster's shared filesystem.
+shared_pool: default
+shared_volume: cluster-shared
+shared_mount: /shared
+# Node-local "NVMe" scratch on each worker (dataset loaders, Ray spilling,
+# caches): one quota-limited volume per worker in a btrfs pool backed by a
+# sparse loop file, so only data actually written uses host disk.
+scratch_pool: local-nvme
+scratch_pool_driver: btrfs
+scratch_pool_size: 200GiB
+scratch_size_gib: 50
+scratch_mount: /scratch
+
+# ---- Slurm --------------------------------------------------------------------
+slurm_cluster_name: nvl8
+slurm_partition: gpu
+# Accounting: slurmdbd + MariaDB on the controller. Every user needs an
+# association (account) to run jobs.
+slurm_accounts:
+  - name: lab
+    description: Slurm lab
+    organization: example.com
+slurmdbd_db: slurm_acct_db
+# Must stay below the instance memory limit (MiB).
+slurm_node_memory_mb: 7500
+
+# ---- Users (LDAP + SSSD) -------------------------------------------------------
+# Users live only in OpenLDAP on the controller; every node resolves them via
+# SSSD. Each gets a private group (gid = uid), a home on /shared and a Slurm
+# association with `account`. Passwords are (re)applied on every configure run. SSH (root and users) uses the key in .secrets/ssh.
+ldap_domain: example.com
+ldap_base: dc=example,dc=com
+ldap_server: "{{ groups['controller'][0] }}"
+ldap_admin_dn: cn=admin,{{ ldap_base }}
+ldap_admin_password: "{{ lookup('file', repo_root ~ '/.secrets/ldap-admin.pass') }}"
+# Every user also gets an S3 identity on RustFS (access key = user name,
+# secret in .secrets/users/<name>.s3) limited to a bucket named after them;
+# credentials are written to ~/.aws in their home.
+cluster_users:
+  - name: joe
+    uid: 2001
+    comment: Joe <joe@example.com>
+    account: lab
+    password: joe
+ssh_key_dir: "{{ repo_root }}/.secrets/ssh"
+
+# Preinstalled on the login node.
+login_packages:
+  - build-essential
+  - git
+  - vim
+  - nano
+  - tmux
+  - htop
+  - tree
+  - rsync
+  - curl
+  - wget
+  - unzip
+  - less
+  - man-db
+  - python3-pip
+  - python3-venv
+  - python3-dev
+
+# ---- Fake GPUs: one NVL8 domain = 2 trays x 4 GPUs ------------------------------
+fakegpu_count: 4
+fakegpu_type: gb200
+fakegpu_name: NVIDIA GB200
+fakegpu_mem_mb: 189471
+fakegpu_nvlinks: 18
+# Shared by every tray of the NVLink domain; NVML reports it as the fabric
+# cluster UUID, which is how schedulers recognise one NVL domain.
+nvl_domain_name: nvl8
+nvl_cluster_uuid: 7f3c2a10-5b4e-4d6a-9c1e-2b8f0e6d4a91
+nvl_clique_id: 1
+fakegpu_prefix: /usr/local
+# Simulated operation times (kernels, copies, GEMMs, collectives): 1.0 is
+# roughly GB200 speed, 0 disables delays. Copies above copy_max_mb only cost
+# time, so big device buffers never use host RAM.
+fakegpu_latency_scale: 1.0
+fakegpu_copy_max_mb: 64
+# Shared between a tray and its BMC (the emulated I2C/MCTP sideband).
+sideband_tray_path: /var/lib/fakegpu/sideband
+sideband_bmc_path: /var/lib/fakebmc/sideband
+# Each tray's GPU occupancy file lives on a volume the switch tray host reads
+# (NVLink traffic and utilisation for fabric telemetry).
+telemetry_tray_path: /var/lib/fakegpu/telemetry
+
+# NVLink switch tray: switch chips and ports per chip (8 GPUs x 18 links fill
+# 2 x 72 ports), and the partition controller's gRPC port.
+nvswitch_count: 2
+nvswitch_ports: 72
+nmxc_port: 9370
+nmxc_metrics_port: 9372
+
+# Emulated InfiniBand compute fabric (fake ibnetdiscover on the trays) and
+# topograph on the controller generating topology.conf from it.
+ib_spine: LAB-IBSPINE-01
+ib_leaf: LAB-IBLEAF-01
+ib_hcas_per_node: 4
+topograph_port: 49021
+# Commit of dsx-ai-factory/topograph built by `make init`.
+topograph_ref: 258d446
+
+# ---- BMC (Redfish) ---------------------------------------------------------------
+bmc_username: root
+bmc_password: 0penBmc
+# Incus API on the bridge address, used by the BMCs for tray power control
+# with client certificates restricted to the trays project.
+incus_api_port: 8443
+
+# ---- Monitoring ----------------------------------------------------------------------
+gpu_exporter_version: 1.15.1
+gpu_exporter_port: 9835
+slurm_exporter_version: 1.8.0
+slurm_exporter_port: 9092
+prometheus_retention: 15d
+grafana_port: 3000
+grafana_admin_password: "{{ lookup('file', repo_root ~ '/.secrets/grafana.pass') }}"
+# Published dashboards (grafana.com id: pinned revision).
+grafana_dashboards:
+  - { id: 14574, revision: 15, file: nvidia-gpu-metrics.json }   # nvidia_gpu_exporter's own
+  - { id: 1860, revision: 45, file: node-exporter-full.json }
+
+# ---- Frameworks (make frameworks) -------------------------------------------------------
+frameworks_venv: /shared/venv
+torch_index: https://download.pytorch.org/whl/cu130
+frameworks_packages:
+  - torch
+  - "ray[default]"
+  - numpy
+  - boto3
+
+# ---- Storage: RustFS (S3) + JuiceFS ----------------------------------------------------
+storage_host: "{{ groups['storage'][0] }}"
+rustfs_version: 1.0.1
+rustfs_port: 9000
+rustfs_console_port: 9001
+# Incus volume holding the object data on the storage node.
+rustfs_volume: rustfs-data
+rustfs_access_key: "{{ lookup('file', repo_root ~ '/.secrets/rustfs.access') }}"
+rustfs_secret_key: "{{ lookup('file', repo_root ~ '/.secrets/rustfs.secret') }}"
+redis_password: "{{ lookup('file', repo_root ~ '/.secrets/redis.pass') }}"
+# RustFS client (rc): admin on the storage node, user CLI on Slurm nodes.
+rc_version: 0.1.36
+rc_base: https://github.com/rustfs/cli/releases/download/v{{ rc_version }}
+rc_tarball: rustfs-cli-linux-amd64-gnu-v{{ rc_version }}.tar.gz
+s3_endpoint: http://{{ storage_host }}:{{ rustfs_port }}
+juicefs_version: 1.4.1
+juicefs_name: pfs
+juicefs_bucket: pfs
+juicefs_mount: /pfs
+juicefs_meta_url: redis://{{ storage_host }}:6379/1
+# Local read cache: node-local scratch on the trays, the root disk elsewhere.
+juicefs_cache_dir: "{{ scratch_mount ~ '/juicefs-cache' if inventory_hostname in groups['workers'] else '/var/cache/juicefs' }}"
+juicefs_cache_mib: 10240

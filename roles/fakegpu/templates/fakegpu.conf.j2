@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+# Emulated GPU tray {{ tray }} of NVLink domain {{ nvl_domain_name }}.
+count = {{ fakegpu_count }}
+name = {{ fakegpu_name }}
+mem_mb = {{ fakegpu_mem_mb }}
+cluster_uuid = {{ nvl_cluster_uuid }}
+clique_id = {{ nvl_clique_id }}
+sideband_dir = {{ sideband_tray_path }}
+latency_scale = {{ fakegpu_latency_scale }}
+copy_max_mb = {{ fakegpu_copy_max_mb }}
+state_path = {{ telemetry_tray_path }}/occupancy

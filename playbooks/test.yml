@@ -1,0 +1,203 @@
+# End-to-end checks: jobs run through Slurm as a directory user, frameworks
+# see the emulated NVL8 domain, the BMCs answer, metrics reach Prometheus.
+# make test (after make up; framework jobs need make frameworks).
+- name: Slurm jobs as a cluster user
+  hosts: login
+  vars:
+    user: "{{ cluster_users[0].name }}"
+    home: "{{ shared_mount }}/home/{{ cluster_users[0].name }}"
+    venv_ready: "{{ venv.stat.exists }}"
+  tasks:
+    # Waits out jobs still completing (e.g. from a previous run).
+    - name: Both trays are up
+      ansible.builtin.command: sinfo -h -N -o "%N %T"
+      register: sinfo
+      changed_when: false
+      retries: 24
+      delay: 5
+      until: sinfo.stdout_lines | select('search', ' (idle|mixed|allocated)$') | list | length == groups['workers'] | length
+
+    - name: Check for the frameworks venv
+      ansible.builtin.stat:
+        path: "{{ frameworks_venv }}/bin/python"
+      register: venv
+
+    - name: Copy the examples
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/examples/"
+        dest: "{{ home }}/examples/"
+        owner: "{{ user }}"
+        group: "{{ user }}"
+        mode: preserve
+
+    - name: Run example jobs (sbatch --wait)
+      ansible.builtin.command:
+        cmd: su - {{ user }} -c 'cd examples && sbatch --wait --parsable {{ item.script }}'
+      loop:
+        - { script: gpu-topology.sbatch, needs_venv: false }
+        - { script: nvl8-hello.sbatch, needs_venv: false }
+        - { script: ddp-train.sbatch, needs_venv: true }
+        - { script: ray-cluster.sbatch, needs_venv: true }
+      loop_control:
+        label: "{{ item.script }}"
+      when: not item.needs_venv or venv_ready
+      register: jobs
+      changed_when: true
+
+    - name: Read job output
+      ansible.builtin.slurp:
+        src: "{{ home }}/examples/{{ item.item.script | replace('.sbatch', '') }}-{{ item.stdout | trim }}.out"
+      loop: "{{ jobs.results | rejectattr('skipped', 'defined') | list }}"
+      loop_control:
+        label: "{{ item.item.script }}"
+      register: outputs
+
+    - name: Check job output
+      ansible.builtin.assert:
+        that: (item.content | b64decode) is search(expected[item.item.item.script])
+        fail_msg: "{{ item.item.item.script }}: expected /{{ expected[item.item.item.script] }}/ in its output"
+        quiet: true
+      loop: "{{ outputs.results }}"
+      loop_control:
+        label: "{{ item.item.item.script }}"
+      vars:
+        expected:
+          gpu-topology.sbatch: "Completed, {{ nvl_cluster_uuid }}, {{ nvl_clique_id }}"
+          nvl8-hello.sbatch: "rank 7 on"
+          ddp-train.sbatch: "rank 7/8 on"
+          ray-cluster.sbatch: "8 tasks on"
+
+    - name: Jobs are recorded in accounting
+      ansible.builtin.command: sacct -n -X -u {{ user }} -o JobID,State -j {{ jobs.results | rejectattr('skipped', 'defined') | map(attribute='stdout') | map('trim') | join(',') }}
+      register: sacct
+      changed_when: false
+      failed_when: sacct.stdout_lines | reject('search', 'COMPLETED') | list | length > 0
+
+- name: Shared filesystem
+  hosts: cluster
+  tasks:
+    - name: JuiceFS is mounted
+      ansible.builtin.command: mountpoint -q {{ juicefs_mount }}
+      changed_when: false
+
+    - name: A file written on one node is readable on every other
+      ansible.builtin.copy:
+        content: "{{ ansible_date_time.epoch }}\n"
+        dest: "{{ juicefs_mount }}/.test-roundtrip"
+        mode: "0644"
+      when: inventory_hostname == groups['login'][0]
+
+    - name: Read it back everywhere
+      ansible.builtin.command: cat {{ juicefs_mount }}/.test-roundtrip
+      register: roundtrip
+      changed_when: false
+      failed_when: roundtrip.stdout | trim != hostvars[groups['login'][0]].ansible_date_time.epoch
+
+- name: Object storage
+  hosts: storage
+  tasks:
+    - name: RustFS is healthy
+      ansible.builtin.uri:
+        url: http://localhost:{{ rustfs_port }}/health
+
+- name: Per-user S3 from a job
+  hosts: login
+  vars:
+    user: "{{ cluster_users[0].name }}"
+  tasks:
+    - name: A user can write and list their own bucket, but not others
+      ansible.builtin.command:
+        cmd: >-
+          su - {{ user }} -c 'srun -N1 bash -c "echo test > /tmp/s3test-$$ &&
+          rc cp /tmp/s3test-$$ s3/{{ user }}/test/ && rc ls s3/{{ user }}/test/ &&
+          ! rc ls s3/{{ juicefs_bucket }}/ 2>/dev/null; rc rm --recursive --force s3/{{ user }}/test/ >/dev/null"'
+      register: s3test
+      changed_when: false
+      failed_when: s3test.rc != 0 or s3test.stdout is not search('s3test')
+
+- name: Tray BMCs
+  hosts: controller
+  tasks:
+    - name: Redfish reports each tray powered on with its GPUs
+      ansible.builtin.uri:
+        url: https://{{ item }}/redfish/v1/Systems/System_0
+        user: "{{ bmc_username }}"
+        password: "{{ bmc_password }}"
+        force_basic_auth: true
+        validate_certs: false
+      loop: "{{ groups['tray_bmc'] }}"
+      register: systems
+      failed_when: systems.json.PowerState != 'On' or systems.json.ProcessorSummary.Count != fakegpu_count
+
+    - name: The NVSwitch BMC exposes both switches with all ports
+      ansible.builtin.uri:
+        url: https://{{ groups['nvswitch_bmc'][0] }}/redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_{{ item }}/Ports
+        user: "{{ bmc_username }}"
+        password: "{{ bmc_password }}"
+        force_basic_auth: true
+        validate_certs: false
+      loop: "{{ range(nvswitch_count) | list }}"
+      register: ports
+      failed_when: ports.json['Members@odata.count'] != nvswitch_ports
+
+    - name: The partition controller listens
+      ansible.builtin.wait_for:
+        host: "{{ groups['nvswitch'][0] }}"
+        port: "{{ nmxc_port }}"
+        timeout: 5
+
+- name: Partition state reaches the trays
+  hosts: workers
+  tasks:
+    - name: Every GPU reports the NVLink domain and a clique
+      ansible.builtin.command: nvidia-smi --query-gpu=fabric.clusterUuid,fabric.cliqueId --format=csv,noheader
+      register: fabric
+      changed_when: false
+      failed_when: fabric.stdout_lines | length != fakegpu_count or fabric.stdout_lines | reject('search', nvl_cluster_uuid) | list | length > 0
+
+- name: Topology discovery
+  hosts: controller
+  tasks:
+    - name: topograph sees the trays in one NVLink block
+      ansible.builtin.command: update-topology --dry-run
+      register: topo
+      changed_when: false
+      failed_when: topo.stdout is not search('BlockName=\\S+ Nodes=' ~ (groups['workers'] | first | regex_replace('[0-9]+$', '')) ~ '\\[')
+
+- name: Metrics
+  hosts: controller
+  tasks:
+    - name: All Prometheus targets are up
+      ansible.builtin.uri:
+        url: http://localhost:9090/api/v1/targets
+      register: targets
+      failed_when: targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up') | list | length > 0
+
+    - name: Grafana serves the provisioned dashboards
+      ansible.builtin.uri:
+        url: http://localhost:{{ grafana_port }}/api/search?type=dash-db
+        user: admin
+        password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+      register: dashboards
+      failed_when: dashboards.json | length < grafana_dashboards | length + 2
+
+    - name: Slurm GPU allocation and NVLink fabric metrics are collected
+      ansible.builtin.uri:
+        url: http://localhost:9090/api/v1/query?query={{ item.query | urlencode }}
+      loop:
+        - { query: slurm_node_gpus, count: "{{ groups['workers'] | length }}" }
+        - { query: nvlink_gpu_links, count: "{{ fakegpu_count * groups['workers'] | length }}" }
+        - { query: nvswitch_ports_up, count: "{{ nvswitch_count }}" }
+      loop_control:
+        label: "{{ item.query }}"
+      register: series
+      retries: 6
+      delay: 10
+      until: series.json.data.result | length == item.count | int
+
+    - name: GPU metrics for every GPU
+      ansible.builtin.uri:
+        url: http://localhost:9090/api/v1/query?query=nvidia_smi_power_draw_watts
+      register: power
+      failed_when: power.json.data.result | length != fakegpu_count * groups['workers'] | length

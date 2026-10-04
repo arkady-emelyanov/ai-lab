@@ -1,0 +1,71 @@
+# Deletes all cluster instances. Volumes (shared, per-worker scratch) and the
+# munge key are kept; `make purge` also deletes the volumes and scratch pool.
+- name: Destroy Incus instances
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Delete instances
+      ansible.builtin.command: incus delete --force {{ item }} --project {{ hostvars[item].ansible_incus_project }}
+      loop: "{{ groups['cluster'] + groups['storage'] + groups['nvswitch'] + groups['bmc'] }}"
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+- name: Purge storage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [never, purge]
+  tasks:
+    - name: Delete scratch volumes
+      ansible.builtin.command: incus storage volume delete {{ scratch_pool }} scratch-{{ item }}
+      loop: "{{ groups['workers'] }}"
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+    - name: Delete the scratch pool
+      ansible.builtin.command: incus storage delete {{ scratch_pool }}
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+    - name: Delete sideband volumes
+      ansible.builtin.command: incus storage volume delete {{ shared_pool }} sideband-{{ hostvars[item].bmc_tray }}
+      loop: "{{ groups['tray_bmc'] }}"
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+    - name: Delete telemetry volumes
+      ansible.builtin.command: incus storage volume delete {{ shared_pool }} telemetry-{{ item }}
+      loop: "{{ groups['workers'] }}"
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+    - name: Revoke BMC certificates
+      ansible.builtin.command: incus config trust remove {{ item }}
+      loop: "{{ groups['tray_bmc'] }}"
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr | lower
+
+    - name: Delete the trays project
+      ansible.builtin.command: incus project delete {{ trays_project }}
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+    - name: Delete the object storage volume
+      ansible.builtin.command: incus storage volume delete {{ shared_pool }} {{ rustfs_volume }}
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+    - name: Delete the shared volume
+      ansible.builtin.command: incus storage volume delete {{ shared_pool }} {{ shared_volume }}
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr

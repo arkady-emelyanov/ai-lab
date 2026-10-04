@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+http:
+  port: {{ topograph_port }}
+  ssl: false
+provider: infiniband-bm
+engine: slurm
+requestAggregationDelay: 2s
+env:
+  PDSH_RCMD_TYPE: ssh

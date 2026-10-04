@@ -1,0 +1,7 @@
+# Slurm daemons resolve node addresses once; restart those already running.
+- name: Re-resolve peers
+  ansible.builtin.shell: |
+    for unit in slurmctld slurmd; do
+      if systemctl cat "$unit" >/dev/null 2>&1; then systemctl try-restart "$unit"; fi
+    done
+  changed_when: true

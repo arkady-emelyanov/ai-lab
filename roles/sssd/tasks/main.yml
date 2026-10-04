@@ -1,0 +1,59 @@
+# SSSD on every node: users, groups and password checks come from LDAP on the
+# controller.
+- name: Install SSSD
+  ansible.builtin.apt:
+    name: [sssd-ldap, libnss-sss, libpam-sss]
+
+- name: Configure SSSD
+  ansible.builtin.template:
+    src: sssd.conf.j2
+    dest: /etc/sssd/sssd.conf
+    mode: "0600"
+  notify: Restart sssd
+
+- name: Start SSSD
+  ansible.builtin.service:
+    name: sssd
+    state: started
+    enabled: true
+
+- name: Apply SSSD changes before resolving users
+  ansible.builtin.meta: flush_handlers
+
+- name: Check users resolve through SSSD
+  ansible.builtin.command: getent passwd {{ item.name }}
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: user_lookup
+  retries: 10
+  delay: 2
+  until: user_lookup.rc == 0
+  changed_when: false
+
+# Homes live on /shared; create them from the login node only.
+- name: Create home directories
+  ansible.builtin.copy:
+    src: /etc/skel/
+    dest: "{{ shared_mount }}/home/{{ item.name }}/"
+    remote_src: true
+    owner: "{{ item.uid }}"
+    group: "{{ item.uid }}"
+    mode: preserve
+    force: false
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: inventory_hostname in groups['login']
+
+- name: Restrict home directories
+  ansible.builtin.file:
+    path: "{{ shared_mount }}/home/{{ item.name }}"
+    state: directory
+    owner: "{{ item.uid }}"
+    group: "{{ item.uid }}"
+    mode: "0700"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: inventory_hostname in groups['login']

@@ -1,0 +1,90 @@
+# S3 access for users on the Slurm nodes: the rc CLI, and each user's
+# credentials in ~/.aws (read by the AWS CLI, boto3 and most S3 libraries).
+- name: Download the RustFS client (rc)
+  ansible.builtin.get_url:
+    url: "{{ rc_base }}/{{ rc_tarball }}"
+    dest: /usr/local/src/{{ rc_tarball }}
+    checksum: "sha256:{{ rc_base }}/{{ rc_tarball }}.sha256"
+    mode: "0644"
+
+- name: Install rc
+  ansible.builtin.unarchive:
+    src: /usr/local/src/{{ rc_tarball }}
+    dest: /usr/local/bin
+    remote_src: true
+    include: [rc]
+
+# Homes are shared; write them from the login node only.
+- name: User S3 credentials
+  when: inventory_hostname in groups['login']
+  block:
+    - name: Create ~/.aws and ~/.config/rc
+      ansible.builtin.file:
+        path: "{{ shared_mount }}/home/{{ item.0.name }}/{{ item.1 }}"
+        state: directory
+        owner: "{{ item.0.uid }}"
+        group: "{{ item.0.uid }}"
+        mode: "0700"
+      loop: "{{ cluster_users | product(['.aws', '.config', '.config/rc']) | list }}"
+      loop_control:
+        label: "{{ item.0.name }}: {{ item.1 }}"
+
+    - name: Write ~/.aws/credentials
+      ansible.builtin.copy:
+        content: |
+          [default]
+          aws_access_key_id = {{ item.name }}
+          aws_secret_access_key = {{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/users/' ~ item.name ~ '.s3 length=32 chars=ascii_letters,digits') }}
+        dest: "{{ shared_mount }}/home/{{ item.name }}/.aws/credentials"
+        owner: "{{ item.uid }}"
+        group: "{{ item.uid }}"
+        mode: "0600"
+      loop: "{{ cluster_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Write ~/.aws/config
+      ansible.builtin.copy:
+        content: |
+          [default]
+          endpoint_url = {{ s3_endpoint }}
+          region = us-east-1
+          s3 =
+              addressing_style = path
+        dest: "{{ shared_mount }}/home/{{ item.name }}/.aws/config"
+        owner: "{{ item.uid }}"
+        group: "{{ item.uid }}"
+        mode: "0600"
+      loop: "{{ cluster_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Configure rc with an `s3` alias
+      ansible.builtin.copy:
+        content: |
+          schema_version = 1
+
+          [defaults]
+          output = "human"
+          color = "auto"
+          progress = true
+
+          [[aliases]]
+          name = "s3"
+          endpoint = "{{ s3_endpoint }}"
+          access_key = "{{ item.name }}"
+          secret_key = "{{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/users/' ~ item.name ~ '.s3 length=32 chars=ascii_letters,digits') }}"
+          anonymous = false
+          region = "us-east-1"
+          signature = "v4"
+          bucket_lookup = "path"
+          insecure = false
+        dest: "{{ shared_mount }}/home/{{ item.name }}/.config/rc/config.toml"
+        owner: "{{ item.uid }}"
+        group: "{{ item.uid }}"
+        mode: "0600"
+      loop: "{{ cluster_users }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true

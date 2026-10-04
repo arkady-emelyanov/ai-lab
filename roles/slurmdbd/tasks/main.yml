@@ -1,0 +1,101 @@
+# Slurm accounting: MariaDB + slurmdbd on the controller, then the cluster,
+# accounts and user associations. Runs after the slurm role (sacctmgr needs
+# slurm.conf); slurmctld reconnects to slurmdbd on its own.
+- name: Install MariaDB and slurmdbd
+  ansible.builtin.apt:
+    name: [mariadb-server, slurmdbd]
+
+- name: Tune MariaDB for Slurm (slurmdbd warns below these values)
+  ansible.builtin.copy:
+    content: |
+      [mysqld]
+      innodb_buffer_pool_size = 256M
+      innodb_log_file_size = 64M
+      innodb_lock_wait_timeout = 900
+    dest: /etc/mysql/mariadb.conf.d/90-slurm.cnf
+    mode: "0644"
+  notify: Restart mariadb
+
+- name: Start MariaDB
+  ansible.builtin.service:
+    name: mariadb
+    state: started
+    enabled: true
+
+- name: Flush MariaDB config changes before slurmdbd connects
+  ansible.builtin.meta: flush_handlers
+
+# root authenticates over the unix socket, so no admin password is needed.
+- name: Create the accounting database and user
+  ansible.builtin.command:
+    cmd: mariadb
+    stdin: |
+      CREATE DATABASE IF NOT EXISTS {{ slurmdbd_db }};
+      CREATE USER IF NOT EXISTS 'slurm'@'localhost';
+      ALTER USER 'slurm'@'localhost' IDENTIFIED BY '{{ slurmdbd_password }}';
+      GRANT ALL ON {{ slurmdbd_db }}.* TO 'slurm'@'localhost';
+  vars:
+    slurmdbd_password: "{{ lookup('file', repo_root ~ '/.secrets/slurmdbd.pass') }}"
+  changed_when: false
+  no_log: true
+
+- name: Write slurmdbd.conf
+  ansible.builtin.template:
+    src: slurmdbd.conf.j2
+    dest: /etc/slurm/slurmdbd.conf
+    owner: slurm
+    group: slurm
+    mode: "0600"
+  vars:
+    slurmdbd_password: "{{ lookup('file', repo_root ~ '/.secrets/slurmdbd.pass') }}"
+  notify: Restart slurmdbd
+
+- name: Start slurmdbd
+  ansible.builtin.service:
+    name: slurmdbd
+    state: started
+    enabled: true
+
+- name: Apply slurmdbd config changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for slurmdbd to accept connections
+  ansible.builtin.command: sacctmgr -n -P show cluster format=cluster
+  register: clusters
+  retries: 15
+  delay: 2
+  until: clusters.rc == 0
+  changed_when: false
+
+- name: Register the cluster
+  ansible.builtin.command: sacctmgr -i add cluster {{ slurm_cluster_name }}
+  when: slurm_cluster_name not in clusters.stdout_lines
+  notify: Restart slurmctld after registration
+
+- name: List accounts
+  ansible.builtin.command: sacctmgr -n -P show account format=account
+  register: accounts
+  changed_when: false
+
+- name: Create accounts
+  ansible.builtin.command: >-
+    sacctmgr -i add account {{ item.name }} cluster={{ slurm_cluster_name }}
+    description="{{ item.description }}" organization="{{ item.organization }}"
+  loop: "{{ slurm_accounts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in accounts.stdout_lines
+
+- name: List user associations
+  ansible.builtin.command: sacctmgr -n -P show assoc format=user,account
+  register: assocs
+  changed_when: false
+
+- name: Associate users with their accounts
+  ansible.builtin.command: >-
+    sacctmgr -i add user {{ item.name }} account={{ item.account }}
+    defaultaccount={{ item.account }} cluster={{ slurm_cluster_name }}
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }} -> {{ item.account }}"
+  when: (item.name ~ '|' ~ item.account) not in assocs.stdout_lines

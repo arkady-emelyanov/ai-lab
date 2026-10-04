@@ -1,0 +1,5 @@
+- name: Restart fakenmxc
+  ansible.builtin.systemd_service:
+    name: fakenmxc
+    state: restarted
+    daemon_reload: true

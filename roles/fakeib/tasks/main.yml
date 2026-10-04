@@ -1,0 +1,13 @@
+# Emulated InfiniBand compute fabric: an ibnetdiscover look-alike describing
+# every tray's HCAs on one leaf switch under a spine (for topograph).
+- name: Install ibnetdiscover (fake)
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/fakeib/ibnetdiscover"
+    dest: /usr/local/sbin/ibnetdiscover
+    mode: "0755"
+
+- name: Describe the fabric
+  ansible.builtin.copy:
+    content: "{{ {'spine': ib_spine, 'leaf': ib_leaf, 'nodes': groups['workers'] | map('community.general.dict_kv', 'name') | map('combine', {'hcas': ib_hcas_per_node}) | list} | to_nice_json }}\n"
+    dest: /etc/fakeib.json
+    mode: "0644"

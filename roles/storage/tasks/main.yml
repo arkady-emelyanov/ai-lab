@@ -1,0 +1,134 @@
+# Storage node: RustFS (S3-compatible object storage) on its own Incus data
+# volume, and Redis as the JuiceFS metadata engine.
+
+# ---- RustFS ---------------------------------------------------------------------------
+
+- name: Install unzip
+  ansible.builtin.apt:
+    name: [unzip, redis-server]
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the rustfs user
+  ansible.builtin.user:
+    name: rustfs
+    system: true
+    home: /var/lib/rustfs
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Download RustFS
+  ansible.builtin.get_url:
+    url: "{{ rustfs_base }}/rustfs-linux-x86_64-gnu-v{{ rustfs_version }}.zip"
+    dest: /usr/local/src/rustfs-{{ rustfs_version }}.zip
+    checksum: "sha256:{{ rustfs_base }}/SHA256SUMS"
+    mode: "0644"
+  vars:
+    rustfs_base: https://github.com/rustfs/rustfs/releases/download/{{ rustfs_version }}
+
+- name: Unpack RustFS
+  ansible.builtin.unarchive:
+    src: /usr/local/src/rustfs-{{ rustfs_version }}.zip
+    dest: /usr/local/bin
+    remote_src: true
+    include: [rustfs, rustfs-cli]
+    mode: "0755"
+  notify: Restart rustfs
+
+- name: Create data and log directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: rustfs
+    group: rustfs
+    mode: "0750"
+  loop: [/var/lib/rustfs/data, /var/log/rustfs]
+
+- name: Configure RustFS
+  ansible.builtin.copy:
+    content: |
+      RUSTFS_VOLUMES=/var/lib/rustfs/data
+      RUSTFS_ADDRESS=:{{ rustfs_port }}
+      RUSTFS_CONSOLE_ENABLE=true
+      RUSTFS_CONSOLE_ADDRESS=:{{ rustfs_console_port }}
+      RUSTFS_ACCESS_KEY={{ rustfs_access_key }}
+      RUSTFS_SECRET_KEY={{ rustfs_secret_key }}
+      RUSTFS_OBS_LOG_DIRECTORY=/var/log/rustfs
+    dest: /etc/default/rustfs
+    owner: root
+    group: rustfs
+    mode: "0640"
+  notify: Restart rustfs
+
+- name: Install the RustFS unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=RustFS object storage
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=rustfs
+      Group=rustfs
+      EnvironmentFile=/etc/default/rustfs
+      ExecStart=/usr/local/bin/rustfs server
+      Restart=always
+      RestartSec=2
+      LimitNOFILE=1048576
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/rustfs.service
+    mode: "0644"
+  notify: Restart rustfs
+
+- name: Start RustFS
+  ansible.builtin.systemd_service:
+    name: rustfs
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ---- Redis (JuiceFS metadata) ---------------------------------------------------------
+
+- name: Configure Redis for JuiceFS metadata
+  ansible.builtin.copy:
+    content: |
+      # JuiceFS metadata engine: reachable from the cluster, password protected,
+      # persisted on every write.
+      bind 0.0.0.0
+      protected-mode yes
+      requirepass {{ redis_password }}
+      appendonly yes
+      appendfsync everysec
+      maxmemory-policy noeviction
+    dest: /etc/redis/conf.d-juicefs.conf
+    owner: redis
+    group: redis
+    mode: "0640"
+  notify: Restart redis
+
+- name: Include the JuiceFS settings
+  ansible.builtin.lineinfile:
+    path: /etc/redis/redis.conf
+    line: include /etc/redis/conf.d-juicefs.conf
+  notify: Restart redis
+
+- name: Start Redis
+  ansible.builtin.service:
+    name: redis-server
+    state: started
+    enabled: true
+
+- name: Apply changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for RustFS
+  ansible.builtin.uri:
+    url: http://localhost:{{ rustfs_port }}/health
+    status_code: [200]
+  register: health
+  retries: 20
+  delay: 2
+  until: health.status == 200

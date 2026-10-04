@@ -1,0 +1,101 @@
+# OpenLDAP directory for cluster identities (users and their private groups).
+# Nodes read it through SSSD; nothing else stores accounts.
+# The debconf module reads current values back with debconf-get-selections.
+- name: Install debconf-utils
+  ansible.builtin.apt:
+    name: debconf-utils
+
+- name: Check whether slapd is installed
+  ansible.builtin.command: dpkg-query -W -f='${Status}' slapd
+  register: slapd_pkg
+  changed_when: false
+  failed_when: false
+
+# Only before installation: debconf cannot compare password answers, so
+# preseeding an installed slapd would report a change on every run.
+- name: Preseed slapd
+  when: "'install ok installed' not in slapd_pkg.stdout"
+  ansible.builtin.debconf:
+    name: slapd
+    question: "{{ item.q }}"
+    vtype: "{{ item.t }}"
+    value: "{{ item.v }}"
+  loop:
+    - { q: slapd/no_configuration, t: boolean, v: "false" }
+    - { q: slapd/domain, t: string, v: "{{ ldap_domain }}" }
+    - { q: shared/organization, t: string, v: "{{ ldap_domain }}" }
+    - { q: slapd/password1, t: password, v: "{{ ldap_admin_password }}" }
+    - { q: slapd/password2, t: password, v: "{{ ldap_admin_password }}" }
+    - { q: slapd/purge_database, t: boolean, v: "false" }
+    - { q: slapd/move_old_database, t: boolean, v: "true" }
+  loop_control:
+    label: "{{ item.q }}"
+  no_log: true
+
+- name: Install OpenLDAP
+  ansible.builtin.apt:
+    name: [slapd, ldap-utils, python3-ldap]
+
+- name: Start slapd
+  ansible.builtin.service:
+    name: slapd
+    state: started
+    enabled: true
+
+- name: Create organizational units
+  community.general.ldap_entry:
+    dn: ou={{ item }},{{ ldap_base }}
+    objectClass: organizationalUnit
+    bind_dn: "{{ ldap_admin_dn }}"
+    bind_pw: "{{ ldap_admin_password }}"
+  loop: [people, groups]
+
+- name: Create user private groups
+  community.general.ldap_entry:
+    dn: cn={{ item.name }},ou=groups,{{ ldap_base }}
+    objectClass: posixGroup
+    attributes:
+      gidNumber: "{{ item.uid }}"
+      memberUid: "{{ item.name }}"
+    bind_dn: "{{ ldap_admin_dn }}"
+    bind_pw: "{{ ldap_admin_password }}"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create users
+  community.general.ldap_entry:
+    dn: uid={{ item.name }},ou=people,{{ ldap_base }}
+    objectClass: [inetOrgPerson, posixAccount]
+    attributes:
+      cn: "{{ item.comment }}"
+      sn: "{{ item.name }}"
+      mail: "{{ item.comment | regex_search('<(.*)>', '\\1') | first }}"
+      uidNumber: "{{ item.uid }}"
+      gidNumber: "{{ item.uid }}"
+      homeDirectory: "{{ shared_mount }}/home/{{ item.name }}"
+      loginShell: /bin/bash
+    bind_dn: "{{ ldap_admin_dn }}"
+    bind_pw: "{{ ldap_admin_password }}"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# Password per user: `password` from the user list, otherwise generated once on
+# the host (.secrets/users/<name>.pass). The salt is derived from the name so
+# the hash, and this task, are stable.
+- name: Set user passwords
+  community.general.ldap_attrs:
+    dn: uid={{ item.name }},ou=people,{{ ldap_base }}
+    attributes:
+      userPassword: "{CRYPT}{{ password | password_hash('sha512', salt) }}"
+    state: exact
+    bind_dn: "{{ ldap_admin_dn }}"
+    bind_pw: "{{ ldap_admin_password }}"
+  vars:
+    password: "{{ item.password | default(lookup('ansible.builtin.password', repo_root ~ '/.secrets/users/' ~ item.name ~ '.pass length=16 chars=ascii_letters,digits')) }}"
+    salt: "{{ (item.name ~ ldap_domain) | hash('sha1') | truncate(16, true, '') }}"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

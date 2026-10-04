@@ -1,0 +1,61 @@
+# Configures the Slurm cluster and the tray BMCs on the instances created by
+# provision.yml.
+- name: Base system
+  hosts: cluster
+  roles: [common, munge]
+
+- name: Identity directory
+  hosts: controller
+  roles: [ldap]
+
+- name: Identity clients and access
+  hosts: cluster
+  roles: [sssd, ssh]
+
+- name: Login node
+  hosts: login
+  roles: [login]
+
+- name: Emulated NVL8 GPU trays
+  hosts: workers
+  roles: [fakegpu]
+
+- name: Slurm
+  hosts: cluster
+  roles: [slurm]
+
+- name: Slurm accounting
+  hosts: controller
+  roles: [slurmdbd]
+
+- name: Storage node (RustFS, Redis, per-user S3)
+  hosts: storage
+  roles: [ssh, storage, s3users]
+
+- name: Shared filesystem (JuiceFS) and S3 clients
+  hosts: cluster
+  roles: [juicefs, s3client]
+
+- name: Emulated InfiniBand fabric
+  hosts: workers
+  roles: [fakeib]
+
+- name: Topology generation (topograph)
+  hosts: controller
+  roles: [topograph]
+
+- name: Monitoring
+  hosts: cluster
+  roles: [monitoring]
+
+- name: Dashboards
+  hosts: controller
+  roles: [grafana]
+
+- name: BMCs (Redfish)
+  hosts: bmc
+  roles: [ssh, fakebmc]
+
+- name: NVLink switch tray host (partition controller)
+  hosts: nvswitch
+  roles: [ssh, fakenmxc]

@@ -1,0 +1,47 @@
+# {{ ansible_managed }}
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  - job_name: node
+    static_configs:
+      - targets:
+{% for host in groups['cluster'] %}
+          - {{ host }}:9100
+{% endfor %}
+
+  - job_name: gpu
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+{% for host in groups['workers'] %}
+          - {{ host }}:{{ gpu_exporter_port }}
+{% endfor %}
+        labels:
+          nvl_domain: {{ nvl_domain_name }}
+
+  - job_name: juicefs
+    static_configs:
+      - targets:
+{% for host in groups['cluster'] %}
+          - {{ host }}:9567
+{% endfor %}
+
+  - job_name: slurm
+    scrape_interval: 30s
+    static_configs:
+      - targets: [localhost:{{ slurm_exporter_port }}]
+
+  - job_name: nvlink
+    static_configs:
+      - targets:
+{% for host in groups['nvswitch'] %}
+          - {{ host }}:{{ nmxc_metrics_port }}
+{% endfor %}
+        labels:
+          nvl_domain: {{ nvl_domain_name }}

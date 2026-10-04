@@ -1,0 +1,8 @@
+# {{ ansible_managed }}
+# {{ fakegpu_count }} emulated {{ fakegpu_name }} per tray. Links: -1 = self,
+# {{ fakegpu_nvlinks }} = NVLinks between two GPUs (all-to-all through NVSwitch).
+AutoDetect=off
+{% for i in range(fakegpu_count) %}
+NodeName={{ groups['workers'] | join(',') }} Name=gpu Type={{ fakegpu_type }} File=/dev/nvidia{{ i }} Links={% for j in range(fakegpu_count) %}{{ -1 if i == j else fakegpu_nvlinks }}{{ ',' if not loop.last }}{% endfor %}
+
+{% endfor %}

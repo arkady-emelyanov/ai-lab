@@ -1,0 +1,62 @@
+[← README](../README.md) · **Identity and access**
+
+# Identity and access
+
+## Overview
+
+Users exist once, in OpenLDAP on `slurm-control`, and every Slurm node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their LDAP password or their own SSH key; root logs in with the lab's admin key only. The same user list also creates each user's Slurm association and S3 identity.
+
+| Piece | Where | Notes |
+|---|---|---|
+| OpenLDAP (`slapd`) | `slurm-control` | base `dc=example,dc=com`; `ou=people`, `ou=groups`; user private groups (GID = UID) |
+| SSSD | every Slurm node | `id_provider`, `auth_provider` and `chpass_provider` = ldap |
+| sshd | every instance | root: key only; users: password or key |
+| `bin/ssh`, `bin/scp`, `bin/ssh-copy-id` | host | wrappers that resolve current addresses from Incus |
+
+## Usage
+
+**Connect from your machine:**
+
+| Command | Lands on | As |
+|---|---|---|
+| `bin/ssh slurm` | login node | `joe` (password `joe`, or joe's own key) |
+| `bin/ssh root@slurm` | login node | root (admin key `.secrets/ssh/id_ed25519`) |
+| `bin/ssh slurm-control` (or any instance name) | that instance | root |
+| `bin/ssh slurm sbatch < job.sh` | login node | runs a command, here submitting a job from stdin |
+| `bin/scp file slurm:` | login node | copies files |
+| `make shell`, `make shell-root`, `make shell-<instance>` | via `incus exec`, no SSH | joe / root / root |
+
+The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. To log in without a password, install your own key once: `bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub slurm`.
+
+**Add a user:** append an entry to `cluster_users` in `inventory/group_vars/all.yml` and run `make configure`:
+
+```yaml
+cluster_users:
+  - name: joe
+    uid: 2001
+    comment: Joe <joe@example.com>
+    account: lab        # Slurm account (must exist in slurm_accounts)
+    password: joe       # omit to generate one into .secrets/users/<name>.pass
+```
+
+This creates the LDAP entry and private group, the home with skeleton files, the Slurm association, the S3 user and bucket with credentials in the home. Passwords are re-applied on every `make configure`, so a change made with `passwd` is reverted.
+
+## Verification
+
+```
+bin/ssh root@slurm-worker1 getent passwd joe     # resolved via SSSD: joe:*:2001:2001:Joe <joe@example.com>:...
+bin/ssh root@slurm-worker1 grep -c '^joe:' /etc/passwd    # 0: no local account
+bin/ssh slurm id                                  # uid=2001(joe) gid=2001(joe) groups=2001(joe)
+bin/ssh root@slurm-control sacctmgr show assoc user=joe format=user,account
+```
+
+## Limitations
+
+- LDAP runs without TLS (`ldap_auth_disable_tls_never_use_in_production = true` in SSSD), so passwords cross the Incus bridge in clear.
+- Users authenticate to the login node; jobs on the trays run as the user via Slurm. Users cannot SSH from the login node to the trays unless they use agent forwarding with their own key.
+
+## References
+
+- [SSSD LDAP provider](https://sssd.io/docs/users/ldap_with_sssd.html)
+- [OpenLDAP admin guide](https://www.openldap.org/doc/admin26/)
+- Roles: `roles/ldap`, `roles/sssd`, `roles/ssh`, `roles/login`

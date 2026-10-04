@@ -1,0 +1,44 @@
+# Shared Python environment with ML frameworks on /shared, used by jobs on
+# every node: `source /shared/venv/bin/activate`. Several GB to download, so
+# separate from site.yml (make frameworks).
+- name: Frameworks venv on the shared volume
+  hosts: login
+  tasks:
+    - name: Create the venv with uv
+      ansible.builtin.shell: |
+        set -e
+        command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+        test -x {{ frameworks_venv }}/bin/python || uv venv --python 3.12 {{ frameworks_venv }}
+      args:
+        creates: "{{ frameworks_venv }}/bin/python"
+
+    - name: Install frameworks
+      ansible.builtin.command: >-
+        uv pip install --no-cache --python {{ frameworks_venv }}/bin/python
+        --index-url {{ torch_index }} --extra-index-url https://pypi.org/simple
+        --index-strategy unsafe-best-match
+        {{ frameworks_packages | join(' ') }}
+      register: install
+      changed_when: "'Installed' in install.stderr"
+      environment:
+        UV_LINK_MODE: copy
+
+    - name: Remove the download cache of earlier installs
+      ansible.builtin.file:
+        path: /shared/.cache/uv
+        state: absent
+
+    - name: Make the venv readable by all users
+      ansible.builtin.file:
+        path: "{{ frameworks_venv }}"
+        mode: u=rwX,g=rX,o=rX
+        recurse: true
+      changed_when: false
+
+    - name: Activate on login for everyone
+      ansible.builtin.copy:
+        content: |
+          # Shared ML frameworks (make frameworks)
+          [ -f {{ frameworks_venv }}/bin/activate ] && . {{ frameworks_venv }}/bin/activate
+        dest: /etc/profile.d/frameworks.sh
+        mode: "0644"

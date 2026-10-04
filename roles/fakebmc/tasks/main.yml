@@ -1,0 +1,86 @@
+# Redfish BMC (fakebmc, built on the host by `make init`): a GPU tray's BMC
+# (tray_bmc) or the NVLink switch tray's BMC (nvswitch_bmc).
+- name: Look up the Incus API address on the host
+  ansible.builtin.command: incus network get {{ incus_bridge }} ipv4.address
+  register: bridge
+  delegate_to: localhost
+  run_once: true
+  changed_when: false
+
+- name: Create BMC directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/fakebmc, mode: "0700" }
+    - { path: /var/lib/fakebmc, mode: "0755" }
+
+- name: Install the fakebmc binary
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/fakebmc/fakebmc"
+    dest: /usr/local/sbin/fakebmc
+    mode: "0755"
+  notify: Restart fakebmc
+
+- name: Install Incus credentials (client certificate restricted to the trays project)
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/.secrets/bmc/{{ item.src }}"
+    dest: /etc/fakebmc/{{ item.dest }}
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "{{ inventory_hostname }}.crt", dest: incus-client.crt, mode: "0644" }
+    - { src: "{{ inventory_hostname }}.key", dest: incus-client.key, mode: "0600" }
+    - { src: incus-server.crt, dest: incus-server.crt, mode: "0644" }
+  loop_control:
+    label: "{{ item.dest }}"
+  when: inventory_hostname in groups['tray_bmc']
+  notify: Restart fakebmc
+
+- name: Configure fakebmc
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: /etc/fakebmc/config.json
+    mode: "0600"
+  notify: Restart fakebmc
+
+- name: Install the systemd unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=fakebmc Redfish service for {{ bmc_tray | default('the NVLink switch tray') }}
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      ExecStart=/usr/local/sbin/fakebmc -config /etc/fakebmc/config.json
+      Restart=always
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/fakebmc.service
+    mode: "0644"
+  notify: Restart fakebmc
+
+- name: Start fakebmc
+  ansible.builtin.systemd_service:
+    name: fakebmc
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Check the Redfish service answers
+  ansible.builtin.uri:
+    url: https://localhost/redfish/v1/{{ 'Systems/System_0' if inventory_hostname in groups['tray_bmc'] else 'Fabrics/NVLinkFabric_0' }}
+    user: "{{ bmc_username }}"
+    password: "{{ bmc_password }}"
+    force_basic_auth: true
+    validate_certs: false
+  register: system
+  retries: 10
+  delay: 1
+  until: system.status == 200
