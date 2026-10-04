@@ -57,6 +57,29 @@ sbatch nvl8-hello.sbatch                        # one task per GPU across the do
 
 Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.secrets/grafana.pass`) and watch the **Slurm lab overview** while a job runs, for example `ddp-train.sbatch` from the [examples](docs/frameworks-and-examples.md).
 
+## Lab endpoints
+
+Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.0/24` here; yours may differ, see `incus network get incusbr0 ipv4.address`).
+
+| Service | Endpoint | Credentials | Docs |
+|---|---|---|---|
+| Login node (SSH) | `bin/ssh slurm` (10.107.111.11:22) | `joe` / `joe`, or your key | [Identity and access](docs/identity-and-access.md) |
+| Any instance as root (SSH) | `bin/ssh root@<instance>` | `.secrets/ssh/id_ed25519` | [Identity and access](docs/identity-and-access.md) |
+| Grafana | http://10.107.111.10:3000 | `admin` / `.secrets/grafana.pass` | [Monitoring](docs/monitoring.md) |
+| Prometheus | http://10.107.111.10:9090 | none | [Monitoring](docs/monitoring.md) |
+| Slurm exporter | http://10.107.111.10:9092/metrics | none | [Monitoring](docs/monitoring.md) |
+| topograph API | http://10.107.111.10:49021 | none | [Topology discovery](docs/topology.md) |
+| RustFS S3 API | http://10.107.111.12:9000 | admin: `.secrets/rustfs.access` / `.secrets/rustfs.secret`; users: `<name>` / `.secrets/users/<name>.s3` | [Storage](docs/storage.md) |
+| RustFS console | http://10.107.111.12:9001/rustfs/console/ | as S3 API | [Storage](docs/storage.md) |
+| GPU tray BMCs (Redfish) | https://10.107.111.31, https://10.107.111.32 (`bin/redfish slurm-worker1 …`) | `root` / `0penBmc` | [BMCs](docs/bmc-redfish.md) |
+| NVLink switch tray BMC (Redfish) | https://10.107.111.33 (`bin/redfish slurm-nvswitch …`) | `root` / `0penBmc` | [BMCs](docs/bmc-redfish.md) |
+| NVLink partition controller (gRPC) | 10.107.111.34:9370 (plaintext, reflection) | none | [NVLink partitions](docs/nvlink-partitions.md) |
+| Fabric telemetry | http://10.107.111.34:9372/metrics | none | [NVLink partitions](docs/nvlink-partitions.md) |
+| GPU exporters | http://10.107.111.21:9835/metrics, http://10.107.111.22:9835/metrics | none | [Monitoring](docs/monitoring.md) |
+| node_exporter, JuiceFS metrics | `<Slurm node>:9100/metrics`, `<Slurm node>:9567/metrics` | none | [Monitoring](docs/monitoring.md) |
+
+The BMCs use self-signed certificates (`curl -k`).
+
 ## Layers and components
 
 Each page covers: overview, usage, verification, references (plus configuration and limitations where relevant).

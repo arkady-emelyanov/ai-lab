@@ -36,7 +36,7 @@ rc ls s3/joe/runs/
 python -c "import boto3; print(boto3.client('s3').list_objects_v2(Bucket='joe').get('KeyCount'))"
 ```
 
-Admin access (all buckets): keys in `.secrets/rustfs.access` and `.secrets/rustfs.secret`, e.g. the console at `http://10.107.111.12:9001`.
+Admin access (all buckets): keys in `.secrets/rustfs.access` and `.secrets/rustfs.secret`, e.g. the console at `http://10.107.111.12:9001/rustfs/console/`.
 
 ## Configuration
 
