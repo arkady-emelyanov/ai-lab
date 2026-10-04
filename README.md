@@ -155,3 +155,7 @@ docs/                    component documentation
 ## Limitations
 
 The emulation stops at computation: GPU kernels do not run, so results are not numerically meaningful, and copies larger than 64 MiB are timed but not performed. Containers share the host kernel, so Slurm jobs are not confined by cgroups. Slurm is 23.11, LDAP has no TLS, and the fabric is a single NVLink domain with one InfiniBand leaf. Details are in each component page and in [Architecture](docs/architecture.md#limitations).
+
+## License
+
+Apache License 2.0, see [LICENSE](LICENSE). Third-party components keep their own licences (see [Third-party software](#third-party-software)).
