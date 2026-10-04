@@ -1,5 +1,7 @@
 # Slurm lab: an emulated NVIDIA GB200 NVL8 GPU cluster
 
+![The Lab banner](/docs/assets/social-preview.png)
+
 A complete GPU cluster on one Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates one NVIDIA GB200-class **NVL8** NVLink domain (two GPU trays with four GPUs each, an NVLink switch tray, BMCs, an InfiniBand fabric) and runs the real software stack around it: Slurm with accounting, LDAP identity, shared and object storage, Prometheus and Grafana.
 
 The GPUs are fake but behave like real ones to everything above them: applications launched through Slurm initialise PyTorch, NCCL or Ray, every call succeeds and takes realistic simulated time, and the GPUs report realistic load, memory, power and temperature. Nothing is computed. Management interfaces (Redfish BMCs, an NVLink partition controller, fabric telemetry) change what the GPUs report and what Slurm schedules on.
