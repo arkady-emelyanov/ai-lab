@@ -1,4 +1,4 @@
-# Slurm lab: an emulated NVL8 GPU cluster
+# Slurm lab: an emulated NVIDIA GB200 NVL8 GPU cluster
 
 A complete GPU cluster on one Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates one NVIDIA GB200-class **NVL8** NVLink domain (two GPU trays with four GPUs each, an NVLink switch tray, BMCs, an InfiniBand fabric) and runs the real software stack around it: Slurm with accounting, LDAP identity, shared and object storage, Prometheus and Grafana.
 
@@ -10,6 +10,14 @@ What you get:
 - **Hardware management:** Redfish BMCs per tray (power, NVLink ports) and for the switch tray (144 ports), an NMX-C-style partition controller, topology discovery with topograph.
 - **Platform:** shared filesystem (JuiceFS on RustFS), per-user S3 buckets, node-local scratch, Prometheus with GPU, Slurm and NVLink fabric metrics, Grafana dashboards.
 - **Operations:** one command to build, one to test, everything in Ansible.
+
+## Use cases
+
+- **Cluster software and self-service:** develop job portals, scheduler plugins, quota and accounting tools, or user-facing CLIs against a real Slurm, LDAP and S3 stack with GPU nodes.
+- **Monitoring and operations:** build dashboards, alerts and runbooks on realistic GPU, Slurm and NVLink fabric metrics; rehearse node power cycles, NVLink failures and partition changes through Redfish and the partition controller.
+- **Hardware management tooling:** test Redfish clients, BMC automation and topology-aware scheduling (topograph, `topology/block`) without a rack.
+- **AI pipelines:** run PyTorch DDP and Ray jobs end to end on 8 GPUs with realistic timing and memory accounting, to test orchestration, data movement and failure handling rather than numerics.
+- **CI for infrastructure code:** `make up && make test` builds and verifies the whole cluster from scratch on one machine.
 
 ## Architecture at a glance
 
