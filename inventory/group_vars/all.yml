@@ -168,6 +168,10 @@ gpu_exporter_version: 1.15.1
 gpu_exporter_port: 9835
 slurm_exporter_version: 1.8.0
 slurm_exporter_port: 9092
+# Out-of-band: Redfish exporter on the controller, polling the BMCs.
+redfish_exporter_version: 2.6.3
+redfish_exporter_sha256: 4e52e7101894646995d30219cceae22f2faaaeb1bde932306495a3d29081f054
+redfish_exporter_port: 9348
 prometheus_retention: 15d
 grafana_port: 3000
 grafana_admin_password: "{{ lookup('file', repo_root ~ '/.secrets/grafana.pass') }}"

@@ -54,6 +54,7 @@ bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 - **Power** goes through the Incus API: the tray BMCs hold a client certificate restricted to the `trays` project, so a BMC can start, stop and restart the GPU trays but cannot reach any other instance. Resets apply pending NVLink settings first.
 - **Link state** goes through the tray's sideband volume: the tray BMC writes `nvlink-disabled`, the switch BMC `nvlink-disabled-switch` (one file per tray), and the tray's NVML reports those links inactive. The partition controller and the fabric metrics see the same state ([NVLink partitions](nvlink-partitions.md)).
 - State (pending settings, sticky flags, switch settings, uploaded config) is persisted under `/var/lib/fakebmc`.
+- **Polled out of band**: Prometheus scrapes the tray BMCs through a generic Redfish exporter on the controller, so a tray powered off through Redfish shows as `idrac_system_power_on 0` while its BMC stays up ([Monitoring](monitoring.md#overview)).
 
 ## Verification
 
@@ -63,11 +64,12 @@ bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0 | jq .UU
 bin/redfish sched-nvswitch /redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_0/Ports | jq '."Members@odata.count"'   # 72
 ```
 
-`make test` checks that both tray BMCs report their tray powered on with 4 GPUs and that the switch BMC exposes 72 ports per switch. `make test-bmc` runs the BMC integration tests, with disruptive and GB200-conformance tiers ([Testing](testing.md#bmc-integration-tests)).
+`make test` checks that both tray BMCs report their tray powered on with 4 GPUs, also as seen through the Redfish exporter, and that the switch BMC exposes 72 ports per switch. `make test-bmc` runs the BMC integration tests, with disruptive and GB200-conformance tiers ([Testing](testing.md#bmc-integration-tests)).
 
 ## Limitations
 
 - Only the resources listed above; no firmware update, sensors, logs or event subscriptions.
+- The Redfish exporter exports CPUs only, so the trays' GPUs (Redfish processors of type `GPU`) appear in it only as a count; and it cannot discover the switch BMC, which has no `Systems` collection.
 - `SwitchIsolationMode` governs switch-to-switch trunks, which a single switch tray does not have: it is stored and reported, without effect on GPU links.
 - After `ForceOff`, Slurm marks the tray down only after `SlurmdTimeout`; Kubernetes marks the node `NotReady` after its node-monitor grace period.
 - The resource layout is simpler than NVIDIA's GB200 BMCs: GPUs are processors of `System_0` (not of the HMC's `HGX_Baseboard_0`), there are no `HGX_GPU_<n>` / `MGX_NVSwitch_<n>` chassis or `HGX_BMC_0` manager, and the switch tray's fabric is `NVLinkFabric_0` (NVIDIA: `MGX_NVLinkFabric_0`). `make test-bmc-conformance` lists these gaps.

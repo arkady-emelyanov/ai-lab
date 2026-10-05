@@ -6,7 +6,8 @@ serving.
 Real-hardware behaviour checked: NVLink Settings apply at the next reset; a
 plain disable lasts one reset, a sticky one until cleared
 (Oem.Nvidia.LinkDisableSticky, NvidiaPort schema); a powered-off tray shows its
-NVLinks down; the scheduler takes the tray back once it is powered on."""
+NVLinks down and reads as off in the Redfish exporter while its BMC answers;
+the scheduler takes the tray back once it is powered on."""
 import pytest
 
 from conftest import CONTROLLER, ROOT, eventually, gpu_port_path
@@ -129,9 +130,12 @@ def test_force_off_and_on(lab, power_tray):
         assert b.get(gpu_port_path(0, 0))["LinkStatus"] == "LinkDown"
         assert lab.sh(tray, "true", check=False) is None, "tray OS still answers after ForceOff"
         assert b.request("GET", ROOT, auth=False).status_code == 200, "the BMC must stay up with the host off"
+        # Out of band, as Prometheus sees it: the BMC answers, the tray is off.
+        assert lab.oob_metric(f"{tray}-bmc", "idrac_system_power_on") == 0
     finally:
         if b.get(f"{ROOT}/Systems/System_0")["PowerState"] != "On":
             reset(lab, tray, "On")
+    assert lab.oob_metric(f"{tray}-bmc", "idrac_system_power_on") == 1
     # Taken out before the test, so back in that state: the node agent
     # (slurmd, kubelet) re-registered.
     held = SCHED[lab.scheduler]["held"]

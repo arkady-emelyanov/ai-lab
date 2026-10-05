@@ -47,6 +47,24 @@ scrape_configs:
       - targets: ['{{ groups["controller"][0] }}:{{ ksm_node_port }}']
 {% endif %}
 
+  # Out of band: each tray's BMC through the Redfish exporter (target = BMC).
+  - job_name: redfish
+    scrape_interval: 30s
+    scrape_timeout: 20s
+    static_configs:
+{% for bmc in groups['tray_bmc'] %}
+      - targets: [{{ bmc }}]
+        labels:
+          tray: {{ hostvars[bmc].bmc_tray }}
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:{{ redfish_exporter_port }}
+
   - job_name: nvlink
     static_configs:
       - targets:

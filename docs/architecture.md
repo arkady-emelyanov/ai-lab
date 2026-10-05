@@ -62,9 +62,10 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
 **Out-of-band management.** BMCs control their tray and see its state; the switch tray's BMC and host change link and partition state. The out-of-band links (I2C/MCTP, NVLink management) are Incus volumes shared between the parties:
 
 ```
- bin/redfish (HTTPS, Redfish) ─┬─► sched-worker1-bmc .31 ── power (Incus API, project trays) ──► sched-worker1
-                               ├─► sched-worker2-bmc .32 ── power ───────────────────────────► sched-worker2
-                               └─► sched-nvswitch-bmc .33   (switch ports, isolation, config upload)
+ bin/redfish (HTTPS, Redfish) ─────┐
+ Redfish exporter on sched-control ┼─► sched-worker1-bmc .31 ── power (Incus API, project trays) ──► sched-worker1
+ (polled by Prometheus)            ├─► sched-worker2-bmc .32 ── power ───────────────────────────► sched-worker2
+                                   └─► sched-nvswitch-bmc .33   (switch ports, isolation, config upload; not polled)
 
  tray BMC         ── nvlink-disabled ────────┐
  switch BMC       ── nvlink-disabled-switch ─┼─► sideband-<tray> ─► the tray's fake NVML (link state, clique)
@@ -94,7 +95,7 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
 
 | Instance | Address | Role | Incus project | Docs |
 |---|---|---|---|---|
-| `sched-control` | 10.107.111.10 | slurmctld, slurmdbd + MariaDB, Slurm exporter (or k3s server and add-ons, kube-state-metrics), OpenLDAP, Prometheus, Grafana, topograph | default | [Slurm](slurm.md), [Kubernetes](kubernetes.md), [Identity](identity-and-access.md), [Monitoring](monitoring.md), [Topology](topology.md) |
+| `sched-control` | 10.107.111.10 | slurmctld, slurmdbd + MariaDB, Slurm exporter (or k3s server and add-ons, kube-state-metrics), OpenLDAP, Prometheus, Redfish exporter, Grafana, topograph | default | [Slurm](slurm.md), [Kubernetes](kubernetes.md), [Identity](identity-and-access.md), [Monitoring](monitoring.md), [Topology](topology.md) |
 | `sched-login` | 10.107.111.11 | login node: Slurm client or kubectl, tools, user shells | default | [Identity & access](identity-and-access.md) |
 | `sched-storage` | 10.107.111.12 | RustFS (S3), Redis (JuiceFS metadata) | default | [Storage](storage.md) |
 | `sched-worker1`, `sched-worker2` | .21, .22 | GPU trays: slurmd (or k3s agent and device plugin), 4 fake GB200 each, GPU exporter | `trays` | [Fake GPUs](fake-gpu.md), [Slurm](slurm.md), [Kubernetes](kubernetes.md) |

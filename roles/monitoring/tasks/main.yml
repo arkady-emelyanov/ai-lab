@@ -180,3 +180,63 @@
         name: prometheus
         state: started
         enabled: true
+
+# Out-of-band view of the trays: a generic Redfish exporter (idrac_exporter
+# works with any Redfish BMC) on the controller, scraped per BMC through
+# ?target=, like blackbox_exporter. Runs as prometheus (after its install).
+- name: Redfish exporter
+  when: inventory_hostname in groups['controller']
+  block:
+    - name: Download idrac_exporter
+      ansible.builtin.get_url:
+        url: https://github.com/mrlhansen/idrac_exporter/releases/download/v{{ redfish_exporter_version }}/idrac_exporter-v{{ redfish_exporter_version }}-linux-amd64
+        dest: /usr/local/bin/idrac_exporter
+        checksum: "sha256:{{ redfish_exporter_sha256 }}"
+        mode: "0755"
+      notify: Restart redfish exporter
+
+    - name: Configure idrac_exporter
+      ansible.builtin.copy:
+        content: |
+          address: 0.0.0.0
+          port: {{ redfish_exporter_port }}
+          timeout: 10
+          hosts:
+            default:
+              username: {{ bmc_username }}
+              password: {{ bmc_password }}
+          metrics:
+            system: true
+            sensors: true
+            power: true
+            manager: true
+        dest: /etc/prometheus/idrac.yml
+        owner: prometheus
+        mode: "0600"
+      notify: Restart redfish exporter
+
+    - name: Install the Redfish exporter unit
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=Prometheus exporter for Redfish BMCs
+          After=network-online.target
+
+          [Service]
+          User=prometheus
+          ExecStart=/usr/local/bin/idrac_exporter -config /etc/prometheus/idrac.yml
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/redfish-exporter.service
+        mode: "0644"
+      notify: Restart redfish exporter
+
+    - name: Start the Redfish exporter
+      ansible.builtin.systemd_service:
+        name: redfish-exporter
+        state: started
+        enabled: true
+        daemon_reload: true

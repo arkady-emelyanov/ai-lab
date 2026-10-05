@@ -198,19 +198,36 @@ class Lab:
 
     def metrics(self):
         """Fabric telemetry of the partition controller: [(name, labels, value)]."""
-        url = f"http://{self.ips[self.nvswitch]}:{self.vars['nmxc_metrics_port']}/metrics"
-        samples = []
-        for line in requests.get(url, timeout=10).text.splitlines():
-            if m := re.match(r"^(\w+)(?:\{(.*)\})? (\S+)$", line):
-                labels = dict(re.findall(r'(\w+)="([^"]*)"', m[2] or ""))
-                samples.append((m[1], labels, float(m[3])))
-        return samples
+        return scrape(f"http://{self.ips[self.nvswitch]}:{self.vars['nmxc_metrics_port']}/metrics")
 
     def metric(self, name, **labels):
         """Value of the one series of name whose labels include labels."""
-        found = [v for n, l, v in self.metrics() if n == name and labels.items() <= l.items()]
-        assert len(found) == 1, f"{name}{labels}: {len(found)} matching series"
-        return found[0]
+        return one(self.metrics(), name, **labels)
+
+    def oob_metric(self, bmc, name, **labels):
+        """A series from the Redfish exporter on the controller, scraping bmc
+        now (out-of-band monitoring, as Prometheus sees it)."""
+        url = f"http://{self.ips[CONTROLLER]}:{self.vars['redfish_exporter_port']}/metrics?target={bmc}"
+        return one(scrape(url), name, **labels)
+
+
+def scrape(url):
+    """Prometheus text format: [(name, labels, value)]."""
+    r = requests.get(url, timeout=30)
+    r.raise_for_status()
+    samples = []
+    for line in r.text.splitlines():
+        if m := re.match(r"^(\w+)(?:\{(.*)\})? (\S+)$", line):
+            labels = dict(re.findall(r'(\w+)="([^"]*)"', m[2] or ""))
+            samples.append((m[1], labels, float(m[3])))
+    return samples
+
+
+def one(samples, name, **labels):
+    """Value of the one series of name whose labels include labels."""
+    found = [v for n, l, v in samples if n == name and labels.items() <= l.items()]
+    assert len(found) == 1, f"{name}{labels}: {len(found)} matching series"
+    return found[0]
 
 
 def _read_vars():
