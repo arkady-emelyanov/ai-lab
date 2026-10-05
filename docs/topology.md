@@ -58,6 +58,7 @@ bin/ssh sched-control systemctl list-timers update-topology.timer
 ## Limitations
 
 - topograph emits a `BlockSizes` line that Slurm 23.11 does not support; `update-topology` drops it.
+- A tray that does not answer (powered off through its BMC, or down) is left out of the generated topology until it answers again, so its block shrinks or disappears within a minute. Slurm keeps scheduling on the tray until `SlurmdTimeout` marks it down.
 - The InfiniBand fabric exists only as `ibnetdiscover` output: there is no RDMA traffic, and the fabric has one leaf and one spine.
 
 ## References

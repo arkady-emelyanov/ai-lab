@@ -34,7 +34,7 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 
 **Management inputs.** NVML reads the tray's sideband (written by the BMCs and the partition controller): NVLinks disabled by the tray BMC or switch BMC report inactive (`nvidia-smi topo -m` shows e.g. `NV16`), and each GPU reports the clique of its NVLink partition.
 
-**Visible GPUs.** As with the real driver, a process sees only the GPUs whose device node `/dev/nvidia<n>` exists in its mount namespace: all of them on the tray, only the allocated ones in a Kubernetes pod (CDI injects one node per GPU). On top of that, `CUDA_VISIBLE_DEVICES` is honoured (indices and UUIDs), so a Slurm job sees exactly the GPUs Slurm gave it. GPU identities (UUID, serial, PCI address) derive from the tray name in `/etc/fakegpu.conf` (`host`), so a container, whose hostname differs, sees the tray's GPUs.
+**Visible GPUs.** As with the real driver, a process sees only the GPUs whose device node `/dev/nvidia<n>` exists in its mount namespace: all of them on the tray, only the allocated ones in a Kubernetes pod (CDI injects one node per GPU). On top of that, CUDA honours `CUDA_VISIBLE_DEVICES` (indices and UUIDs), so a Slurm job's CUDA programs see exactly the GPUs Slurm gave it. NVML, and therefore `nvidia-smi`, ignores `CUDA_VISIBLE_DEVICES`, as the real one does: inside a Slurm job it lists all four GPUs of the tray. Real clusters hide the others from `nvidia-smi` with device cgroups (`ConstrainDevices=yes`), which unprivileged containers cannot use; in a Kubernetes pod only the allocated device nodes exist, so `nvidia-smi` lists only those. GPU identities (UUID, serial, PCI address) derive from the tray name in `/etc/fakegpu.conf` (`host`), so a container, whose hostname differs, sees the tray's GPUs.
 
 ## Usage
 
@@ -69,7 +69,7 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 
 ```
 bin/ssh sched-worker1 nvidia-smi -L                          # 4 × NVIDIA GB200 with UUIDs
-bin/ssh slurm 'srun -N1 --gpus-per-node=2 nvidia-smi -L'    # Slurm: a job sees its 2 GPUs
+bin/ssh slurm 'srun -N1 --gpus-per-node=2 bash -c "echo \$CUDA_VISIBLE_DEVICES; nvidia-smi -L -i \$CUDA_VISIBLE_DEVICES"'   # Slurm: the job's 2 GPUs
 bin/ssh slurm 'cd examples/kubernetes && ./submit --wait nvl8-hello.yaml'   # k3s: 8 pods, one GPU each
 bin/ssh slurm sbatch < examples/slurm/gpu-topology.sbatch    # topology, NVLink matrix, fabric per tray
 ```
