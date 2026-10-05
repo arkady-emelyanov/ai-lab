@@ -130,6 +130,32 @@ func (s *Server) nvswitchRoutes(auth func(string, http.HandlerFunc)) {
 	auth("PATCH "+f+"/{fab}/Switches/{sw}/Ports/{port}", s.switchPortPatch)
 	auth("POST "+f+"/{fab}/upload-switch-config", s.uploadSwitchConfig)
 	auth("DELETE "+f+"/{fab}/upload-switch-config", s.deleteSwitchConfig)
+
+	// The switch tray's own host (the CPU running NVOS and the partition
+	// controller), so generic Redfish clients find a system to discover.
+	auth("GET "+root+"/Systems", s.systems)
+	auth("GET "+root+"/Systems/{sys}", s.switchSystem)
+}
+
+func (s *Server) switchSystem(w http.ResponseWriter, r *http.Request) {
+	if !s.checkSystem(w, r) {
+		return
+	}
+	writeJSON(w, 200, obj{
+		"@odata.id":    root + "/Systems/" + systemID,
+		"@odata.type":  "#ComputerSystem.v1_20_0.ComputerSystem",
+		"Id":           systemID,
+		"Name":         "System",
+		"SystemType":   "Physical",
+		"Manufacturer": "NVIDIA",
+		"Model":        "NVLink5 switch tray",
+		"PowerState":   "On",
+		"Status":       obj{"State": "Enabled", "Health": "OK"},
+		"Links": obj{
+			"Chassis":   []obj{link(root + "/Chassis/" + s.chassisID())},
+			"ManagedBy": []obj{link(root + "/Managers/" + managerID)},
+		},
+	})
 }
 
 func (s *Server) checkFabric(w http.ResponseWriter, r *http.Request) bool {

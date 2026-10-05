@@ -21,7 +21,7 @@
     src: "{{ repo_root }}/fakebmc/fakebmc"
     dest: /usr/local/sbin/fakebmc
     mode: "0755"
-  notify: Restart fakebmc
+  notify: [Restart fakebmc, Restart the Redfish exporter]
 
 - name: Install Incus credentials (client certificate restricted to the trays project)
   ansible.builtin.copy:

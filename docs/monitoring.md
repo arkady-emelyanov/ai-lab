@@ -13,7 +13,7 @@ Prometheus on `sched-control` scrapes every layer; Grafana on the same host pres
 | `slurm` (Slurm mode) | controller `:9092`, every 30 s | [prometheus-slurm-exporter](https://github.com/rivosinc/prometheus-slurm-exporter) v1.8.0 (CLI mode) | nodes, CPUs, memory, partitions, jobs per account/user and state |
 | `nvlink` | `sched-nvswitch:9372` | `fakenmxc` | NVLink partitions, link state, traffic, switch ports ([NVLink partitions](nvlink-partitions.md#usage)) |
 | `juicefs` | all cluster nodes `:9567` | JuiceFS client | `/pfs` operations and throughput |
-| `redfish` | tray BMCs, through the controller `:9348`, every 30 s | [idrac_exporter](https://github.com/mrlhansen/idrac_exporter) v2.6.3, a generic Redfish exporter (iDRAC, iLO, XClarity, Supermicro, OpenBMC) | out of band: tray power state, system and BMC health, machine info ([BMC and Redfish](bmc-redfish.md)) |
+| `redfish` | all BMCs, through the controller `:9348`, every 30 s | [idrac_exporter](https://github.com/mrlhansen/idrac_exporter) v2.6.3, a generic Redfish exporter (iDRAC, iLO, XClarity, Supermicro, OpenBMC) | out of band: tray power state, GPU temperatures, system and BMC health, machine info ([BMCs](bmc-redfish.md)) |
 | `kube-state-metrics` (k3s mode) | controller NodePort `:30808` | [kube-state-metrics](https://github.com/kubernetes/kube-state-metrics) | nodes and their allocatable GPUs, pods' GPU requests, jobs |
 
 **Slurm GPU allocation.** The Slurm exporter has no GPU metrics; `slurm-gpu-metrics` (systemd timer, every 15 s) writes them for node_exporter's textfile collector on the controller:
@@ -41,6 +41,7 @@ Prometheus on `sched-control` scrapes every layer; Grafana on the same host pres
 | `idrac_system_power_on` | `tray` | 1 when the BMC reports the tray `PowerState: On` |
 | `idrac_system_health`, `idrac_manager_health` | `status` | 0 OK, 1 Warning, 2 Critical |
 | `idrac_system_machine_info` | `hostname`, `manufacturer`, `model` | tray identity from the BMC |
+| `idrac_sensors_temperature` | `name` (`GPU_<n>`) | GPU temperature read by the BMC; equals `nvidia_smi_temperature_gpu` of the same GPU |
 
 GPU metrics reflect the simulated load ([Fake GPUs](fake-gpu.md#how-it-works)): they move with real jobs.
 
@@ -55,7 +56,7 @@ Dashboards (folder *Lab*):
 
 | Dashboard | Content |
 |---|---|
-| **Lab overview** | GPU utilisation, memory, power and temperature per tray and GPU; processes on GPUs; domain power; JuiceFS throughput; tray power from the BMCs next to the GPU exporters' state |
+| **Lab overview** | GPU utilisation, memory, power and temperature per tray and GPU; processes on GPUs; domain power; JuiceFS throughput; tray power from the BMCs next to the GPU exporters' state; GPU temperature in band (NVML) vs out of band (BMC) |
 | **Scheduler & NVLink fabric** | GPUs allocated vs total, GPUs per node and user, jobs and nodes by state; unhealthy GPUs, switch ports down, partitions, NVLink and NVSwitch throughput |
 | **Nvidia GPU Metrics** | the GPU exporter's own dashboard (grafana.com 14574) |
 | **Node Exporter Full** | grafana.com 1860 |

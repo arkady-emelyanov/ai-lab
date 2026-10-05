@@ -136,9 +136,10 @@ fakegpu_copy_max_mb: 64
 # Shared between a tray and its BMC (the emulated I2C/MCTP sideband).
 sideband_tray_path: /var/lib/fakegpu/sideband
 sideband_bmc_path: /var/lib/fakebmc/sideband
-# Each tray's GPU occupancy file lives on a volume the switch tray host reads
-# (NVLink traffic and utilisation for fabric telemetry).
+# Each tray's GPU occupancy file lives on a volume its BMC (GPU sensors) and
+# the switch tray host (NVLink traffic and utilisation) read.
 telemetry_tray_path: /var/lib/fakegpu/telemetry
+telemetry_bmc_path: /var/lib/fakebmc/telemetry
 
 # NVLink switch tray: switch chips and ports per chip (8 GPUs x 18 links fill
 # 2 x 72 ports), and the partition controller's gRPC port.

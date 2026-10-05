@@ -75,11 +75,17 @@ func (s *Server) routes() http.Handler {
 		auth("POST "+root+"/Systems/{sys}/Actions/ComputerSystem.Reset", s.reset)
 		auth("GET "+root+"/Systems/{sys}/Processors", s.processors)
 		auth("GET "+root+"/Systems/{sys}/Processors/{gpu}", s.processor)
+		auth("GET "+root+"/Systems/{sys}/Processors/{gpu}/EnvironmentMetrics", s.gpuEnvironment)
 		auth("GET "+root+"/Systems/{sys}/Processors/{gpu}/Ports", s.ports)
 		auth("GET "+root+"/Systems/{sys}/Processors/{gpu}/Ports/{port}", s.port)
 		auth("PATCH "+root+"/Systems/{sys}/Processors/{gpu}/Ports/{port}", s.patchPort)
 		auth("GET "+root+"/Systems/{sys}/Processors/{gpu}/Ports/{port}/Settings", s.portSettings)
 		auth("PATCH "+root+"/Systems/{sys}/Processors/{gpu}/Ports/{port}/Settings", s.patchPortSettings)
+		auth("GET "+root+"/Chassis/{ch}/Sensors", s.sensorList)
+		auth("GET "+root+"/Chassis/{ch}/Sensors/{sensor}", s.sensor)
+		auth("GET "+root+"/Chassis/{ch}/EnvironmentMetrics", s.chassisEnvironment)
+		auth("GET "+root+"/Chassis/{ch}/ThermalSubsystem", s.thermalSubsystem)
+		auth("GET "+root+"/Chassis/{ch}/ThermalSubsystem/ThermalMetrics", s.thermalMetrics)
 	}
 
 	auth("GET "+root+"/Chassis", s.chassisList)
@@ -219,6 +225,7 @@ func (s *Server) serviceRoot(w http.ResponseWriter, r *http.Request) {
 		"Chassis":        link(root + "/Chassis"),
 		"Managers":       link(root + "/Managers"),
 		"SessionService": link(root + "/SessionService"),
+		"Systems":        link(root + "/Systems"),
 		"Links":          obj{"Sessions": link(root + "/SessionService/Sessions")},
 	}
 	if s.isSwitch() {
@@ -226,7 +233,6 @@ func (s *Server) serviceRoot(w http.ResponseWriter, r *http.Request) {
 		body["Fabrics"] = link(root + "/Fabrics")
 	} else {
 		body["Product"] = s.cfg.GPUName + " compute tray (fakebmc)"
-		body["Systems"] = link(root + "/Systems")
 	}
 	writeJSON(w, 200, body)
 }
@@ -468,20 +474,21 @@ func (s *Server) processor(w http.ResponseWriter, r *http.Request) {
 	}
 	path := fmt.Sprintf("%s/Systems/%s/Processors/GPU_%d", root, systemID, g)
 	writeJSON(w, 200, obj{
-		"@odata.id":     path,
-		"@odata.type":   "#Processor.v1_20_0.Processor",
-		"Id":            fmt.Sprintf("GPU_%d", g),
-		"Name":          fmt.Sprintf("GPU %d", g),
-		"ProcessorType": "GPU",
-		"Manufacturer":  "NVIDIA",
-		"Model":         s.cfg.GPUName,
-		"UUID":          gpuUUID(s.cfg.Tray, g),
-		"SerialNumber":  gpuSerial(s.cfg.Tray, g),
-		"Status":        obj{"State": "Enabled", "Health": "OK"},
-		"MemorySummary": obj{"TotalMemoryGiB": s.cfg.GPUMemMB / 1024},
-		"Location":      obj{"PartLocation": obj{"LocationType": "Slot", "LocationOrdinalValue": g}},
-		"Ports":         link(path + "/Ports"),
-		"Links":         obj{"Chassis": link(root + "/Chassis/" + chassisID)},
+		"@odata.id":          path,
+		"@odata.type":        "#Processor.v1_20_0.Processor",
+		"Id":                 fmt.Sprintf("GPU_%d", g),
+		"Name":               fmt.Sprintf("GPU %d", g),
+		"ProcessorType":      "GPU",
+		"Manufacturer":       "NVIDIA",
+		"Model":              s.cfg.GPUName,
+		"UUID":               gpuUUID(s.cfg.Tray, g),
+		"SerialNumber":       gpuSerial(s.cfg.Tray, g),
+		"Status":             obj{"State": "Enabled", "Health": "OK"},
+		"MemorySummary":      obj{"TotalMemoryGiB": s.cfg.GPUMemMB / 1024},
+		"Location":           obj{"PartLocation": obj{"LocationType": "Slot", "LocationOrdinalValue": g}},
+		"Ports":              link(path + "/Ports"),
+		"EnvironmentMetrics": link(path + "/EnvironmentMetrics"),
+		"Links":              obj{"Chassis": link(root + "/Chassis/" + chassisID)},
 		"Oem": obj{"Nvidia": obj{
 			"@odata.type":  "#NvidiaProcessor.v1_4_0.NvidiaGPU",
 			"PCIeBusId":    gpuPCIBusID(g),
@@ -637,21 +644,27 @@ func (s *Server) chassis(w http.ResponseWriter, r *http.Request) {
 			"Model":        "NVLink5 switch tray",
 			"PowerState":   "On",
 			"Status":       obj{"State": "Enabled", "Health": "OK"},
-			"Links":        obj{"ManagedBy": []obj{link(root + "/Managers/" + managerID)}},
+			"Links": obj{
+				"ComputerSystems": []obj{link(root + "/Systems/" + systemID)},
+				"ManagedBy":       []obj{link(root + "/Managers/" + managerID)},
+			},
 		})
 		return
 	}
 	power, status := s.powerState()
 	writeJSON(w, 200, obj{
-		"@odata.id":    root + "/Chassis/" + chassisID,
-		"@odata.type":  "#Chassis.v1_23_0.Chassis",
-		"Id":           chassisID,
-		"Name":         s.cfg.Tray,
-		"ChassisType":  "Sled",
-		"Manufacturer": "NVIDIA",
-		"Model":        s.cfg.GPUName + " compute tray",
-		"PowerState":   power,
-		"Status":       status,
+		"@odata.id":          root + "/Chassis/" + chassisID,
+		"@odata.type":        "#Chassis.v1_23_0.Chassis",
+		"Id":                 chassisID,
+		"Name":               s.cfg.Tray,
+		"ChassisType":        "Sled",
+		"Manufacturer":       "NVIDIA",
+		"Model":              s.cfg.GPUName + " compute tray",
+		"PowerState":         power,
+		"Status":             status,
+		"Sensors":            link(root + "/Chassis/" + chassisID + "/Sensors"),
+		"EnvironmentMetrics": link(root + "/Chassis/" + chassisID + "/EnvironmentMetrics"),
+		"ThermalSubsystem":   link(root + "/Chassis/" + chassisID + "/ThermalSubsystem"),
 		"Links": obj{
 			"ComputerSystems": []obj{link(root + "/Systems/" + systemID)},
 			"ManagedBy":       []obj{link(root + "/Managers/" + managerID)},
@@ -686,11 +699,10 @@ func (s *Server) manager(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) managerLinks() obj {
-	l := obj{"ManagerForChassis": []obj{link(root + "/Chassis/" + s.chassisID())}}
-	if !s.isSwitch() {
-		l["ManagerForServers"] = []obj{link(root + "/Systems/" + systemID)}
+	return obj{
+		"ManagerForChassis": []obj{link(root + "/Chassis/" + s.chassisID())},
+		"ManagerForServers": []obj{link(root + "/Systems/" + systemID)},
 	}
-	return l
 }
 
 // A BMC reset drops all sessions; the tray keeps running.

@@ -65,12 +65,13 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
  bin/redfish (HTTPS, Redfish) ─────┐
  Redfish exporter on sched-control ┼─► sched-worker1-bmc .31 ── power (Incus API, project trays) ──► sched-worker1
  (polled by Prometheus)            ├─► sched-worker2-bmc .32 ── power ───────────────────────────► sched-worker2
-                                   └─► sched-nvswitch-bmc .33   (switch ports, isolation, config upload; not polled)
+                                   └─► sched-nvswitch-bmc .33   (switch ports, isolation, config upload)
 
  tray BMC         ── nvlink-disabled ────────┐
  switch BMC       ── nvlink-disabled-switch ─┼─► sideband-<tray> ─► the tray's fake NVML (link state, clique)
  sched-nvswitch   ── fabric-clique ──────────┘
- CUDA processes   ── occupancy ────────────────► telemetry-<tray> ─► sched-nvswitch (fabric metrics)
+ CUDA processes   ── occupancy ────────────────► telemetry-<tray> ─┬─► sched-nvswitch (fabric metrics)
+                                                                  └─► tray BMC (GPU sensors, read-only)
 ```
 
 ## Layers

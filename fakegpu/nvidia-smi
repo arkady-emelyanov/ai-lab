@@ -82,7 +82,7 @@ class Gpu:
         self.util = util.gpu
         self.mem_util = util.memory
         self.temp = uint("nvmlDeviceGetTemperature", h, 0)
-        self.power = uint("nvmlDeviceGetPowerUsage", h) // 1000
+        self.power = uint("nvmlDeviceGetPowerUsage", h) / 1000  # W, milliwatt resolution
         self.power_limit = uint("nvmlDeviceGetPowerManagementLimit", h) // 1000
         self.pstate = uint("nvmlDeviceGetPerformanceState", h)
         self.sm_clock = uint("nvmlDeviceGetClockInfo", h, 1)
@@ -140,7 +140,7 @@ def table(devs):
     for g in devs:
         left1 = f" {g.index:>3}  {g.name[:24]:<24}"
         left2 = f" N/A   {g.temp:>2}C    P{g.pstate:<2}"
-        power = f"{g.power}W / {g.power_limit}W"
+        power = f"{g.power:.0f}W / {g.power_limit}W"
         print(f"|{left1}{'On':>{40 - len(left1)}} | {g.bus_id[4:]:<16}   Off | {0:>20} |")
         print(f"|{left2}{power:>{40 - len(left2)}} | {f'{g.mem_used}MiB / {g.mem_total}MiB':>22} | {g.util:>6}%      Default |")
         print(f"|{'':41}|{'':24}|{'Disabled':>21} |")
@@ -279,7 +279,7 @@ def dmon(ids, count):
     n = 0
     while count is None or n < count:
         for g in gpus(ids):
-            print(f"  {g.index:>3} {g.power:>6} {g.temp:>6} {g.temp + 4:>6} {g.util:>6} {g.mem_util:>6} {0:>6} {0:>6} "
+            print(f"  {g.index:>3} {g.power:>6.0f} {g.temp:>6} {g.temp + 4:>6} {g.util:>6} {g.mem_util:>6} {0:>6} {0:>6} "
                   f"{g.mem_clock:>6} {g.sm_clock:>6}", flush=True)
         n += 1
         if count is None or n < count:

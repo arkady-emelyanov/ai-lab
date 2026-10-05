@@ -429,7 +429,7 @@
         - { query: sched_node_gpus_alloc, count: "{{ groups['workers'] | length }}" }
         - { query: nvlink_gpu_links, count: "{{ fakegpu_count * groups['workers'] | length }}" }
         - { query: nvswitch_ports_up, count: "{{ nvswitch_count }}" }
-        - { query: idrac_system_power_on == 1, count: "{{ groups['tray_bmc'] | length }}" }
+        - { query: idrac_system_power_on == 1, count: "{{ groups['bmc'] | length }}" }
       loop_control:
         label: "{{ item.query }}"
       register: series

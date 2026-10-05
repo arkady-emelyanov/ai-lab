@@ -132,6 +132,9 @@ def test_force_off_and_on(lab, power_tray):
         assert b.request("GET", ROOT, auth=False).status_code == 200, "the BMC must stay up with the host off"
         # Out of band, as Prometheus sees it: the BMC answers, the tray is off.
         assert lab.oob_metric(f"{tray}-bmc", "idrac_system_power_on") == 0
+        # GPUs without power have no readings.
+        t = b.get(f"{ROOT}/Chassis/Chassis_0/Sensors/GPU_0_TEMP_0")
+        assert t["Reading"] is None and t["Status"]["State"] == "UnavailableOffline"
     finally:
         if b.get(f"{ROOT}/Systems/System_0")["PowerState"] != "On":
             reset(lab, tray, "On")

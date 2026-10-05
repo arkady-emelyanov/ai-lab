@@ -204,11 +204,11 @@ class Lab:
         """Value of the one series of name whose labels include labels."""
         return one(self.metrics(), name, **labels)
 
-    def oob_metric(self, bmc, name, **labels):
+    def oob_metric(self, bmc, metric, **labels):
         """A series from the Redfish exporter on the controller, scraping bmc
         now (out-of-band monitoring, as Prometheus sees it)."""
         url = f"http://{self.ips[CONTROLLER]}:{self.vars['redfish_exporter_port']}/metrics?target={bmc}"
-        return one(scrape(url), name, **labels)
+        return one(scrape(url), metric, **labels)
 
 
 def scrape(url):
@@ -223,10 +223,10 @@ def scrape(url):
     return samples
 
 
-def one(samples, name, **labels):
-    """Value of the one series of name whose labels include labels."""
-    found = [v for n, l, v in samples if n == name and labels.items() <= l.items()]
-    assert len(found) == 1, f"{name}{labels}: {len(found)} matching series"
+def one(samples, metric, **labels):
+    """Value of the one series of metric whose labels include labels."""
+    found = [v for n, l, v in samples if n == metric and labels.items() <= l.items()]
+    assert len(found) == 1, f"{metric}{labels}: {len(found)} matching series"
     return found[0]
 
 

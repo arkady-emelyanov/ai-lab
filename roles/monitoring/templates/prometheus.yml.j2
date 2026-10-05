@@ -47,7 +47,7 @@ scrape_configs:
       - targets: ['{{ groups["controller"][0] }}:{{ ksm_node_port }}']
 {% endif %}
 
-  # Out of band: each tray's BMC through the Redfish exporter (target = BMC).
+  # Out of band: every BMC through the Redfish exporter (target = BMC).
   - job_name: redfish
     scrape_interval: 30s
     scrape_timeout: 20s
@@ -56,6 +56,11 @@ scrape_configs:
       - targets: [{{ bmc }}]
         labels:
           tray: {{ hostvars[bmc].bmc_tray }}
+{% endfor %}
+{% for bmc in groups['nvswitch_bmc'] %}
+      - targets: [{{ bmc }}]
+        labels:
+          tray: {{ groups['nvswitch'][0] }}
 {% endfor %}
     relabel_configs:
       - source_labels: [__address__]

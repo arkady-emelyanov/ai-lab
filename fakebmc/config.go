@@ -23,7 +23,10 @@ type Config struct {
 	Password    string `json:"password"`
 	StateDir    string `json:"state_dir"`
 	SidebandDir string `json:"sideband_dir"`
-	Incus       Incus  `json:"incus"`
+	// The tray's GPU occupancy file (fake GPU stack's shared state), read
+	// only: source of the GPU sensors.
+	TelemetryPath string `json:"telemetry_path"`
+	Incus         Incus  `json:"incus"`
 
 	// nvswitch role: the switch chips, their ports, and the trays whose GPUs
 	// are cabled to them (in order; GPU numbering continues across trays).

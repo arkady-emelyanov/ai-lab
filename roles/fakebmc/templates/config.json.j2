@@ -13,6 +13,7 @@
   "password": "{{ bmc_password }}",
   "state_dir": "/var/lib/fakebmc",
   "sideband_dir": "{{ sideband_bmc_path }}",
+  "telemetry_path": "{{ telemetry_bmc_path }}/occupancy",
   "incus": {
     "url": "https://{{ bridge.stdout.split('/')[0] }}:{{ incus_api_port }}",
     "project": "{{ trays_project }}",

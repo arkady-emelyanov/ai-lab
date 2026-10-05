@@ -260,13 +260,18 @@
       changed_when: tv.rc == 0
       failed_when: tv.rc != 0 and 'already exists' not in tv.stderr
 
-    - name: Attach telemetry volumes to trays (read-write) and the switch tray host (read-only)
+    # The tray's BMC reads its GPU sensors from it (the emulated I2C/SMBus
+    # path to the GPUs), the switch tray host the NVLink traffic.
+    - name: Attach telemetry volumes to trays (read-write), their BMCs and the switch tray host (read-only)
       ansible.builtin.command: >-
         incus config device add {{ item.1 }} telemetry-{{ item.0 }} disk
         pool={{ shared_pool }} source=telemetry-{{ item.0 }}
-        path={{ telemetry_tray_path if item.1 == item.0 else '/var/lib/fakenmxc/telemetry/' ~ item.0 }}
+        path={{ telemetry_tray_path if item.1 == item.0 else telemetry_bmc_path if item.1 in groups['tray_bmc']
+                else '/var/lib/fakenmxc/telemetry/' ~ item.0 }}
         readonly={{ item.1 != item.0 }} --project {{ hostvars[item.1].ansible_incus_project }}
-      loop: "{{ (groups['workers'] | zip(groups['workers']) | list) + (groups['workers'] | product(groups['nvswitch']) | list) }}"
+      loop: >-
+        {{ (groups['workers'] | zip(groups['workers']) | list) + (groups['workers'] | product(groups['nvswitch']) | list)
+           + (groups['tray_bmc'] | map('extract', hostvars, 'bmc_tray') | zip(groups['tray_bmc']) | list) }}
       loop_control:
         label: "{{ item.1 }}: telemetry-{{ item.0 }}"
       register: tdev

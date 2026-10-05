@@ -352,6 +352,58 @@
         }
       ],
       "id": 8
+    },
+    {
+      "type": "timeseries",
+      "title": "Hottest GPU per tray: NVML (in band) vs BMC (out of band)",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "max by (instance) (nvidia_smi_temperature_gpu)",
+          "legendFormat": "{{instance}} NVML",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (tray) (idrac_sensors_temperature{name=~\"GPU_.*\"})",
+          "legendFormat": "{{tray}} BMC",
+          "refId": "B"
+        }
+      ],
+      "id": 9
     }
   ],
   "tags": [

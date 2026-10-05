@@ -8,7 +8,7 @@ The lab runs three BMCs, one per tray, each in its own container, serving Redfis
 
 | BMC | Address | Role | Manages |
 |---|---|---|---|
-| `sched-worker1-bmc`, `sched-worker2-bmc` | .31, .32 | `tray` | the GPU tray: power, its 4 GPUs and their 18 NVLink ports each |
+| `sched-worker1-bmc`, `sched-worker2-bmc` | .31, .32 | `tray` | the GPU tray: power, its 4 GPUs, their 18 NVLink ports each and their temperature and power sensors |
 | `sched-nvswitch-bmc` | .33 | `nvswitch` | the NVLink switch tray: fabric, 2 NVSwitch chips × 72 ports |
 
 Credentials: `root` / `0penBmc` (OpenBMC's default; `bmc_username`, `bmc_password`). Basic auth and Redfish sessions (`X-Auth-Token`) are supported; the service root is unauthenticated.
@@ -24,8 +24,11 @@ Credentials: `root` / `0penBmc` (OpenBMC's default; `bmc_username`, `bmc_passwor
 | `/redfish/v1/Systems/System_0` | `GET` (PowerState, ProcessorSummary); `POST Actions/ComputerSystem.Reset` with `ResetType` `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, `ForceRestart`, `PowerCycle` |
 | `…/Processors/GPU_<n>` | `GET`: model, UUID (matches `nvidia-smi`), serial, PCIe address, NVLink fabric clique |
 | `…/GPU_<n>/Ports/NVLink_<k>` | `GET`; `PATCH {"Oem": {"Nvidia": {"LinkDisableSticky": true}}}` |
+| `…/Processors/GPU_<n>/EnvironmentMetrics` | `GET`: GPU temperature and power (`TemperatureCelsius`, `PowerWatts`, linked to their sensors), power limit |
 | `…/GPU_<n>/Ports/NVLink_<k>/Settings` | `GET`; `PATCH {"LinkState": "Disabled" \| "Enabled"}`, applied at the next tray reset |
 | `/redfish/v1/Chassis/Chassis_0`, `/redfish/v1/Managers/BMC_0` | `GET`; `POST Actions/Manager.Reset` (drops sessions) |
+| `…/Chassis_0/Sensors/<id>` | `GET`: `GPU_<n>_TEMP_0` (°C), `GPU_<n>_Power_0` (W), `Total_GPU_Power_0`; no reading (`UnavailableOffline`) with the tray off |
+| `…/Chassis_0/ThermalSubsystem/ThermalMetrics`, `…/Chassis_0/EnvironmentMetrics` | `GET`: all GPU temperatures (`TemperatureReadingsCelsius`); the tray's GPU power. No fans: the tray is liquid-cooled |
 | `/redfish/v1/SessionService/Sessions` | `POST` login, `GET`, `DELETE` |
 
 **Switch tray BMC:**
@@ -33,6 +36,7 @@ Credentials: `root` / `0penBmc` (OpenBMC's default; `bmc_username`, `bmc_passwor
 | Resource | Methods |
 |---|---|
 | `/redfish/v1/Fabrics/NVLinkFabric_0` | `GET` (shows an uploaded switch configuration) |
+| `/redfish/v1/Systems/System_0` | `GET`: the switch tray's host, always on (lets generic Redfish clients discover the BMC) |
 | `…/Switches/NVSwitch_<n>` | `GET`; `PATCH {"Oem": {"Nvidia": {"SwitchIsolationMode": "SwitchCommunicationEnabled" \| "SwitchCommunicationDisabled", "PPCIeModeEnabled": bool}}}` |
 | `…/Switches/NVSwitch_<n>/Ports/NVLink_<k>` | `GET` (`Oem.Nvidia.RemoteEndpoint`: tray, GPU, UUID, link); `PATCH {"LinkState": …}`, effective immediately |
 | `…/NVLinkFabric_0/upload-switch-config` | `POST` multipart with one part `ImportFile` (stored, not interpreted); `DELETE` |
@@ -54,7 +58,8 @@ bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 - **Power** goes through the Incus API: the tray BMCs hold a client certificate restricted to the `trays` project, so a BMC can start, stop and restart the GPU trays but cannot reach any other instance. Resets apply pending NVLink settings first.
 - **Link state** goes through the tray's sideband volume: the tray BMC writes `nvlink-disabled`, the switch BMC `nvlink-disabled-switch` (one file per tray), and the tray's NVML reports those links inactive. The partition controller and the fabric metrics see the same state ([NVLink partitions](nvlink-partitions.md)).
 - State (pending settings, sticky flags, switch settings, uploaded config) is persisted under `/var/lib/fakebmc`.
-- **Polled out of band**: Prometheus scrapes the tray BMCs through a generic Redfish exporter on the controller, so a tray powered off through Redfish shows as `idrac_system_power_on 0` while its BMC stays up ([Monitoring](monitoring.md#overview)).
+- **Sensors** read the tray's GPU state (the fake GPU stack's occupancy file, on a volume mounted read-only in the BMC: the emulated I2C/SMBus path to the GPUs) and apply the fake NVML's own model to it, the same formulas and clock, so temperature and power match `nvidia-smi` and the GPU exporter at the same moment ([Fake GPUs](fake-gpu.md#how-it-works)).
+- **Polled out of band**: Prometheus scrapes the tray BMCs through a generic Redfish exporter on the controller, so a tray powered off through Redfish shows as `idrac_system_power_on 0` while its BMC stays up, and GPU temperatures arrive both in band and out of band ([Monitoring](monitoring.md#overview)).
 
 ## Verification
 
@@ -62,14 +67,16 @@ bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 bin/redfish sched-worker1 /redfish/v1/Systems/System_0 | jq '{PowerState, ProcessorSummary}'
 bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0 | jq .UUID       # == nvidia-smi UUID on the tray
 bin/redfish sched-nvswitch /redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_0/Ports | jq '."Members@odata.count"'   # 72
+bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0/EnvironmentMetrics | jq '.TemperatureCelsius.Reading, .PowerWatts.Reading'
+bin/ssh sched-worker1 nvidia-smi -i 0 --query-gpu=temperature.gpu,power.draw --format=csv   # same values
 ```
 
 `make test` checks that both tray BMCs report their tray powered on with 4 GPUs, also as seen through the Redfish exporter, and that the switch BMC exposes 72 ports per switch. `make test-bmc` runs the BMC integration tests, with disruptive and GB200-conformance tiers ([Testing](testing.md#bmc-integration-tests)).
 
 ## Limitations
 
-- Only the resources listed above; no firmware update, sensors, logs or event subscriptions.
-- The Redfish exporter exports CPUs only, so the trays' GPUs (Redfish processors of type `GPU`) appear in it only as a count; and it cannot discover the switch BMC, which has no `Systems` collection.
+- Only the resources listed above; no firmware update, logs or event subscriptions. Sensors cover the GPUs only (no CPU, memory, inlet or switch ASIC sensors, no thresholds) and there is no `PowerSubsystem`: GB200 compute trays draw from the rack's power shelves.
+- The Redfish exporter skips processors that are not CPUs, so it reports no per-GPU health, and it reads power only from power supplies: from the BMCs it exports GPU temperatures but not GPU power (use the sensors or the GPU exporter).
 - `SwitchIsolationMode` governs switch-to-switch trunks, which a single switch tray does not have: it is stored and reported, without effect on GPU links.
 - After `ForceOff`, Slurm marks the tray down only after `SlurmdTimeout`; Kubernetes marks the node `NotReady` after its node-monitor grace period.
 - The resource layout is simpler than NVIDIA's GB200 BMCs: GPUs are processors of `System_0` (not of the HMC's `HGX_Baseboard_0`), there are no `HGX_GPU_<n>` / `MGX_NVSwitch_<n>` chassis or `HGX_BMC_0` manager, and the switch tray's fabric is `NVLinkFabric_0` (NVIDIA: `MGX_NVLinkFabric_0`). `make test-bmc-conformance` lists these gaps.
