@@ -4,6 +4,8 @@
 #   make up          init + create instances + configure the cluster
 #   make frameworks  shared PyTorch + Ray venv on /shared (several GB)
 #   make test        end-to-end checks (Slurm, GPUs, NCCL, Ray, BMC, metrics)
+#   make test-bmc    BMC integration tests (pytest); -disruptive power-cycles a tray,
+#                    -conformance lists gaps to real GB200 behaviour
 #   make shell       login node as joe          make shell-root   login node as root
 #   make shell-NODE  root shell on any instance (e.g. make shell-slurm-worker1)
 #   bin/ssh slurm    ssh as joe to the login node (root@slurm, slurm-control, slurm-worker1, ...)
@@ -21,7 +23,7 @@ SECRETS  := .secrets
 # Ansible refuses non-blocking stdio (some terminals/IDEs); detach stdin.
 RUN      = $(INCUS_SG) '$(ANSIBLE) $(1) </dev/null'
 
-.PHONY: init proto check up provision configure frameworks test down purge shell shell-root shell-%
+.PHONY: init proto check up provision configure frameworks test test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
 
 init: $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
 	@chmod -R go-rwx $(SECRETS)
@@ -114,6 +116,24 @@ frameworks: init
 
 test: init
 	$(call RUN,playbooks/test.yml)
+
+# BMC integration tests from the host against the running lab (tests/bmc).
+# Extra pytest arguments: make test-bmc PYTEST_ARGS='-k nvswitch -x'
+PYTEST := $(VENV)/bin/pytest
+PYTEST_ARGS ?=
+
+$(PYTEST): $(VENV)/.done
+	$(VENV)/bin/pip install -q pytest requests
+	touch $@
+
+test-bmc: init $(PYTEST)
+	$(INCUS_SG) '$(PYTEST) tests/bmc $(PYTEST_ARGS) </dev/null'
+
+test-bmc-disruptive: init $(PYTEST)
+	$(INCUS_SG) '$(PYTEST) tests/bmc --disruptive $(PYTEST_ARGS) </dev/null'
+
+test-bmc-conformance: init $(PYTEST)
+	$(INCUS_SG) '$(PYTEST) tests/bmc --conformance -m conformance -rf --tb=line $(PYTEST_ARGS) </dev/null'
 
 down: init
 	$(call RUN,playbooks/destroy.yml)

@@ -63,7 +63,7 @@ bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0 | jq .UU
 bin/redfish slurm-nvswitch /redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_0/Ports | jq '."Members@odata.count"'   # 72
 ```
 
-`make test` checks that both tray BMCs report their tray powered on with 4 GPUs and that the switch BMC exposes 72 ports per switch.
+`make test` checks that both tray BMCs report their tray powered on with 4 GPUs and that the switch BMC exposes 72 ports per switch. `make test-bmc` runs the BMC integration tests, with disruptive and GB200-conformance tiers ([Testing](testing.md#bmc-integration-tests)).
 
 ## Limitations
 

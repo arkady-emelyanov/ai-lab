@@ -7,3 +7,4 @@ fakegpu/*.so.*
 fakebmc/fakebmc
 .cache/
 fakenmxc/fakenmxc
+__pycache__/
