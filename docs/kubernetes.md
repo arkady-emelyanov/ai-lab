@@ -53,6 +53,21 @@ Examples are JobSets queued in Kueue (`kueue.x-k8s.io/queue-name: gpu`); `submit
 
 From your machine, as cluster admin: `bin/kubectl ...` (kubeconfig in `.secrets/kubeconfig`).
 
+**Desktop clients ([Freelens](https://github.com/freelensapp/freelens), Lens, k9s, ...)** connect with a kubeconfig file; the API server listens on the controller's bridge address (`https://10.107.111.10:6443`).
+
+- **As cluster admin:** use `.secrets/kubeconfig` directly. In Freelens: *Catalog* → *Clusters* → **+**, then add the file `<repo>/.secrets/kubeconfig` (or copy it into `~/.kube/`, which Freelens reads on its own). The context is called `default`, as k3s names it.
+- **As a directory user** (sees their own namespace, nodes and queues): copy their kubeconfig and point it at the bridge address, since `sched-control` does not resolve on your machine:
+
+  ```
+  bin/ssh root@login cat /shared/home/joe/.kube/config \
+      | sed 's|https://sched-control:|https://10.107.111.10:|' > ~/.kube/ai-lab-joe
+  chmod 600 ~/.kube/ai-lab-joe
+  ```
+
+  Then add `~/.kube/ai-lab-joe` the same way. Cluster-wide views Freelens shows (all namespaces, events) are partly empty for a user, by design of their RBAC.
+
+`make up` creates a new cluster CA each time the lab is rebuilt from scratch, so re-copy the kubeconfig after `make down && make up`.
+
 ## Verification
 
 ```
