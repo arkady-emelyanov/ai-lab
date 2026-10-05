@@ -11,7 +11,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Slurm",
+      "title": "Scheduler",
       "gridPos": {
         "x": 0,
         "y": 0,
@@ -150,7 +150,9 @@
           "custom": {
             "stacking": {
               "mode": "normal"
-            }
+            },
+            "fillOpacity": 35,
+            "lineWidth": 1
           }
         },
         "overrides": []
@@ -217,20 +219,69 @@
           "min": 0,
           "custom": {
             "stacking": {
-              "mode": "none"
-            }
+              "mode": "normal"
+            },
+            "fillOpacity": 35,
+            "lineWidth": 1
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RUNNING"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PENDING"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "FAILED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "targets": [
         {
-          "expr": "sched_jobs",
+          "expr": "sched_jobs{state!=\"COMPLETED\"}",
           "legendFormat": "{{state}}",
           "refId": "A"
         }
       ],
-      "id": 8
+      "id": 8,
+      "description": "Running, pending and failed jobs, stacked; completed jobs are left out (they only grow)."
     },
     {
       "type": "timeseries",

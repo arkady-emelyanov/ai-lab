@@ -17,7 +17,7 @@
     path: /etc/hosts
     marker: "# {mark} slurm cluster"
     block: |
-      {% for name in groups['all'] %}
+      {% for name in groups['all'] | sort %}
       {{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[name].ip_host }} {{ name }}
       {% endfor %}
   notify: Re-resolve peers

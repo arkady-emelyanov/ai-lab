@@ -30,6 +30,7 @@
   args:
     chdir: /usr/local/src/fakegpu
   when: fakegpu_src.changed
+  notify: Restart fakegpu users
 
 # Every CUDA process creates/updates the occupancy file here.
 - name: Make the telemetry directory writable by all users

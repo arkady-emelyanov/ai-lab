@@ -1,0 +1,20 @@
+# Long-running processes keep the fake driver they loaded, and an outdated
+# one misreads the shared occupancy state (for example, it reclaims the
+# slots of processes in other PID namespaces). Restart the lab's own NVML
+# users after a rebuild; user jobs pick up the new driver when they next
+# start, as after a driver update on real hardware.
+- name: Restart the GPU exporter
+  ansible.builtin.command: systemctl try-restart nvidia_gpu_exporter.service
+  listen: Restart fakegpu users
+
+- name: Restart GPU Feature Discovery (k3s)
+  ansible.builtin.shell: |
+    command -v kubectl >/dev/null || exit 0
+    kubectl -n gpu-feature-discovery get daemonset gpu-feature-discovery >/dev/null 2>&1 || exit 0
+    kubectl -n gpu-feature-discovery rollout restart daemonset/gpu-feature-discovery
+  delegate_to: "{{ groups['controller'][0] }}"
+  run_once: true
+  when: scheduler == 'k3s'
+  register: gfd_restart
+  changed_when: "'restarted' in gfd_restart.stdout"
+  listen: Restart fakegpu users

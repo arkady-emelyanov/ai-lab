@@ -162,6 +162,88 @@
               | map('b64decode') | first | regex_findall('GPU-[0-9a-f-]+') | unique | length == fakegpu_count * groups['workers'] | length
             quiet: true
 
+        # Processes in a pod run in the pod's PID namespace; their GPU memory
+        # and processes must show on the tray and in the pod, also for
+        # workers that are not the pod's PID 1 (torchrun's, for example).
+        # No queue label: the namespace's default LocalQueue takes it.
+        - name: Write a multi-process GPU pod
+          ansible.builtin.copy:
+            dest: /tmp/gpu-procs.yaml
+            mode: "0644"
+            content: |
+              apiVersion: v1
+              kind: Pod
+              metadata: {name: gpu-procs}
+              spec:
+                restartPolicy: Never
+                securityContext: {runAsUser: {{ cluster_users[0].uid }}, runAsGroup: {{ cluster_users[0].uid }}}
+                containers:
+                  - name: workers
+                    image: {{ k3s_pod_image }}
+                    resources:
+                      limits: {nvidia.com/gpu: {{ fakegpu_count }}}
+                      requests: {cpu: 100m, memory: 128Mi}
+                    command: [bash, -c]
+                    args:
+                      - |
+                        cat > /tmp/workers.py <<'EOF'
+                        import ctypes, subprocess, sys, time
+                        if len(sys.argv) > 1:  # worker: 1 GiB on its GPU
+                            cu = ctypes.CDLL("libcuda.so.1")
+                            dev, ctx, ptr = ctypes.c_int(), ctypes.c_void_p(), ctypes.c_uint64()
+                            cu.cuInit(0)
+                            cu.cuDeviceGet(ctypes.byref(dev), int(sys.argv[1]))
+                            cu.cuDevicePrimaryCtxRetain(ctypes.byref(ctx), dev)
+                            cu.cuCtxSetCurrent(ctx)
+                            assert cu.cuMemAlloc_v2(ctypes.byref(ptr), ctypes.c_size_t(1 << 30)) == 0
+                            print("allocated", sys.argv[1], flush=True)
+                            time.sleep(600)
+                        else:
+                            workers = [subprocess.Popen([sys.executable, sys.argv[0], str(i)]) for i in range({{ fakegpu_count }})]
+                            for w in workers:
+                                w.wait()
+                        EOF
+                        exec python3 /tmp/workers.py
+
+        - name: Check GPU memory and processes of a multi-process pod
+          block:
+            - name: Start the pod
+              ansible.builtin.command: "{{ kubectl }} 'kubectl create -f /tmp/gpu-procs.yaml'"
+              changed_when: true
+
+            - name: Wait for every worker to allocate
+              ansible.builtin.command: "{{ kubectl }} 'kubectl logs gpu-procs'"
+              register: workers
+              changed_when: false
+              failed_when: false
+              retries: 30
+              delay: 4
+              until: workers.stdout_lines | select('search', '^allocated') | list | length == fakegpu_count
+
+            - name: Find the pod's tray
+              ansible.builtin.command: "{{ kubectl }} 'kubectl get pod gpu-procs -o jsonpath={.spec.nodeName}'"
+              register: tray
+              changed_when: false
+
+            - name: The tray lists every worker with its memory
+              ansible.builtin.command: nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits
+              delegate_to: "{{ tray.stdout }}"
+              register: tray_apps
+              changed_when: false
+              failed_when: tray_apps.stdout_lines | select('search', ', 1024$') | list | length != fakegpu_count
+
+            - name: The pod lists them too
+              ansible.builtin.command: >-
+                {{ kubectl }} 'kubectl exec gpu-procs --
+                nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits'
+              register: pod_apps
+              changed_when: false
+              failed_when: pod_apps.stdout_lines | select('search', ', 1024$') | list | length != fakegpu_count
+          always:
+            - name: Delete the pod
+              ansible.builtin.command: "{{ kubectl }} 'kubectl delete pod gpu-procs --now --ignore-not-found'"
+              changed_when: true
+
         - name: A user reads cluster state but not other namespaces
           ansible.builtin.command: "{{ kubectl }} '{{ item.cmd }}'"
           loop:

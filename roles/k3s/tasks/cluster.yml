@@ -19,7 +19,7 @@
       metadata: {name: coredns-custom, namespace: kube-system}
       data:
         lab-hosts.override: |
-      {% for name in groups['all'] %}
+      {% for name in groups['all'] | sort %}
           template IN A {{ name }} {
             answer "{{ '{{' }} .Name {{ '}}' }} 60 IN A {{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[name].ip_host }}"
           }
