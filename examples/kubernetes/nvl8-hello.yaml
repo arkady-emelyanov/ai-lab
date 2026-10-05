@@ -1,6 +1,6 @@
 # One pod per GPU across the whole NVL8 domain: 8 pods with 1 GPU each,
 # admitted together (gang) into one NVLink domain. Each reports the tray and
-# GPU it got (k8s version of nvl8-hello.sbatch).
+# GPU it got (Kubernetes version of ../slurm/nvl8-hello.sbatch).
 # Submit: ./submit --wait nvl8-hello.yaml
 apiVersion: jobset.x-k8s.io/v1alpha2
 kind: JobSet

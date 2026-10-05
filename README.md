@@ -49,15 +49,15 @@ make test          # end-to-end checks
 ```
 bin/scp -r examples slurm:                      # copy the example jobs to joe's home
 bin/ssh slurm                                   # login node as joe (password: joe)
-cd examples
+cd examples/slurm
 sinfo -N -o "%N %G %T"                          # two trays, gpu:gb200:4 each
 srun -N2 --gpus-per-node=4 nvidia-smi -L        # all 8 GPUs
 sbatch nvl8-hello.sbatch                        # one task per GPU across the domain
 ```
 
-With k3s: `bin/ssh slurm`, then `kubectl get nodes -L nvidia.com/gpu.clique`, `cd examples/k8s && ./submit --wait nvl8-hello.yaml` ([Kubernetes](docs/kubernetes.md#usage)).
+With k3s: `bin/ssh slurm`, then `kubectl get nodes -L nvidia.com/gpu.clique`, `cd examples/kubernetes && ./submit --wait nvl8-hello.yaml` ([Kubernetes](docs/kubernetes.md#usage)).
 
-Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.secrets/grafana.pass`) and watch the **Lab overview** while a job runs, for example `ddp-train.sbatch` from the [examples](docs/frameworks-and-examples.md).
+Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.secrets/grafana.pass`) and watch the **Lab overview** while a job runs, for example `ddp-train` from the [examples](examples/README.md).
 
 ## Lab endpoints
 
@@ -132,7 +132,7 @@ fakebmc/                 Redfish BMC service (Go): GPU tray and switch tray role
 fakenmxc/                NVLink partition controller and fabric telemetry (Go, gRPC)
 fakeib/                  ibnetdiscover look-alike for the emulated InfiniBand fabric
 fakedp/                  Kubernetes GPU device plugin (Go, CDI) for the k3s scheduler
-examples/                example Slurm jobs (topology, scheduling, DDP, Ray); k8s/: the same as JobSets
+examples/                the same four jobs (topology, scheduling, DDP, Ray) for slurm/ and kubernetes/
 tests/bmc/               BMC integration tests (pytest)
 docs/                    component documentation
 .secrets/                generated keys and passwords (git-ignored)

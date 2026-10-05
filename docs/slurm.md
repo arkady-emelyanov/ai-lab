@@ -40,19 +40,19 @@ From the login node (`bin/ssh slurm` or `bin/ssh login`) or straight from your m
 ```
 sinfo -N -o "%N %G %c %m %d %T"                 # nodes, GPUs, CPUs, memory, scratch, state
 srun -N2 --gpus-per-node=4 nvidia-smi -L         # all 8 GPUs
-sbatch examples/nvl8-hello.sbatch                # one task per GPU across the domain
+sbatch examples/slurm/nvl8-hello.sbatch          # one task per GPU across the domain
 squeue; sacct -X -o JobID,JobName,User,Account,AllocTRES%40,State
 scontrol show topology                           # NVLink blocks
 ```
 
 | Example | Kubernetes equivalent | What it does |
 |---|---|---|
-| `gpu-topology.sbatch` | `k8s/gpu-topology.yaml` | one task per tray with its 4 GPUs: Slurm topology, `nvidia-smi -L`, `topo -m`, fabric state |
-| `nvl8-hello.sbatch` | `k8s/nvl8-hello.yaml` | 8 tasks × 1 GPU across the domain |
-| `ddp-train.sbatch` | `k8s/ddp-train.yaml` | PyTorch DDP, 2 nodes × 4 GPUs, torchrun per node |
-| `ray-cluster.sbatch` | `k8s/ray-cluster.yaml` | Ray head and worker on the allocation, driver on the head |
+| `slurm/gpu-topology.sbatch` | `kubernetes/gpu-topology.yaml` | one task per tray with its 4 GPUs: Slurm topology, `nvidia-smi -L`, `topo -m`, fabric state |
+| `slurm/nvl8-hello.sbatch` | `kubernetes/nvl8-hello.yaml` | 8 tasks × 1 GPU across the domain |
+| `slurm/ddp-train.sbatch` | `kubernetes/ddp-train.yaml` | PyTorch DDP, 2 nodes × 4 GPUs, torchrun per node |
+| `slurm/ray-cluster.sbatch` | `kubernetes/ray-cluster.yaml` | Ray head and worker on the allocation, driver on the head |
 
-From your machine, a job script can be submitted on stdin: `bin/ssh slurm sbatch < examples/nvl8-hello.sbatch`. Give jobs submitted this way a name (`#SBATCH -J name`), otherwise `%x` in output paths becomes `(null)`.
+From your machine, a job script can be submitted on stdin: `bin/ssh slurm sbatch < examples/slurm/nvl8-hello.sbatch`. Give jobs submitted this way a name (`#SBATCH -J name`), otherwise `%x` in output paths becomes `(null)`.
 
 Resource requests behave as on a real GPU cluster: `--gpus-per-node`, `--gpus-per-task`, `--tmp`, `--mem`; jobs share a node when resources allow. Accounts and limits are managed with `sacctmgr`; accounts come from `slurm_accounts` in `inventory/group_vars/all.yml`.
 
@@ -77,4 +77,4 @@ bin/ssh sched-control scontrol show config | grep -E 'TRES|Topology|DefMem'
 ## References
 
 - [Slurm documentation](https://slurm.schedmd.com/documentation.html): [slurm.conf](https://slurm.schedmd.com/slurm.conf.html), [gres.conf](https://slurm.schedmd.com/gres.conf.html), [topology.conf](https://slurm.schedmd.com/topology.conf.html), [accounting](https://slurm.schedmd.com/accounting.html)
-- Sources: `roles/slurm` (configuration, `TaskProlog`), `roles/slurmdbd` (MariaDB, cluster, accounts, associations), `roles/munge`, `examples/*.sbatch`, `roles/topograph/`
+- Sources: `roles/slurm` (configuration, `TaskProlog`), `roles/slurmdbd` (MariaDB, cluster, accounts, associations), `roles/munge`, `examples/slurm/`, `roles/topograph/`

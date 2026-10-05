@@ -26,7 +26,7 @@ for node in "${nodes[@]:1}"; do
 done
 sleep 15
 
-python "$SLURM_SUBMIT_DIR/ray_demo.py"
+python "$SLURM_SUBMIT_DIR/../ray_demo.py"
 rc=$?
 ray stop --force >/dev/null 2>&1
 exit $rc

@@ -1,6 +1,6 @@
 # A Ray cluster as a JobSet: a head pod on one tray, a worker pod on the
 # other, each with 4 GPUs; the head runs the driver and the JobSet completes
-# when it does (k8s version of ray-cluster.sbatch). Ray spills to node-local
+# when it does (Kubernetes version of ../slurm/ray-cluster.sbatch). Ray spills to node-local
 # scratch. Needs the shared venv (make frameworks).
 # Submit: ./submit --wait ray-cluster.yaml
 apiVersion: jobset.x-k8s.io/v1alpha2

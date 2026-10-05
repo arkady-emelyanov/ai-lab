@@ -1,6 +1,6 @@
 # PyTorch DDP across the whole NVL8 domain: 2 pods (one per tray) x 4 GPUs,
 # torchrun in each, rendezvous on pod 0 through the JobSet's DNS names
-# (k8s version of ddp-train.sbatch). Needs the shared venv (make frameworks).
+# (Kubernetes version of ../slurm/ddp-train.sbatch). Needs the shared venv (make frameworks).
 # Submit: ./submit --wait ddp-train.yaml
 apiVersion: jobset.x-k8s.io/v1alpha2
 kind: JobSet

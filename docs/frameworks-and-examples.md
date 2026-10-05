@@ -8,22 +8,22 @@
 
 ## Usage
 
-The examples are in `examples/`; copy them to the cluster and submit from the login node:
+The examples are in `examples/` ([overview](../examples/README.md)): the same four jobs in `slurm/` and `kubernetes/`, sharing the Python programs. Copy them to the cluster and submit from the login node:
 
 ```
 bin/scp -r examples slurm:
-bin/ssh slurm 'cd examples && sbatch nvl8-hello.sbatch'
-bin/ssh slurm 'cat examples/nvl8-hello-*.out'
+bin/ssh slurm 'cd examples/slurm && sbatch nvl8-hello.sbatch'
+bin/ssh slurm 'cat examples/slurm/nvl8-hello-*.out'
 ```
 
 | Example | Resources | What it does |
 |---|---|---|
 | `gpu-topology.sbatch` | 2 nodes × 4 GPUs | prints the Slurm topology, then per tray the GPUs, NVLink matrix and fabric registration |
 | `nvl8-hello.sbatch` | 2 nodes × 4 tasks, 1 GPU per task, `--tmp=10G` | each rank reports its node, `CUDA_VISIBLE_DEVICES`, GPU UUID, clique and scratch |
-| `ddp-train.sbatch` + `ddp_train.py` | 2 nodes × 4 GPUs (`torchrun`, NCCL) | data-parallel training of an MLP; prints step time, samples/s, TFLOP/s per GPU; arguments are passed through (`--batch`, `--width`, `--layers`, `--steps`) |
-| `ray-cluster.sbatch` + `ray_demo.py` | 2 nodes × 4 GPUs | starts a Ray cluster in the allocation (temp and spill on `$SCRATCH`) and runs one GPU task per GPU |
+| `ddp-train.sbatch` + `../ddp_train.py` | 2 nodes × 4 GPUs (`torchrun`, NCCL) | data-parallel training of an MLP; prints step time, samples/s, TFLOP/s per GPU; arguments are passed through (`--batch`, `--width`, `--layers`, `--steps`) |
+| `ray-cluster.sbatch` + `../ray_demo.py` | 2 nodes × 4 GPUs | starts a Ray cluster in the allocation (temp and spill on `$SCRATCH`) and runs one GPU task per GPU |
 
-With `scheduler: k3s` the same four examples exist as Kueue-queued JobSets in `examples/k8s/` (`./submit --wait <example>.yaml`); see [Kubernetes (k3s)](kubernetes.md#usage).
+With `scheduler: k3s` use the Kueue-queued JobSets in `examples/kubernetes/` (`./submit --wait <example>.yaml`); see [Kubernetes (k3s)](kubernetes.md#usage).
 
 Expected `nvl8-hello` output: eight ranks, four per tray, each bound to a different GPU, all in the same NVLink clique:
 
@@ -57,4 +57,4 @@ job 14 on sched-worker[1-2]: 8 tasks
 
 - [PyTorch distributed](https://pytorch.org/docs/stable/distributed.html), [torchrun](https://pytorch.org/docs/stable/elastic/run.html)
 - [Ray on Slurm](https://docs.ray.io/en/latest/cluster/vms/user-guides/community/slurm.html)
-- Sources: `examples/`, `examples/k8s/`, `playbooks/frameworks.yml`
+- Sources: `examples/` (`slurm/`, `kubernetes/`, shared `ddp_train.py`, `ray_demo.py`), `playbooks/frameworks.yml`

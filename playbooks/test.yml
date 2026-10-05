@@ -36,7 +36,7 @@
 
         - name: Run example jobs (sbatch --wait)
           ansible.builtin.command:
-            cmd: su - {{ user }} -c 'cd examples && sbatch --wait --parsable {{ item.script }}'
+            cmd: su - {{ user }} -c 'cd examples/slurm && sbatch --wait --parsable {{ item.script }}'
           loop:
             - { script: gpu-topology.sbatch, needs_venv: false }
             - { script: nvl8-hello.sbatch, needs_venv: false }
@@ -50,7 +50,7 @@
 
         - name: Read job output
           ansible.builtin.slurp:
-            src: "{{ home }}/examples/{{ item.item.script | replace('.sbatch', '') }}-{{ item.stdout | trim }}.out"
+            src: "{{ home }}/examples/slurm/{{ item.item.script | replace('.sbatch', '') }}-{{ item.stdout | trim }}.out"
           loop: "{{ jobs.results | rejectattr('skipped', 'defined') | list }}"
           loop_control:
             label: "{{ item.item.script }}"
@@ -117,7 +117,7 @@
 
         - name: Run example jobs (submit --wait)
           ansible.builtin.command:
-            cmd: "{{ kubectl }} 'cd examples/k8s && ./submit --wait {{ item.manifest }}'"
+            cmd: "{{ kubectl }} 'cd examples/kubernetes && ./submit --wait {{ item.manifest }}'"
           loop:
             - { manifest: gpu-topology.yaml, needs_venv: false }
             - { manifest: nvl8-hello.yaml, needs_venv: false }
@@ -132,7 +132,7 @@
 
         - name: Read job output
           ansible.builtin.slurp:
-            src: "{{ home }}/examples/k8s/{{ item.stdout | trim }}.out"
+            src: "{{ home }}/examples/kubernetes/{{ item.stdout | trim }}.out"
           loop: "{{ jobs.results | rejectattr('skipped', 'defined') | list }}"
           loop_control:
             label: "{{ item.item.manifest }}"
@@ -223,7 +223,7 @@
       block:
         - name: Write the test job
           ansible.builtin.copy:
-            dest: "{{ shared_mount }}/home/{{ user }}/examples/k8s/s3test.yaml"
+            dest: "{{ shared_mount }}/home/{{ user }}/examples/kubernetes/s3test.yaml"
             owner: "{{ user }}"
             group: "{{ user }}"
             mode: "0644"
@@ -258,7 +258,7 @@
 
         - name: A user can write and list their own bucket, but not others (pod)
           ansible.builtin.command:
-            cmd: su - {{ user }} -c 'cd examples/k8s && name=$(./submit --wait s3test.yaml) && cat $name.out'
+            cmd: su - {{ user }} -c 'cd examples/kubernetes && name=$(./submit --wait s3test.yaml) && cat $name.out'
           register: s3test
           changed_when: false
           failed_when: s3test.rc != 0 or s3test.stdout is not search('s3test')

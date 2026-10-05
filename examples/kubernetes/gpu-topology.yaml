@@ -1,5 +1,5 @@
 # Prints the emulated GPU topology of every tray in the NVL8 domain: one pod
-# per tray with all 4 of its GPUs (k8s version of gpu-topology.sbatch).
+# per tray with all 4 of its GPUs (Kubernetes version of ../slurm/gpu-topology.sbatch).
 # Submit: ./submit --wait gpu-topology.yaml
 apiVersion: jobset.x-k8s.io/v1alpha2
 kind: JobSet

@@ -187,7 +187,7 @@ def test_access_link_down_fails_running_job(lab, downed_link):
     if lab.sh(CONTROLLER, "squeue -h").strip():
         pytest.skip("jobs are running; this test needs the whole domain")
     down, tray, g, link = downed_link
-    job = lab.sh("sched-login", "su - joe -c 'cd examples && sbatch --parsable ddp-train.sbatch --steps 1000000'").strip()
+    job = lab.sh("sched-login", "su - joe -c 'cd examples/slurm && sbatch --parsable ddp-train.sbatch --steps 1000000'").strip()
     try:
         eventually(lambda: (s := _squeue_state(lab, job)) != "RUNNING" and f"job {job} is {s}", timeout=120, interval=3)
         time.sleep(30)  # past NCCL initialisation, into training

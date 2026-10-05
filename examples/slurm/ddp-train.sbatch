@@ -14,4 +14,4 @@ head=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)
 srun torchrun \
     --nnodes="$SLURM_NNODES" --nproc-per-node=4 \
     --rdzv-backend=c10d --rdzv-endpoint="$head:29500" --rdzv-id="$SLURM_JOB_ID" \
-    "$SLURM_SUBMIT_DIR/ddp_train.py" "$@"
+    "$SLURM_SUBMIT_DIR/../ddp_train.py" "$@"

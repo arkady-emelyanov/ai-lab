@@ -36,17 +36,17 @@ From the login node (`bin/ssh slurm` or `bin/ssh login`) as a directory user; yo
 ```
 kubectl get nodes -L nvidia.com/gpu.clique,accelerator.topograph.run/domain
 kubectl get clusterqueues; kubectl get localqueues
-cd examples/k8s
+cd examples/kubernetes
 ./submit --wait nvl8-hello.yaml        # like sbatch --wait: prints the run name, writes <name>.out
 kubectl get jobsets,workloads          # your jobs and their Kueue admission
 ```
 
 | Example | Slurm equivalent | What it does |
 |---|---|---|
-| `gpu-topology.yaml` | `gpu-topology.sbatch` | one pod per tray with its 4 GPUs: `nvidia-smi -L`, `topo -m`, fabric state |
-| `nvl8-hello.yaml` | `nvl8-hello.sbatch` | 8 pods × 1 GPU, admitted together into one NVLink domain |
-| `ddp-train.yaml` | `ddp-train.sbatch` | PyTorch DDP, 2 pods × 4 GPUs, torchrun rendezvous on pod 0 |
-| `ray-cluster.yaml` | `ray-cluster.sbatch` | Ray head and worker pods, driver on the head |
+| `kubernetes/gpu-topology.yaml` | `slurm/gpu-topology.sbatch` | one pod per tray with its 4 GPUs: `nvidia-smi -L`, `topo -m`, fabric state |
+| `kubernetes/nvl8-hello.yaml` | `slurm/nvl8-hello.sbatch` | 8 pods × 1 GPU, admitted together into one NVLink domain |
+| `kubernetes/ddp-train.yaml` | `slurm/ddp-train.sbatch` | PyTorch DDP, 2 pods × 4 GPUs, torchrun rendezvous on pod 0 |
+| `kubernetes/ray-cluster.yaml` | `slurm/ray-cluster.sbatch` | Ray head and worker pods, driver on the head |
 
 Examples are JobSets queued in Kueue (`kueue.x-k8s.io/queue-name: gpu`); `submit` fills in your uid, gid and home (`@UID@`, `@GID@`, `@HOME@`) and a unique name. Pods use `docker.io/library/buildpack-deps:noble` (Ubuntu 24.04 with Python, so the `/shared` venv runs unchanged) and mount `/shared` and `/scratch` from the tray.
 
@@ -76,4 +76,4 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 - [NVIDIA GPU Feature Discovery](https://github.com/NVIDIA/k8s-device-plugin/tree/main/docs/gpu-feature-discovery), [Node Feature Discovery](https://kubernetes-sigs.github.io/node-feature-discovery/)
 - [Kueue topology-aware scheduling](https://kueue.sigs.k8s.io/docs/concepts/topology_aware_scheduling/), [JobSet](https://jobset.sigs.k8s.io/)
 - [topograph Kubernetes engine](https://github.com/dsx-ai-factory/topograph/blob/main/docs/engines/k8s.md)
-- Sources: `roles/k3s/` (server, agents, GPUs and CDI, add-ons, users), `fakedp/`, `examples/k8s/`, `roles/topograph/`, `roles/monitoring/templates/sched-rules.yml.j2`
+- Sources: `roles/k3s/` (server, agents, GPUs and CDI, add-ons, users), `fakedp/`, `examples/kubernetes/`, `roles/topograph/`, `roles/monitoring/templates/sched-rules.yml.j2`

@@ -21,7 +21,7 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 | Area | Check |
 |---|---|
 | Slurm (Slurm mode) | both trays available (waits out jobs still completing) |
-| Kubernetes (k3s mode) | both trays ready with 4 GPUs, the GFD clique label and topograph's domain label; the four examples as JobSets through Kueue (`examples/k8s/submit --wait`) with the same output checks; 8 single-GPU pods got 8 different GPUs; `joe` reads nodes and queues but not `kube-system` |
+| Kubernetes (k3s mode) | both trays ready with 4 GPUs, the GFD clique label and topograph's domain label; the four examples as JobSets through Kueue (`examples/kubernetes/submit --wait`) with the same output checks; 8 single-GPU pods got 8 different GPUs; `joe` reads nodes and queues but not `kube-system` |
 | Jobs as `joe` (Slurm mode) | `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster` run with `sbatch --wait`; their output contains the fabric line, rank 7, all 8 DDP ranks, 8 Ray tasks |
 | Accounting (Slurm mode) | every job above is `COMPLETED` in `sacct` |
 | Shared filesystem | `/pfs` mounted on every cluster node; a file written on the login node reads back everywhere |
