@@ -10,4 +10,6 @@
   ansible.builtin.command: systemctl try-restart redfish-exporter.service
   delegate_to: "{{ groups['controller'][0] }}"
   run_once: true
-  changed_when: true
+  register: redfish_restart
+  failed_when: redfish_restart.rc not in [0, 5]  # 5: not installed yet
+  changed_when: redfish_restart.rc == 0

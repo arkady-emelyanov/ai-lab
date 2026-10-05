@@ -3,8 +3,12 @@
 # slots of processes in other PID namespaces). Restart the lab's own NVML
 # users after a rebuild; user jobs pick up the new driver when they next
 # start, as after a driver update on real hardware.
+# rc 5: not installed yet (first build), nothing to restart.
 - name: Restart the GPU exporter
   ansible.builtin.command: systemctl try-restart nvidia_gpu_exporter.service
+  register: exporter_restart
+  failed_when: exporter_restart.rc not in [0, 5]
+  changed_when: exporter_restart.rc == 0
   listen: Restart fakegpu users
 
 - name: Restart GPU Feature Discovery (k3s)
