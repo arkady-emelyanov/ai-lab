@@ -106,9 +106,9 @@ def main():
     d.text((x, 92), "ai-lab", font=bold(88), fill=TEXT)
     d.rectangle([x, 206, x + 120, 212], fill=GREEN)
     d.text((x, 236), "An emulated NVIDIA GB200 NVL8", font=bold(36), fill=TEXT)
-    d.text((x, 282), "GPU cluster on one Linux machine", font=bold(36), fill=TEXT)
-    d.text((x, 340), "Real Slurm or Kubernetes, storage and monitoring on fake GPUs:", font=regular(22), fill=MUTED)
-    d.text((x, 368), "every call succeeds, takes realistic time, nothing computes.", font=regular(22), fill=MUTED)
+    d.text((x, 282), "GPU cluster on a single Linux machine", font=bold(36), fill=TEXT)
+    d.text((x, 340), "Slurm and Kubernetes, storage and monitoring on emulated GPUs.", font=regular(22), fill=MUTED)
+    d.text((x, 368), "Use cases: cluster tooling, operations, AI pipelines, CI.", font=regular(22), fill=MUTED)
 
     f = regular(18)
     rows = [["Slurm · k3s", "CUDA · NVML · NCCL", "NVLink partitions", "Redfish BMCs"],

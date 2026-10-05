@@ -4,7 +4,7 @@
 
 > **Independent research project, not affiliated with or endorsed by NVIDIA.** It emulates NVIDIA hardware and software interfaces in software, for personal research and education. See [Disclaimer](#disclaimer).
 
-A complete GPU cluster on one Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates one NVIDIA GB200-class **NVL8** NVLink domain (two GPU trays with four GPUs each, an NVLink switch tray, BMCs, an InfiniBand fabric) and runs the real software stack around it: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
+A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates one NVIDIA GB200-class **NVL8** NVLink domain (two GPU trays with four GPUs each, an NVLink switch tray, BMCs, an InfiniBand fabric) and runs the real software stack around it: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
 
 The GPUs are fake but behave like real ones to everything above them: applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes realistic simulated time, and the GPUs report realistic load, memory, power and temperature. Nothing is computed. Management interfaces (Redfish BMCs, an NVLink partition controller, fabric telemetry) change what the GPUs report and what the scheduler places jobs on.
 
@@ -23,13 +23,15 @@ What you get:
 - **AI pipelines:** run PyTorch DDP and Ray jobs end to end on 8 GPUs with realistic timing and memory accounting, to test orchestration, data movement and failure handling rather than numerics.
 - **CI for infrastructure code:** `make up && make test` builds and verifies the whole cluster from scratch on one machine.
 
-## Architecture
-
-Nine Incus containers on your machine: a login node, a controller, two GPU trays, a storage node, the NVLink switch tray host and three BMCs, on one bridge. The scheduler is Slurm or k3s, never both (`scheduler` in `inventory/group_vars/all.yml`); everything else is shared. Diagrams of the hosts, the InfiniBand and NVLink fabrics and the out-of-band management paths are in [Architecture](docs/architecture.md#topology).
-
 ## Quickstart
 
-**Requirements:** Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git; your user in the `incus-admin` group. The running cluster uses about 10 GiB of RAM (16 GiB free recommended; container memory limits add up to 27 GiB, 32 GiB with k3s) and 4+ CPU cores; plan about 25 GB of disk under `/var/lib/incus`, including the 5.6 GB frameworks venv.
+**Requirements:**
+
+- Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git.
+- Your user in the `incus-admin` group.
+- RAM: the running cluster uses about 10 GiB; 16 GiB free recommended. Container memory limits add up to 27 GiB (32 GiB with k3s).
+- CPU: 4 or more cores.
+- Disk: about 25 GB under `/var/lib/incus`, including the 5.6 GB frameworks venv.
 
 ```
 make init          # host side: Ansible venv, secrets, Go builds; reports any host fix needed
