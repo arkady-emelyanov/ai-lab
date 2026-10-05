@@ -35,7 +35,7 @@ With `scheduler: slurm` in `inventory/group_vars/all.yml` (the default) the lab 
 
 ## Usage
 
-From the login node (`bin/ssh slurm` or `bin/ssh login`) or straight from your machine (`bin/ssh slurm <command>`):
+From the login node (`bin/ssh login`) or straight from your machine (`bin/ssh login <command>`):
 
 ```
 sinfo -N -o "%N %G %c %m %d %T"                 # nodes, GPUs, CPUs, memory, scratch, state
@@ -52,16 +52,16 @@ scontrol show topology                           # NVLink blocks
 | `slurm/ddp-train.sbatch` | `kubernetes/ddp-train.yaml` | PyTorch DDP, 2 nodes × 4 GPUs, torchrun per node |
 | `slurm/ray-cluster.sbatch` | `kubernetes/ray-cluster.yaml` | Ray head and worker on the allocation, driver on the head |
 
-From your machine, a job script can be submitted on stdin: `bin/ssh slurm sbatch < examples/slurm/nvl8-hello.sbatch`. Give jobs submitted this way a name (`#SBATCH -J name`), otherwise `%x` in output paths becomes `(null)`.
+From your machine, a job script can be submitted on stdin: `bin/ssh login sbatch < examples/slurm/nvl8-hello.sbatch`. Give jobs submitted this way a name (`#SBATCH -J name`), otherwise `%x` in output paths becomes `(null)`.
 
 Resource requests behave as on a real GPU cluster: `--gpus-per-node`, `--gpus-per-task`, `--tmp`, `--mem`; jobs share a node when resources allow. Accounts and limits are managed with `sacctmgr`; accounts come from `slurm_accounts` in `inventory/group_vars/all.yml`.
 
 ## Verification
 
 ```
-bin/ssh slurm sinfo                                          # gpu* up, 2 nodes idle
-bin/ssh slurm 'srun -N2 --ntasks-per-node=4 --gpus-per-task=1 bash -c "echo \$(hostname) \$CUDA_VISIBLE_DEVICES"'
-bin/ssh slurm sacct -X -o JobID,AllocTRES%50                 # gres/gpu=N recorded per job
+bin/ssh login sinfo                                          # gpu* up, 2 nodes idle
+bin/ssh login 'srun -N2 --ntasks-per-node=4 --gpus-per-task=1 bash -c "echo \$(hostname) \$CUDA_VISIBLE_DEVICES"'
+bin/ssh login sacct -X -o JobID,AllocTRES%50                 # gres/gpu=N recorded per job
 bin/ssh sched-control scontrol show config | grep -E 'TRES|Topology|DefMem'
 ```
 

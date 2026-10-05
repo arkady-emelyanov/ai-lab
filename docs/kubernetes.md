@@ -31,7 +31,7 @@ Add-ons are installed by k3s' Helm controller from `HelmChart` manifests (`roles
 
 ## Usage
 
-From the login node (`bin/ssh slurm` or `bin/ssh login`) as a directory user; your kubeconfig is in place and your namespace is the default:
+From the login node (`bin/ssh login`) as a directory user; your kubeconfig is in place and your namespace is the default:
 
 ```
 kubectl get nodes -L nvidia.com/gpu.clique,accelerator.topograph.run/domain

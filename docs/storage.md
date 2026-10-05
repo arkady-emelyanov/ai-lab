@@ -54,8 +54,8 @@ Downloads are verified against the projects' published checksums.
 
 ```
 bin/ssh root@sched-worker1 'df -h --output=target,size /pfs /scratch /shared'
-bin/ssh slurm 'echo hi > /pfs/joe/t && srun -N1 -w sched-worker2 cat /pfs/joe/t'      # written on login, read on a tray (Slurm)
-bin/ssh slurm 'rc ls s3/joe/; rc ls s3/pfs/'                                          # own bucket lists; the JuiceFS bucket is denied
+bin/ssh login 'echo hi > /pfs/joe/t && srun -N1 -w sched-worker2 cat /pfs/joe/t'      # written on login, read on a tray (Slurm)
+bin/ssh login 'rc ls s3/joe/; rc ls s3/pfs/'                                          # own bucket lists; the JuiceFS bucket is denied
 ```
 
 `make test` checks that `/pfs` is mounted on every node with a file written on the login node readable everywhere, that RustFS is healthy, and that a job (Slurm) or a pod (k3s) can write and list the user's bucket but not another bucket.

@@ -13,27 +13,31 @@ The same four jobs for each scheduler; use the folder that matches `scheduler` i
 
 ## Running them
 
-Copy the folder to joe's home and log in:
+From the repository root on your machine, copy the folder to joe's home and log in to the login node:
 
 ```
-bin/scp -r examples slurm:
-bin/ssh slurm
+bin/scp -r examples login:
+bin/ssh login
 ```
+
+The rest runs on the login node as `joe`.
 
 **Slurm:**
 
 ```
-cd examples/slurm
-sbatch nvl8-hello.sbatch          # output in nvl8-hello-<job id>.out
-squeue; sacct -X
+joe@sched-login:~$ cd examples/slurm
+joe@sched-login:~/examples/slurm$ sbatch nvl8-hello.sbatch    # output in nvl8-hello-<job id>.out
+joe@sched-login:~/examples/slurm$ squeue; sacct -X
 ```
 
 **Kubernetes:** the manifests are JobSets queued in Kueue. `submit` fills in your uid, gid and home, gives the run a unique name and prints it; with `--wait` it waits for the run to finish and writes the pods' output to `<name>.out`, like `sbatch --wait`.
 
 ```
-cd examples/kubernetes
-./submit --wait nvl8-hello.yaml   # prints the run name, writes <name>.out
-kubectl get jobsets,workloads
+joe@sched-login:~$ cd examples/kubernetes
+joe@sched-login:~/examples/kubernetes$ ./submit --wait nvl8-hello.yaml   # prints the run name, writes <name>.out
+joe@sched-login:~/examples/kubernetes$ kubectl get jobsets,workloads      # joe's kubeconfig, his namespace
 ```
+
+From your machine, `bin/kubectl -n joe get jobsets,workloads` shows the same as cluster admin.
 
 More: [Frameworks and examples](../docs/frameworks-and-examples.md), [Slurm](../docs/slurm.md#usage), [Kubernetes (k3s)](../docs/kubernetes.md#usage).

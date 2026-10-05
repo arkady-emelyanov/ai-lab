@@ -8,7 +8,7 @@
 #                    -conformance lists gaps to real GB200 behaviour
 #   make shell       login node as joe          make shell-root   login node as root
 #   make shell-NODE  root shell on any instance (e.g. make shell-sched-worker1)
-#   bin/ssh slurm    ssh as joe to the login node (root@slurm, sched-control, sched-worker1, ...)
+#   bin/ssh login    ssh as joe to the login node (root@login, sched-control, sched-worker1, ...)
 #   make down        delete instances (volumes kept)
 #   make purge       delete instances and volumes
 #

@@ -64,7 +64,7 @@ rate(nvlink_gpu_tx_bytes_total[1m])                            # NVLink traffic 
 
 ```
 curl -s http://10.107.111.10:9090/api/v1/targets | jq -r '.data.activeTargets[] | "\(.labels.job) \(.labels.instance) \(.health)"'
-bin/ssh slurm 'sbatch -N1 --gpus-per-node=3 --wrap "sleep 60"'; sleep 20     # Slurm mode
+bin/ssh login 'sbatch -N1 --gpus-per-node=3 --wrap "sleep 60"'; sleep 20     # Slurm mode
 curl -s 'http://10.107.111.10:9090/api/v1/query?query=sched_gpus_alloc' | jq '.data.result[].value[1]'   # "3"
 ```
 

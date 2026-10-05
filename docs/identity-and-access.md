@@ -19,14 +19,14 @@ Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolve
 
 | Command | Lands on | As |
 |---|---|---|
-| `bin/ssh slurm` (or `bin/ssh login`) | login node | `joe` (password `joe`, or joe's own key) |
-| `bin/ssh root@slurm` | login node | root (admin key `.secrets/ssh/id_ed25519`) |
+| `bin/ssh login` | login node | `joe` (password `joe`, or joe's own key) |
+| `bin/ssh root@login` | login node | root (admin key `.secrets/ssh/id_ed25519`) |
 | `bin/ssh sched-control` (or any instance name) | that instance | root |
-| `bin/ssh slurm sbatch < job.sh` | login node | runs a command, here submitting a job from stdin |
-| `bin/scp file slurm:` | login node | copies files |
+| `bin/ssh login sbatch < job.sh` | login node | runs a command, here submitting a job from stdin |
+| `bin/scp file login:` | login node | copies files |
 | `make shell`, `make shell-root`, `make shell-<instance>` | via `incus exec`, no SSH | joe / root / root |
 
-The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. To log in without a password, install your own key once: `bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub slurm`.
+The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. To log in without a password, install your own key once: `bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub login`.
 
 **Add a user:** append an entry to `cluster_users` in `inventory/group_vars/all.yml` and run `make configure`:
 
@@ -46,9 +46,9 @@ This creates the LDAP entry and private group, the home with skeleton files, the
 ```
 bin/ssh root@sched-worker1 getent passwd joe     # resolved via SSSD: joe:*:2001:2001:Joe <joe@example.com>:...
 bin/ssh root@sched-worker1 grep -c '^joe:' /etc/passwd    # 0: no local account
-bin/ssh slurm id                                  # uid=2001(joe) gid=2001(joe) groups=2001(joe)
+bin/ssh login id                                  # uid=2001(joe) gid=2001(joe) groups=2001(joe)
 bin/ssh root@sched-control sacctmgr show assoc user=joe format=user,account   # Slurm mode
-bin/ssh slurm kubectl auth whoami                 # k3s mode: joe, groups lab-users
+bin/ssh login kubectl auth whoami                 # k3s mode: joe, groups lab-users
 ```
 
 ## Limitations

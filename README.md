@@ -47,15 +47,15 @@ make test          # end-to-end checks
 **First steps:**
 
 ```
-bin/scp -r examples slurm:                      # copy the example jobs to joe's home
-bin/ssh slurm                                   # login node as joe (password: joe)
+bin/scp -r examples login:                      # copy the example jobs to joe's home
+bin/ssh login                                   # login node as joe (password: joe)
 cd examples/slurm
 sinfo -N -o "%N %G %T"                          # two trays, gpu:gb200:4 each
 srun -N2 --gpus-per-node=4 nvidia-smi -L        # all 8 GPUs
 sbatch nvl8-hello.sbatch                        # one task per GPU across the domain
 ```
 
-With k3s: `bin/ssh slurm`, then `kubectl get nodes -L nvidia.com/gpu.clique`, `cd examples/kubernetes && ./submit --wait nvl8-hello.yaml` ([Kubernetes](docs/kubernetes.md#usage)).
+With k3s: `bin/ssh login`, then `kubectl get nodes -L nvidia.com/gpu.clique`, `cd examples/kubernetes && ./submit --wait nvl8-hello.yaml` ([Kubernetes](docs/kubernetes.md#usage)).
 
 Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.secrets/grafana.pass`) and watch the **Lab overview** while a job runs, for example `ddp-train` from the [examples](examples/README.md).
 
@@ -65,7 +65,7 @@ Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.
 
 | Service | Endpoint | Credentials | Docs |
 |---|---|---|---|
-| Login node (SSH) | `bin/ssh slurm` (10.107.111.11:22) | `joe` / `joe`, or your key | [Identity and access](docs/identity-and-access.md) |
+| Login node (SSH) | `bin/ssh login` (10.107.111.11:22) | `joe` / `joe`, or your key | [Identity and access](docs/identity-and-access.md) |
 | Any instance as root (SSH) | `bin/ssh root@<instance>` | `.secrets/ssh/id_ed25519` | [Identity and access](docs/identity-and-access.md) |
 | Grafana | http://10.107.111.10:3000 | `admin` / `.secrets/grafana.pass` | [Monitoring](docs/monitoring.md) |
 | Prometheus | http://10.107.111.10:9090 | none | [Monitoring](docs/monitoring.md) |
@@ -112,7 +112,7 @@ Each page covers: overview, usage, verification, references (plus configuration 
 | `make test` | end-to-end checks |
 | `make test-bmc` | BMC integration tests (`-disruptive`, `-conformance` tiers) |
 | `make down`, `make purge` | delete instances (keep volumes); delete everything |
-| `bin/ssh slurm` (or `login`), `bin/ssh root@<instance>` | SSH as joe / root; `bin/scp`, `bin/ssh-copy-id` likewise |
+| `bin/ssh login`, `bin/ssh root@<instance>` | SSH as joe / root; `bin/scp`, `bin/ssh-copy-id` likewise |
 | `bin/kubectl <args>` | kubectl as cluster admin (k3s mode) |
 | `bin/grpcurl <args>` | grpcurl for the NVLink partition controller (built on first use) |
 | `make shell`, `make shell-<instance>` | shells through `incus exec` |

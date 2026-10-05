@@ -69,9 +69,9 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 
 ```
 bin/ssh sched-worker1 nvidia-smi -L                          # 4 × NVIDIA GB200 with UUIDs
-bin/ssh slurm 'srun -N1 --gpus-per-node=2 bash -c "echo \$CUDA_VISIBLE_DEVICES; nvidia-smi -L -i \$CUDA_VISIBLE_DEVICES"'   # Slurm: the job's 2 GPUs
-bin/ssh slurm 'cd examples/kubernetes && ./submit --wait nvl8-hello.yaml'   # k3s: 8 pods, one GPU each
-bin/ssh slurm sbatch < examples/slurm/gpu-topology.sbatch    # topology, NVLink matrix, fabric per tray
+bin/ssh login 'srun -N1 --gpus-per-node=2 bash -c "echo \$CUDA_VISIBLE_DEVICES; nvidia-smi -L -i \$CUDA_VISIBLE_DEVICES"'   # Slurm: the job's 2 GPUs
+bin/ssh login 'cd examples/kubernetes && ./submit --wait nvl8-hello.yaml'   # k3s: 8 pods, one GPU each
+bin/ssh login sbatch < examples/slurm/gpu-topology.sbatch    # topology, NVLink matrix, fabric per tray
 ```
 
 While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, utilisation, power and rising temperature; the same values appear in Prometheus ([Monitoring](monitoring.md)).

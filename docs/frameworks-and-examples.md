@@ -11,9 +11,9 @@
 The examples are in `examples/` ([overview](../examples/README.md)): the same four jobs in `slurm/` and `kubernetes/`, sharing the Python programs. Copy them to the cluster and submit from the login node:
 
 ```
-bin/scp -r examples slurm:
-bin/ssh slurm 'cd examples/slurm && sbatch nvl8-hello.sbatch'
-bin/ssh slurm 'cat examples/slurm/nvl8-hello-*.out'
+bin/scp -r examples login:
+bin/ssh login 'cd examples/slurm && sbatch nvl8-hello.sbatch'
+bin/ssh login 'cat examples/slurm/nvl8-hello-*.out'
 ```
 
 | Example | Resources | What it does |

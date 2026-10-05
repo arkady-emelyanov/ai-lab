@@ -2,14 +2,14 @@
 # ssh, scp and ssh-copy-id for the cluster; arguments are passed through.
 # bin/scp and bin/ssh-copy-id are symlinks to this script.
 #
-#   bin/ssh slurm (or login)           login node as joe (password: joe, or joe's own key
+#   bin/ssh login                      login node as joe (password: joe, or joe's own key
 #                                      once installed with bin/ssh-copy-id)
-#   bin/ssh root@slurm                 login node as root (admin key: .secrets/ssh/id_ed25519)
+#   bin/ssh root@login                 login node as root (admin key: .secrets/ssh/id_ed25519)
 #   bin/ssh sched-control              controller as root (also sched-worker1, sched-worker2,
 #                                      and the tray BMCs sched-worker1-bmc, sched-worker2-bmc)
-#   bin/ssh slurm sbatch < job.sh      run a command
-#   bin/scp job.sh slurm:              copy files
-#   bin/ssh-copy-id -i ~/.ssh/key.pub slurm
+#   bin/ssh login sbatch < job.sh      run a command
+#   bin/scp job.sh login:              copy files
+#   bin/ssh-copy-id -i ~/.ssh/key.pub login
 #
 # Host addresses are looked up in Incus on every call, so it keeps working
 # after instances are recreated.
@@ -33,7 +33,8 @@ instances=$(incus_list | jq -r '
 {
     while IFS=$'\t' read -r name ip; do
         if [[ $name == sched-login ]]; then
-            printf 'Host slurm login sched-login\n    HostName %s\n    User joe\n\n' "$ip"
+            # `slurm` is the alias from before the scheduler was selectable.
+            printf 'Host login sched-login slurm\n    HostName %s\n    User joe\n\n' "$ip"
         else
             printf 'Host %s\n    HostName %s\n    User root\n\n' "$name" "$ip"
         fi
