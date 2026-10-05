@@ -30,6 +30,10 @@ instances=$(incus_list | jq -r '
     | select(length == 2) | @tsv')
 [[ -n $instances ]] || { echo "no running sched-* instances: run make up" >&2; exit 1; }
 
+# Written to a temporary file and renamed into place: concurrent calls each
+# replace the config whole, so none reads a half-written one.
+tmp=$(mktemp "$config.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
 {
     while IFS=$'\t' read -r name ip; do
         if [[ $name == sched-login ]]; then
@@ -52,7 +56,9 @@ Host *
     UserKnownHostsFile /dev/null
     LogLevel ERROR
 EOF
-} > "$config"
+} > "$tmp"
+mv -f "$tmp" "$config"
+trap - EXIT
 
 case $(basename "$0") in
     scp) exec scp -F "$config" "$@" ;;

@@ -10,6 +10,8 @@
     # --project flag for an instance
     proj: "--project {{ hostvars[item].ansible_incus_project }}"
     limits: "{{ instance_limits | combine(instance_limits_k3s if scheduler == 'k3s' else {}) }}"
+    # Fixed address of an instance on the bridge (needs `api`, read below).
+    address: "{{ api.results[0].stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[item].ip_host }}"
   tasks:
     - name: Check the scheduler setting
       ansible.builtin.assert:
@@ -79,10 +81,14 @@
       register: incus_list
       changed_when: false
 
+    # Fixed addresses from the first boot. They lie in the bridge's DHCP
+    # range, so an instance booting unpinned can lease another's address and
+    # keep it from that instance when it is pinned.
     - name: Launch missing instances
       ansible.builtin.command: >-
         incus launch {{ incus_image }} {{ item }} {{ proj }}
         --profile {{ incus_profile }}
+        --device eth0,ipv4.address={{ address }}
         -c limits.cpu={{ limits[role].cpu }}
         -c limits.memory={{ limits[role].memory }}
         -c security.nesting=true
@@ -99,10 +105,11 @@
       failed_when: false
 
     # Fixed addresses: daemons such as slurmctld resolve peers once, so a tray
-    # that reboots must come back on the same address.
+    # that reboots must come back on the same address. New instances are
+    # launched pinned; this pins instances created before that.
     - name: Pin static addresses
       ansible.builtin.shell: |
-        want={{ api.results[0].stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[item].ip_host }}
+        want={{ address }}
         have=$(incus config device get {{ item }} eth0 ipv4.address {{ proj }} 2>/dev/null || true)
         [ "$have" = "$want" ] && exit 0
         incus config device override {{ item }} eth0 ipv4.address=$want {{ proj }} 2>/dev/null \
@@ -112,6 +119,30 @@
       loop: "{{ instances }}"
       register: pin
       changed_when: "'changed' in pin.stdout"
+
+    # An instance whose address was leased to another one when it restarted
+    # keeps a dynamic address; now that every instance is pinned, a restart
+    # gets it its own.
+    - name: Check every instance holds its fixed address
+      ansible.builtin.shell: |
+        want={{ address }}
+        current() {
+          incus query "/1.0/instances/{{ item }}/state?project={{ hostvars[item].ansible_incus_project }}" \
+            | jq -r '[.network.eth0.addresses[]? | select(.family == "inet") | .address][0] // ""'
+        }
+        have=$(current)
+        [ "$have" = "$want" ] && exit 0
+        echo "{{ item }}: $have, want $want: restarting"
+        incus restart {{ item }} {{ proj }}
+        for _ in $(seq 30); do
+          sleep 2
+          [ "$(current)" = "$want" ] && echo changed && exit 0
+        done
+        echo "{{ item }} did not get $want" >&2
+        exit 1
+      loop: "{{ instances }}"
+      register: held
+      changed_when: "'changed' in held.stdout"
 
     # ---- storage --------------------------------------------------------------------
 
