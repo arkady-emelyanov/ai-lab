@@ -38,12 +38,16 @@ spec:
             - {name: memory, nominalQuota: {{ (limits.workers.memory | regex_replace('GiB$', '') | int - 1) * trays }}Gi}
             - {name: nvidia.com/gpu, nominalQuota: {{ fakegpu_count * trays }}}
 {% for user in cluster_users %}
+{# `default` catches workloads without a queue label (Kueue's LocalQueue
+   defaulting), so nothing in a user namespace bypasses the quota. #}
+{% for queue in [k3s_queue, 'default'] %}
 ---
 apiVersion: kueue.x-k8s.io/v1beta2
 kind: LocalQueue
 metadata:
-  name: {{ k3s_queue }}
+  name: {{ queue }}
   namespace: {{ user.name }}
 spec:
   clusterQueue: {{ k3s_queue }}
+{% endfor %}
 {% endfor %}

@@ -40,7 +40,7 @@ groups:
       - record: sched_jobs
         expr: label_replace(count(kube_job_status_active{namespace=~"{{ users }}"} > 0), "state", "RUNNING", "", "")
       - record: sched_jobs
-        expr: label_replace(count(kube_job_spec_suspend{namespace=~"{{ users }}"} == 1), "state", "PENDING", "", "")
+        expr: label_replace(count(kube_job_status_suspended{namespace=~"{{ users }}"} == 1), "state", "PENDING", "", "")
       - record: sched_jobs
         expr: label_replace(count(kube_job_status_succeeded{namespace=~"{{ users }}"} > 0), "state", "COMPLETED", "", "")
       - record: sched_jobs

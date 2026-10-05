@@ -21,6 +21,13 @@
     mode: "0600"
   notify: Restart k3s
 
+- name: Configure registry mirrors
+  ansible.builtin.template:
+    src: registries.yaml.j2
+    dest: /etc/rancher/k3s/registries.yaml
+    mode: "0644"
+  notify: Restart k3s
+
 - name: Install the k3s unit
   ansible.builtin.template:
     src: k3s.service.j2

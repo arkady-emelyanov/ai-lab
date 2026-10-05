@@ -1,0 +1,10 @@
+# {{ ansible_managed }}
+# containerd tries the mirrors first, then the registry itself.
+mirrors:
+{% for registry, endpoints in k3s_registry_mirrors.items() %}
+  {{ registry }}:
+    endpoint:
+{% for endpoint in endpoints %}
+      - "{{ endpoint }}"
+{% endfor %}
+{% endfor %}

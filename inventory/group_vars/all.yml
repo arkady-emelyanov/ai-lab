@@ -24,6 +24,11 @@ instance_limits_k3s:
 k3s_version: v1.36.5+k3s1
 k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
 k3s_port: 6443
+# Registry mirrors for containerd: anonymous Docker Hub pulls are rate-limited,
+# so docker.io images (the pod image, k3s' own) come from Google's public
+# Docker Hub cache, falling back to Docker Hub itself.
+k3s_registry_mirrors:
+  docker.io: [https://mirror.gcr.io]
 # Add-ons, installed by k3s' Helm controller.
 nfd_chart_version: 0.19.0
 kueue_chart_version: 0.20.0
@@ -35,7 +40,8 @@ gfd_image: nvcr.io/nvidia/k8s-device-plugin:v0.20.1
 # Image for GPU pods: Ubuntu 24.04 with Python, so the frameworks venv on
 # /shared and the fake GPU libraries (built on the trays) run unchanged.
 k3s_pod_image: docker.io/library/buildpack-deps:noble
-# Kueue: one queue per user namespace, all feeding one ClusterQueue.
+# Kueue: queue `gpu` in every user namespace, plus `default` for workloads
+# without a queue label, both feeding one ClusterQueue.
 k3s_queue: gpu
 
 # Project for the GPU trays; it shares the default project's profiles,
@@ -113,6 +119,9 @@ fakegpu_type: gb200
 fakegpu_name: NVIDIA GB200
 fakegpu_mem_mb: 189471
 fakegpu_nvlinks: 18
+# DMI product name of a tray, as GPU Feature Discovery reports it
+# (nvidia.com/gpu.machine); a container would otherwise show the host's board.
+tray_product_name: GB200 NVL
 # Shared by every tray of the NVLink domain; NVML reports it as the fabric
 # cluster UUID, which is how schedulers recognise one NVL domain.
 nvl_domain_name: nvl8

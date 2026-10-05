@@ -15,6 +15,8 @@
  * configured fabric cluster UUID / clique, so all trays configured with the
  * same cluster_uuid form one NVLink domain.
  */
+#define _GNU_SOURCE
+#include <dirent.h>
 #include <math.h>
 #include "occupancy.h"
 
@@ -511,6 +513,41 @@ API nvmlReturn_t nvmlDeviceGetSupportedGraphicsClocks(nvmlDevice_t d, unsigned m
 typedef struct { unsigned pid; unsigned long long usedGpuMemory; } nvmlProcessInfo_v1_t;
 typedef struct { unsigned pid; unsigned long long usedGpuMemory; unsigned gpuInstanceId, computeInstanceId; } nvmlProcessInfo_v2_t;
 
+/* The PID under which this process sees a slot's owner: its own PID if the
+ * owner is in our PID namespace; otherwise the /proc entry whose namespace
+ * and innermost NSpid match (a container's process seen from the tray).
+ * 0 when we cannot see the owner (another container), as real NVML in a
+ * container lists only what it can see. */
+static int32_t visible_pid(struct fg_occupancy *o, int i)
+{
+    int32_t pid = __atomic_load_n(&o->proc[i].pid, __ATOMIC_ACQUIRE);
+    uint64_t ns = __atomic_load_n(&o->pidns[i], __ATOMIC_ACQUIRE);
+    if (ns == fg_pidns()) return pid;
+    DIR *dir = opendir("/proc");
+    if (!dir) return 0;
+    int32_t found = 0;
+    struct dirent *e;
+    while (!found && (e = readdir(dir))) {
+        char path[300], line[256];
+        struct stat st;
+        if (e->d_name[0] < '1' || e->d_name[0] > '9') continue;
+        snprintf(path, sizeof path, "/proc/%s/ns/pid", e->d_name);
+        if (stat(path, &st) != 0 || (uint64_t)st.st_ino != ns) continue;
+        snprintf(path, sizeof path, "/proc/%s/status", e->d_name);
+        FILE *f = fopen(path, "r");
+        if (!f) continue;
+        while (fgets(line, sizeof line, f)) {
+            if (strncmp(line, "NSpid:", 6)) continue;
+            char *last = strrchr(line, '\t');
+            if (last && atoi(last + 1) == pid) found = atoi(e->d_name);
+            break;
+        }
+        fclose(f);
+    }
+    closedir(dir);
+    return found;
+}
+
 static nvmlReturn_t procs(nvmlDevice_t d, unsigned *count, void *infos, int v2)
 {
     CHECK_DEV(d);
@@ -519,8 +556,9 @@ static nvmlReturn_t procs(nvmlDevice_t d, unsigned *count, void *infos, int v2)
     struct fg_occupancy *o = fg_occupancy();
     unsigned n = 0, cap = infos ? *count : 0;
     for (int i = 0; o && i < FG_MAX_PROCS; i++) {
-        int32_t pid = __atomic_load_n(&o->proc[i].pid, __ATOMIC_ACQUIRE);
-        if (!pid || o->proc[i].gpu != idx) continue;
+        if (o->proc[i].gpu != idx || !fg_slot_alive(o, i)) continue;
+        int32_t pid = visible_pid(o, i);
+        if (!pid) continue;
         if (n < cap) {
             unsigned long long mem = __atomic_load_n(&o->proc[i].mem, __ATOMIC_RELAXED);
             if (v2) ((nvmlProcessInfo_v2_t *)infos)[n] = (nvmlProcessInfo_v2_t){(unsigned)pid, mem, 0xFFFFFFFFu, 0xFFFFFFFFu};

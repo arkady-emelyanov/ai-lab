@@ -8,6 +8,15 @@ kind: Namespace
 metadata:
   name: gpu-feature-discovery
 ---
+# The tray's DMI product name: in a container, /sys/class/dmi is the host's.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tray-dmi
+  namespace: gpu-feature-discovery
+data:
+  product_name: "{{ tray_product_name }}"
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -70,6 +79,8 @@ spec:
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: LD_LIBRARY_PATH
               value: {{ fakegpu_prefix }}/lib/fakegpu
+            - name: GFD_MACHINE_TYPE_FILE
+              value: /etc/tray-dmi/product_name
           volumeMounts:
             - {name: fakegpu-lib, mountPath: "{{ fakegpu_prefix }}/lib/fakegpu", readOnly: true}
             - {name: fakegpu-conf, mountPath: /etc/fakegpu.conf, readOnly: true}
@@ -79,6 +90,7 @@ spec:
 {% endfor %}
             - {name: output-dir, mountPath: /etc/kubernetes/node-feature-discovery/features.d}
             - {name: config, mountPath: /config}
+            - {name: tray-dmi, mountPath: /etc/tray-dmi, readOnly: true}
       volumes:
         - {name: fakegpu-lib, hostPath: {path: "{{ fakegpu_prefix }}/lib/fakegpu", type: Directory}}
         - {name: fakegpu-conf, hostPath: {path: /etc/fakegpu.conf, type: File}}
@@ -88,3 +100,4 @@ spec:
 {% endfor %}
         - {name: output-dir, hostPath: {path: /etc/kubernetes/node-feature-discovery/features.d, type: DirectoryOrCreate}}
         - {name: config, emptyDir: {}}
+        - {name: tray-dmi, configMap: {name: tray-dmi}}
