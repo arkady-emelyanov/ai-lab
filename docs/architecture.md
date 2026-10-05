@@ -118,7 +118,7 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 **Data paths.**
 
 ```
- job (srun) ─► CUDA/NCCL calls ─► fakegpu: simulated time + occupancy ─► NVML ─► nvidia-smi, GPU exporter ─► Prometheus
+ job (srun or pod) ─► CUDA/NCCL calls ─► fakegpu: simulated time + occupancy ─► NVML ─► nvidia-smi, GPU exporter ─► Prometheus
                                                      │
                                                      └─ telemetry volume ─► fakenmxc /metrics ─► Prometheus
  Redfish PATCH (BMC) / gRPC (fakenmxc) ─► sideband volume ─► NVML link state, clique ─► topograph ─► Slurm topology.conf or Kubernetes node labels (Kueue)
@@ -138,6 +138,8 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 - GPU kernels do not compute; tensors computed on the GPU hold zeros or garbage. Copies above `fakegpu_copy_max_mb` (64 MiB) are timed but not performed, so large GPU buffers cost no host RAM. See [Fake GPUs](fake-gpu.md#limitations).
 - Containers share the host kernel: Slurm tracks jobs by process (`proctrack/linuxproc`) without cgroup confinement or CPU binding.
+- Fake NCCL ranks do not communicate: a failed link or rank does not fail its peers' collectives.
+- k3s mode: GPUs come from the lab's own device plugin and CDI specification, not NVIDIA's container toolkit or device plugin; users may mount host paths in their pods ([Kubernetes](kubernetes.md#limitations)).
 - Slurm is the Ubuntu 24.04 package (23.11): no `--segment`, no `BlockSizes`.
 - LDAP runs without TLS inside the lab network.
 - One NVLink domain, one switch tray, one InfiniBand leaf: enough to exercise every interface, not a scale model.

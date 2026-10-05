@@ -4,12 +4,12 @@
 
 ## Overview
 
-Users exist once, in OpenLDAP on `sched-control`, and every Slurm node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their LDAP password or their own SSH key; root logs in with the lab's admin key only. The same user list also creates each user's Slurm association and S3 identity.
+Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their LDAP password or their own SSH key; root logs in with the lab's admin key only. The same user list also creates each user's S3 identity and, depending on the scheduler, their Slurm association or their Kubernetes namespace, queue and credentials ([Kubernetes](kubernetes.md#how-it-works)).
 
 | Piece | Where | Notes |
 |---|---|---|
 | OpenLDAP (`slapd`) | `sched-control` | base `dc=example,dc=com`; `ou=people`, `ou=groups`; user private groups (GID = UID) |
-| SSSD | every Slurm node | `id_provider`, `auth_provider` and `chpass_provider` = ldap |
+| SSSD | every cluster node | `id_provider`, `auth_provider` and `chpass_provider` = ldap |
 | sshd | every instance | root: key only; users: password or key |
 | `bin/ssh`, `bin/scp`, `bin/ssh-copy-id` | host | wrappers that resolve current addresses from Incus |
 
@@ -19,7 +19,7 @@ Users exist once, in OpenLDAP on `sched-control`, and every Slurm node resolves 
 
 | Command | Lands on | As |
 |---|---|---|
-| `bin/ssh slurm` | login node | `joe` (password `joe`, or joe's own key) |
+| `bin/ssh slurm` (or `bin/ssh login`) | login node | `joe` (password `joe`, or joe's own key) |
 | `bin/ssh root@slurm` | login node | root (admin key `.secrets/ssh/id_ed25519`) |
 | `bin/ssh sched-control` (or any instance name) | that instance | root |
 | `bin/ssh slurm sbatch < job.sh` | login node | runs a command, here submitting a job from stdin |
@@ -35,7 +35,7 @@ cluster_users:
   - name: joe
     uid: 2001
     comment: Joe <joe@example.com>
-    account: lab        # Slurm account (must exist in slurm_accounts)
+    account: lab        # Slurm account (must exist in slurm_accounts; Slurm mode)
     password: joe       # omit to generate one into .secrets/users/<name>.pass
 ```
 
@@ -47,13 +47,15 @@ This creates the LDAP entry and private group, the home with skeleton files, the
 bin/ssh root@sched-worker1 getent passwd joe     # resolved via SSSD: joe:*:2001:2001:Joe <joe@example.com>:...
 bin/ssh root@sched-worker1 grep -c '^joe:' /etc/passwd    # 0: no local account
 bin/ssh slurm id                                  # uid=2001(joe) gid=2001(joe) groups=2001(joe)
-bin/ssh root@sched-control sacctmgr show assoc user=joe format=user,account
+bin/ssh root@sched-control sacctmgr show assoc user=joe format=user,account   # Slurm mode
+bin/ssh slurm kubectl auth whoami                 # k3s mode: joe, groups lab-users
 ```
 
 ## Limitations
 
 - LDAP runs without TLS (`ldap_auth_disable_tls_never_use_in_production = true` in SSSD), so passwords cross the Incus bridge in clear.
-- Users authenticate to the login node; jobs on the trays run as the user via Slurm. Users cannot SSH from the login node to the trays unless they use agent forwarding with their own key.
+- In k3s mode users authenticate to Kubernetes with a client certificate (10 years, in `~/.kube/config`), not their LDAP password; a certificate cannot be revoked short of rotating the cluster's client CA. Pods run as the user's uid only because `examples/k8s/submit` sets it; nothing enforces it.
+- Users authenticate to the login node; jobs on the trays run as the user via Slurm (or as the uid their pods ask for). Users cannot SSH from the login node to the trays unless they use agent forwarding with their own key.
 
 ## References
 

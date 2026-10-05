@@ -55,8 +55,8 @@ Useful queries:
 
 ```
 sum by (instance) (nvidia_smi_utilization_gpu_ratio)          # GPU load per tray
-slurm_partition_gpus_alloc / slurm_partition_gpus              # GPU allocation ratio
-sum by (user) (slurm_job_gpus)                                 # GPUs per user
+sched_gpus_alloc / sched_gpus                                  # GPU allocation ratio (either scheduler)
+sched_user_gpus                                                # GPUs per user
 rate(nvlink_gpu_tx_bytes_total[1m])                            # NVLink traffic per GPU
 ```
 
@@ -64,18 +64,19 @@ rate(nvlink_gpu_tx_bytes_total[1m])                            # NVLink traffic 
 
 ```
 curl -s http://10.107.111.10:9090/api/v1/targets | jq -r '.data.activeTargets[] | "\(.labels.job) \(.labels.instance) \(.health)"'
-bin/ssh slurm 'sbatch -N1 --gpus-per-node=3 --wrap "sleep 60"'; sleep 20
-curl -s 'http://10.107.111.10:9090/api/v1/query?query=slurm_partition_gpus_alloc' | jq '.data.result[].value[1]'   # "3"
+bin/ssh slurm 'sbatch -N1 --gpus-per-node=3 --wrap "sleep 60"'; sleep 20     # Slurm mode
+curl -s 'http://10.107.111.10:9090/api/v1/query?query=sched_gpus_alloc' | jq '.data.result[].value[1]'   # "3"
 ```
 
-`make test` checks that every target is up, that GPU power is reported for all 8 GPUs, that the Slurm GPU and fabric series exist and that Grafana serves the dashboards.
+`make test` checks that every target is up, that GPU power is reported for all 8 GPUs, that the scheduler (`sched_*`) and fabric series exist and that Grafana serves the dashboards.
 
 ## Configuration
 
 | Variable | Default |
 |---|---|
 | `gpu_exporter_version`, `gpu_exporter_port` | 1.15.1, 9835 |
-| `slurm_exporter_version`, `slurm_exporter_port` | 1.8.0, 9092 |
+| `slurm_exporter_version`, `slurm_exporter_port` | 1.8.0, 9092 (Slurm mode) |
+| `ksm_chart_version`, `ksm_node_port` | 8.6.0, 30808 (k3s mode) |
 | `prometheus_retention` | 15d |
 | `grafana_port`, `grafana_dashboards` | 3000, pinned grafana.com revisions |
 

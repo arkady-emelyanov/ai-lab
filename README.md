@@ -23,31 +23,13 @@ What you get:
 - **AI pipelines:** run PyTorch DDP and Ray jobs end to end on 8 GPUs with realistic timing and memory accounting, to test orchestration, data movement and failure handling rather than numerics.
 - **CI for infrastructure code:** `make up && make test` builds and verifies the whole cluster from scratch on one machine.
 
-## Architecture at a glance
+## Architecture
 
-```
-                              your machine (Incus host)
- ┌─────────────────────────────────────────────────────────────────────────────────┐
- │  bin/ssh slurm ─► sched-login    .11   login node, user shells                  │
- │                   sched-control  .10   slurmctld+slurmdbd or k3s server, LDAP,  │
- │                                        Prometheus, Grafana, topograph           │
- │                   sched-worker1  .21 ┐ GPU trays: slurmd or k3s agent,          │
- │                                      │ 4 × fake GB200 each                      │
- │                   sched-worker2  .22 ┘ one NVL8 NVLink domain                   │
- │                   sched-storage  .12   RustFS (S3), Redis                       │
- │                   sched-nvswitch .34   NVLink partition controller, telemetry   │
- │  bin/redfish ───► sched-worker1-bmc .31, sched-worker2-bmc .32,                 │
- │                   sched-nvswitch-bmc .33   (Redfish BMCs)                       │
- │                                                                                 │
- │  /shared (homes, venv) · /pfs (JuiceFS) · /scratch (per tray) · S3 per user     │
- └─────────────────────────────────────────────────────────────────────────────────┘
-```
-
-Addresses are on the Incus bridge (`10.107.111.<n>` here). The scheduler is Slurm or k3s, never both (`scheduler` in `inventory/group_vars/all.yml`); everything else is shared. Details: [Architecture](docs/architecture.md).
+Nine Incus containers on your machine: a login node, a controller, two GPU trays, a storage node, the NVLink switch tray host and three BMCs, on one bridge. The scheduler is Slurm or k3s, never both (`scheduler` in `inventory/group_vars/all.yml`); everything else is shared. Diagrams of the hosts, the InfiniBand and NVLink fabrics and the out-of-band management paths are in [Architecture](docs/architecture.md#topology).
 
 ## Quickstart
 
-**Requirements:** Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git; your user in the `incus-admin` group. The running cluster uses about 10 GiB of RAM (16 GiB free recommended; container memory limits add up to 27 GiB) and 4+ CPU cores; plan about 25 GB of disk under `/var/lib/incus`, including the 5.6 GB frameworks venv.
+**Requirements:** Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git; your user in the `incus-admin` group. The running cluster uses about 10 GiB of RAM (16 GiB free recommended; container memory limits add up to 27 GiB, 32 GiB with k3s) and 4+ CPU cores; plan about 25 GB of disk under `/var/lib/incus`, including the 5.6 GB frameworks venv.
 
 ```
 make init          # host side: Ansible venv, secrets, Go builds; reports any host fix needed
@@ -63,8 +45,9 @@ make test          # end-to-end checks
 **First steps:**
 
 ```
-bin/scp examples/* slurm:                       # copy the example jobs to joe's home
+bin/scp -r examples slurm:                      # copy the example jobs to joe's home
 bin/ssh slurm                                   # login node as joe (password: joe)
+cd examples
 sinfo -N -o "%N %G %T"                          # two trays, gpu:gb200:4 each
 srun -N2 --gpus-per-node=4 nvidia-smi -L        # all 8 GPUs
 sbatch nvl8-hello.sbatch                        # one task per GPU across the domain
@@ -117,7 +100,7 @@ Each page covers: overview, usage, verification, references (plus configuration 
 | Scheduling (one of) | Slurm, accounting, GPU GRES, block topology, scratch | [Slurm](docs/slurm.md) |
 | | k3s, GPU device plugin and CDI, GPU Feature Discovery, Kueue, JobSet | [Kubernetes (k3s)](docs/kubernetes.md) |
 | Applications | PyTorch and Ray venv, example jobs | [Frameworks and examples](docs/frameworks-and-examples.md) |
-| Quality | `make test` coverage | [Testing](docs/testing.md) |
+| Quality | `make test` coverage, BMC integration tests | [Testing](docs/testing.md) |
 
 ## Everyday commands
 
@@ -125,6 +108,7 @@ Each page covers: overview, usage, verification, references (plus configuration 
 |---|---|
 | `make up`, `make configure` | build the cluster; re-apply configuration after changing `inventory/group_vars/all.yml` |
 | `make test` | end-to-end checks |
+| `make test-bmc` | BMC integration tests (`-disruptive`, `-conformance` tiers) |
 | `make down`, `make purge` | delete instances (keep volumes); delete everything |
 | `bin/ssh slurm` (or `login`), `bin/ssh root@<instance>` | SSH as joe / root; `bin/scp`, `bin/ssh-copy-id` likewise |
 | `bin/kubectl <args>` | kubectl as cluster admin (k3s mode) |
@@ -188,7 +172,7 @@ Details are in each component page and in [Architecture](docs/architecture.md#li
 
 This is an independent, personal research and education project. It is not affiliated with, endorsed by, sponsored by or supported by NVIDIA Corporation.
 
-- **Emulation, not NVIDIA software.** The lab imitates the interfaces of NVIDIA hardware and software (CUDA, NVML, NCCL, cuBLAS, cuDNN and `nvidia-smi` behaviour, GB200 BMC Redfish resources, NMX-C partition semantics) so that other software can be exercised without GPUs. It contains no NVIDIA source code, binaries, firmware or proprietary specifications: the stub libraries are written from publicly documented API names, the partition controller uses its own `.proto` rather than NVIDIA's, and the behaviour modelled comes from NVIDIA's public documentation and open-source reference implementations cited in each component page.
+- **Emulation, not NVIDIA software.** The lab imitates the interfaces of NVIDIA hardware and software (CUDA, NVML, NCCL, cuBLAS, cuDNN and `nvidia-smi` behaviour, GB200 BMC Redfish resources, NMX-C partition semantics) so that other software can be exercised without GPUs. It contains no NVIDIA source code, binaries, firmware or proprietary specifications: the stub libraries are the lab's own code exporting the same function names as NVIDIA's libraries (so programs link and load), the partition controller uses its own `.proto` rather than NVIDIA's, and the behaviour modelled comes from NVIDIA's public documentation and open-source reference implementations cited in each component page.
 - **Not a substitute for real hardware.** Nothing is computed, and timings, telemetry and failure behaviour are approximations. Results obtained on the lab say nothing about the performance or correctness of real NVIDIA systems, and must not be presented as if they did.
 - **Intended use.** The project is meant for personal research, learning and experimentation with cluster software. It is not intended, tested or supported for production or commercial use, and comes with no warranty of any kind (see the licence).
 - **Trademarks.** NVIDIA, CUDA, NVLink, NVSwitch, Grace, Blackwell, GB200, BlueField, ConnectX, NCCL, NVML and other NVIDIA marks are trademarks or registered trademarks of NVIDIA Corporation in the U.S. and other countries. Slurm, Kubernetes, k3s and the other names used here are trademarks of their respective owners. They are used only to describe what is being emulated or integrated with.

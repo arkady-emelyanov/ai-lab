@@ -16,7 +16,7 @@ The API is modelled on NMX-C's public documentation (Hello handshake, default pa
 ## How it works
 
 - All GPUs start in the **default partition 32766**; user partitions use ids 1–32765 and a GPU belongs to at most one partition.
-- Partition membership is published to each tray's sideband (`fabric-clique`) and becomes the **clique** the GPU reports through NVML (`nvidia-smi --query-gpu=fabric.cliqueId`): the configured default clique for the default partition, the partition id for user partitions, 0 for GPUs in no partition. topograph turns cliques into Slurm blocks ([Topology](topology.md)).
+- Partition membership is published to each tray's sideband (`fabric-clique`) and becomes the **clique** the GPU reports through NVML (`nvidia-smi --query-gpu=fabric.cliqueId`): the configured default clique for the default partition, the partition id for user partitions, 0 for GPUs in no partition. topograph turns cliques into Slurm blocks or, in k3s mode, node labels for Kueue ([Topology](topology.md)); there GPU Feature Discovery also publishes each tray's clique as `nvidia.com/gpu.clique`.
 - **Health** comes from the sideband link state written by the BMCs: a GPU with any NVLink down is `DEGRADED_BANDWIDTH`.
 - **Telemetry** reads each tray's occupancy file through a read-only telemetry volume: busy time and NVLink bytes per GPU, counted by the fake CUDA stack (NCCL collectives and GPU-to-GPU copies). Per-switch throughput attributes each GPU's traffic to its active links on that switch.
 - Partition state is persisted in `/var/lib/fakenmxc/partitions.json`.

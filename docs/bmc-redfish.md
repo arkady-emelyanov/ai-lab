@@ -69,7 +69,9 @@ bin/redfish sched-nvswitch /redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_
 
 - Only the resources listed above; no firmware update, sensors, logs or event subscriptions.
 - `SwitchIsolationMode` governs switch-to-switch trunks, which a single switch tray does not have: it is stored and reported, without effect on GPU links.
-- After `ForceOff`, Slurm marks the tray down only after `SlurmdTimeout`.
+- After `ForceOff`, Slurm marks the tray down only after `SlurmdTimeout`; Kubernetes marks the node `NotReady` after its node-monitor grace period.
+- The resource layout is simpler than NVIDIA's GB200 BMCs: GPUs are processors of `System_0` (not of the HMC's `HGX_Baseboard_0`), there are no `HGX_GPU_<n>` / `MGX_NVSwitch_<n>` chassis or `HGX_BMC_0` manager, and the switch tray's fabric is `NVLinkFabric_0` (NVIDIA: `MGX_NVLinkFabric_0`). `make test-bmc-conformance` lists these gaps.
+- A switch port taken down is reported down by the switch BMC and by NVML, but the GPU's port on the tray BMC still reports `LinkUp`; the GPU's `FabricClique` on the tray BMC is the configured one and does not follow partition changes (NVML's does).
 
 ## References
 

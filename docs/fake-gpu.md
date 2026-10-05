@@ -4,7 +4,7 @@
 
 ## Overview
 
-Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub NVIDIA userspace libraries makes them real to the operating system, Slurm, monitoring and frameworks:
+Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub NVIDIA userspace libraries makes them real to the operating system, the scheduler (Slurm or Kubernetes), monitoring and frameworks:
 
 | Library / tool | Replaces | Notes |
 |---|---|---|
@@ -14,7 +14,7 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 | `nvidia-smi` | `nvidia-smi` | Python over NVML: table, `-L`, `-q`, `topo -m`, `nvlink`, `dmon`, `--query-gpu`, `--query-compute-apps`, `-l` |
 | `/dev/nvidia0-3`, `/dev/nvidiactl` | device nodes | character devices (major 195) created by Incus |
 
-**The emulation boundary:** an application launched through Slurm starts, initialises its framework (PyTorch, Ray, NCCL, ...), every call succeeds and takes realistic time, and the GPUs report realistic load; nothing is computed. An application that does not check numerical results believes everything worked.
+**The emulation boundary:** an application launched through Slurm or as a Kubernetes pod starts, initialises its framework (PyTorch, Ray, NCCL, ...), every call succeeds and takes realistic time, and the GPUs report realistic load; nothing is computed. An application that does not check numerical results believes everything worked.
 
 ## How it works
 
@@ -38,7 +38,7 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 
 ## Usage
 
-On a tray (`bin/ssh sched-worker1`) or inside a job:
+On a tray (`bin/ssh sched-worker1`), inside a Slurm job or inside a GPU pod (the CDI device brings `nvidia-smi` along):
 
 ```
 nvidia-smi                       # table with processes
@@ -63,13 +63,14 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 | `fakegpu_latency_scale` | 1.0 | multiplier for all simulated times; 0 disables delays |
 | `fakegpu_copy_max_mb` | 64 | copies above this are timed but not performed |
 
-Debugging: `FAKEGPU_DEBUG=1` logs CUDA entry points resolved to no-ops and unknown export tables.
+`/etc/fakegpu.conf` also gets `host`, the tray's name, which GPU identities derive from. Debugging: `FAKEGPU_DEBUG=1` logs CUDA entry points resolved to no-ops and unknown export tables.
 
 ## Verification
 
 ```
 bin/ssh sched-worker1 nvidia-smi -L                          # 4 × NVIDIA GB200 with UUIDs
-bin/ssh slurm 'srun -N1 --gpus-per-node=2 nvidia-smi -L'    # a job sees its 2 GPUs
+bin/ssh slurm 'srun -N1 --gpus-per-node=2 nvidia-smi -L'    # Slurm: a job sees its 2 GPUs
+bin/ssh slurm 'cd examples/k8s && ./submit --wait nvl8-hello.yaml'   # k3s: 8 pods, one GPU each
 bin/ssh slurm sbatch < examples/gpu-topology.sbatch          # topology, NVLink matrix, fabric per tray
 ```
 
@@ -77,7 +78,7 @@ While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, 
 
 ## Limitations
 
-- Kernels do not run: tensors computed on the GPU hold zeros or garbage; NCCL collectives behave as if every rank contributed the same data (so cross-rank consistency checks pass).
+- Kernels do not run: tensors computed on the GPU hold zeros or garbage; NCCL collectives behave as if every rank contributed the same data (so cross-rank consistency checks pass); ranks do not communicate, so a failed link or rank does not fail its peers' collectives.
 - Data larger than `fakegpu_copy_max_mb` does not round-trip between host and GPU.
 - Unusual APIs reach generated no-ops that return success without filling outputs; mainstream PyTorch, Ray, NCCL and NVML paths are implemented.
 - Only x86-64; the stubs mimic CUDA 13 (and the CUDA 12 SONAMEs for cuBLAS).

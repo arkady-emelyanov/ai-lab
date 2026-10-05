@@ -11,9 +11,9 @@
 The examples are in `examples/`; copy them to the cluster and submit from the login node:
 
 ```
-bin/scp examples/* slurm:
-bin/ssh slurm sbatch nvl8-hello.sbatch
-bin/ssh slurm 'cat nvl8-hello-*.out'
+bin/scp -r examples slurm:
+bin/ssh slurm 'cd examples && sbatch nvl8-hello.sbatch'
+bin/ssh slurm 'cat examples/nvl8-hello-*.out'
 ```
 
 | Example | Resources | What it does |
@@ -34,11 +34,11 @@ job 14 on sched-worker[1-2]: 8 tasks
 7: rank 7 on sched-worker2 CUDA_VISIBLE_DEVICES=3: NVIDIA GB200, GPU-d01e22ed-…, 1, scratch  198G
 ```
 
-**Writing your own jobs:** build models directly on the GPU (`with torch.device("cuda")`): GPU memory is lazily backed, while a model built on the CPU first occupies the tray's host RAM (8 GiB per tray). Timing reacts to sizes as on real hardware: larger GEMMs take longer, all-reduce time grows with gradient size.
+**Writing your own jobs:** build models directly on the GPU (`with torch.device("cuda")`): GPU memory is lazily backed, while a model built on the CPU first occupies the tray's host RAM (8 GiB per tray; 10 GiB in k3s mode). Timing reacts to sizes as on real hardware: larger GEMMs take longer, all-reduce time grows with gradient size.
 
 ## Verification
 
-`make test` runs all four examples through Slurm as `joe` and checks their output (topology and fabric lines, rank 7, all 8 DDP ranks, 8 Ray tasks) and that every job is `COMPLETED` in accounting.
+`make test` runs all four examples as `joe` through the configured scheduler (Slurm batch jobs, or JobSets in k3s mode) and checks their output (topology and fabric lines, rank 7, all 8 DDP ranks, 8 Ray tasks); in Slurm mode also that every job is `COMPLETED` in accounting.
 
 ## Configuration
 
@@ -51,10 +51,10 @@ job 14 on sched-worker[1-2]: 8 tasks
 ## Limitations
 
 - Results are not numerically meaningful (kernels do not compute).
-- Each tray has 4 CPUs and 8 GiB RAM: CPU-side work (data loading, Python overhead) is slow compared with the simulated GPU work.
+- Each tray has 4 CPUs and 8 GiB RAM (10 GiB in k3s mode): CPU-side work (data loading, Python overhead) is slow compared with the simulated GPU work.
 
 ## References
 
 - [PyTorch distributed](https://pytorch.org/docs/stable/distributed.html), [torchrun](https://pytorch.org/docs/stable/elastic/run.html)
 - [Ray on Slurm](https://docs.ray.io/en/latest/cluster/vms/user-guides/community/slurm.html)
-- Sources: `examples/`, `playbooks/frameworks.yml`
+- Sources: `examples/`, `examples/k8s/`, `playbooks/frameworks.yml`

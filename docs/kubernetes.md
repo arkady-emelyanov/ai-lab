@@ -63,7 +63,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 
 ## Limitations
 
-- Not wire-compatible GPU management: no NVIDIA GPU Operator, container toolkit or device plugin (they need a real driver); GFD and NFD are NVIDIA's and upstream's.
+- GPUs are allocated by the lab's own device plugin and CDI specification: NVIDIA's GPU Operator, container toolkit and device plugin need a real driver install. GPU Feature Discovery (NVIDIA) and Node Feature Discovery (upstream) are the real ones.
 - Users can create pods with `hostPath` volumes in their namespace (the examples need `/shared`), which in a real cluster would be denied by Pod Security; there is no admission policy forcing pods to run as the user's uid.
 - No NVIDIA DRA driver or ComputeDomains (IMEX); NVLink placement is through Kueue topology-aware scheduling only.
 - Kubernetes users authenticate with client certificates, not LDAP.

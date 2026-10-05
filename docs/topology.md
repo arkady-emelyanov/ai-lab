@@ -19,8 +19,9 @@ In k3s mode the same discovery feeds topograph's Kubernetes engine instead: it l
 
 ```
 bin/ssh sched-control update-topology --dry-run    # print what topograph generates
-bin/ssh sched-control update-topology              # install /etc/slurm/topology.conf and reconfigure Slurm
-bin/ssh sched-control scontrol show topology
+bin/ssh sched-control update-topology              # Slurm: install /etc/slurm/topology.conf and reconfigure; k3s: relabel the trays
+bin/ssh sched-control scontrol show topology        # Slurm mode
+bin/kubectl get nodes -L accelerator.topograph.run/domain,fabric.topograph.run/tier-0   # k3s mode
 ```
 
 A systemd timer (`update-topology.timer`) runs it every minute; an unchanged topology is left alone, so partition changes made through the [partition controller](nvlink-partitions.md) reach the scheduler within a minute (in k3s mode `update-topology --dry-run` prints the trays' labels). Example after moving tray 2 into its own partition:
@@ -52,7 +53,7 @@ bin/ssh sched-control update-topology --dry-run
 bin/ssh sched-control systemctl list-timers update-topology.timer
 ```
 
-`make test` checks that topograph generates a block containing both trays.
+`make test` checks that topograph generates a block containing both trays (Slurm mode) or labels both trays with the NVLink domain and the switch tiers (k3s mode).
 
 ## Limitations
 
@@ -61,6 +62,6 @@ bin/ssh sched-control systemctl list-timers update-topology.timer
 
 ## References
 
-- [topograph](https://github.com/dsx-ai-factory/topograph): [Slurm engine](https://github.com/dsx-ai-factory/topograph/blob/main/docs/engines/slurm.md), [InfiniBand provider](https://github.com/dsx-ai-factory/topograph/blob/main/docs/providers/infiniband.md), [API](https://github.com/dsx-ai-factory/topograph/blob/main/docs/api.md)
-- [Slurm topology.conf (block)](https://slurm.schedmd.com/topology.conf.html)
+- [topograph](https://github.com/dsx-ai-factory/topograph): [Slurm engine](https://github.com/dsx-ai-factory/topograph/blob/main/docs/engines/slurm.md), [Kubernetes engine](https://github.com/dsx-ai-factory/topograph/blob/main/docs/engines/k8s.md), [InfiniBand provider](https://github.com/dsx-ai-factory/topograph/blob/main/docs/providers/infiniband.md), [API](https://github.com/dsx-ai-factory/topograph/blob/main/docs/api.md)
+- [Slurm topology.conf (block)](https://slurm.schedmd.com/topology.conf.html), [Kueue topology-aware scheduling](https://kueue.sigs.k8s.io/docs/concepts/topology_aware_scheduling/)
 - Sources: `fakeib/ibnetdiscover`; roles `roles/fakeib`, `roles/topograph` (`update-topology`, timer)
