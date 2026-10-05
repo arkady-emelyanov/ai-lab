@@ -88,7 +88,18 @@ func (s *Server) routes() http.Handler {
 	auth("GET "+root+"/Managers/{mgr}", s.manager)
 	auth("POST "+root+"/Managers/{mgr}/Actions/Manager.Reset", s.managerReset)
 
+	// The catch-all also receives requests whose path exists under another
+	// method; Redfish wants 405 for those, not 404.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		for _, m := range []string{"GET", "POST", "PATCH", "DELETE"} {
+			probe := r.Clone(r.Context())
+			probe.Method = m
+			if _, pattern := mux.Handler(probe); pattern != "/" && pattern != "" {
+				redfishError(w, http.StatusMethodNotAllowed, "OperationNotAllowed",
+					"The HTTP method "+r.Method+" is not allowed on "+r.URL.Path+".")
+				return
+			}
+		}
 		redfishError(w, http.StatusNotFound, "ResourceNotFound", "The requested resource "+r.URL.Path+" was not found.")
 	})
 	return s.logged(stripSlash(mux))
