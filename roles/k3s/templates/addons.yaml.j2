@@ -1,6 +1,8 @@
 # {{ ansible_managed }}
 # Cluster add-ons, installed by k3s' Helm controller. Controllers run on the
 # control-plane node (tainted CriticalAddonsOnly); per-node agents on the trays.
+# The toleration only allows the control-plane node; the nodeSelector makes it
+# the only one, so no controller competes with GPU jobs on a tray.
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
 metadata:
@@ -14,8 +16,10 @@ spec:
   createNamespace: true
   valuesContent: |-
     master:
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
     gc:
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
     worker:
       nodeSelector: {nvidia.com/gpu.present: "true"}
@@ -32,6 +36,7 @@ spec:
   createNamespace: true
   valuesContent: |-
     controllerManager:
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
 ---
 apiVersion: helm.cattle.io/v1
@@ -46,6 +51,7 @@ spec:
   createNamespace: true
   valuesContent: |-
     controller:
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
 ---
 # Cluster state for the controller's Prometheus (GPU requests per pod, node

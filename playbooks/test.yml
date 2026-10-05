@@ -404,6 +404,21 @@
         != groups['workers'] | length
       when: scheduler == 'k3s'
 
+    # Trays run only per-node agents (DaemonSets) and jobs; the add-ons'
+    # controllers belong on the control-plane node (k3s' own kube-system
+    # components are placed by k3s).
+    - name: No add-on controllers run on the trays (k3s)
+      ansible.builtin.shell: |
+        for tray in {{ groups['workers'] | join(' ') }}; do
+          kubectl get pods -A --field-selector spec.nodeName=$tray --no-headers \
+            -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,OWNER:.metadata.ownerReferences[0].kind' \
+            | awk -v t=$tray '$1 != "kube-system" && $3 != "DaemonSet" && $3 != "Job" {print t": "$1"/"$2" ("$3")"}'
+        done
+      register: misplaced
+      changed_when: false
+      failed_when: misplaced.stdout | length > 0
+      when: scheduler == 'k3s'
+
 - name: Metrics
   hosts: controller
   tasks:
