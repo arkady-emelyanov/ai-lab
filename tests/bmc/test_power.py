@@ -1,11 +1,12 @@
 """Power actions on a GPU tray (--disruptive). Like an operator, each test
-drains the tray in Slurm first and refuses to touch a tray running jobs; it
-uses the last tray so the first keeps serving.
+takes the tray out of scheduling first (Slurm drain, Kubernetes cordon) and
+refuses to touch a tray running jobs; it uses the last tray so the first keeps
+serving.
 
 Real-hardware behaviour checked: NVLink Settings apply at the next reset; a
 plain disable lasts one reset, a sticky one until cleared
 (Oem.Nvidia.LinkDisableSticky, NvidiaPort schema); a powered-off tray shows its
-NVLinks down; Slurm takes the tray back once it is powered on."""
+NVLinks down; the scheduler takes the tray back once it is powered on."""
 import pytest
 
 from conftest import CONTROLLER, ROOT, eventually, gpu_port_path
@@ -13,24 +14,49 @@ from conftest import CONTROLLER, ROOT, eventually, gpu_port_path
 pytestmark = pytest.mark.disruptive
 
 
+# Per scheduler: the tray's state, jobs on it, take it out, put it back, and
+# the state it is in when idle / out of scheduling.
+SCHED = {
+    "slurm": dict(state="sinfo -h -N -n {t} -o %T", jobs="squeue -h -w {t}",
+                  out="scontrol update nodename={t} state=drain reason=bmc-power-test",
+                  back="scontrol update nodename={t} state=resume", idle="idle", held="drained"),
+    "k3s": dict(state="kubectl get node {t} -o jsonpath='{{.status.conditions[?(@.type==\"Ready\")].status}}"
+                      "{{.spec.unschedulable}}'",
+                jobs="kubectl get pods -A --field-selector spec.nodeName={t},status.phase=Running "
+                     "-l jobset.sigs.k8s.io/jobset-name --no-headers",
+                out="kubectl cordon {t}", back="kubectl uncordon {t}", idle="True", held="Truetrue"),
+}
+
+
+def sched(lab, key, tray):
+    return SCHED[lab.scheduler][key].format(t=tray)
+
+
 def node_state(lab, tray):
-    out = lab.sh(CONTROLLER, f"sinfo -h -N -n {tray} -o %T", check=False)
+    out = lab.sh(CONTROLLER, sched(lab, "state", tray), check=False)
     return (out or "unknown").strip()
 
 
 @pytest.fixture
 def power_tray(lab):
     tray = lab.trays[-1]
-    jobs = lab.sh(CONTROLLER, f"squeue -h -w {tray}").strip()
+    jobs = lab.sh(CONTROLLER, sched(lab, "jobs", tray)).strip()
     if jobs:
         pytest.fail(f"{tray} is running jobs; not power-cycling it:\n{jobs}")
-    lab.sh(CONTROLLER, f"scontrol update nodename={tray} state=drain reason=bmc-power-test")
+    lab.sh(CONTROLLER, sched(lab, "out", tray))
     yield tray
 
     def back():
-        lab.sh(CONTROLLER, f"scontrol update nodename={tray} state=resume", check=False)
+        lab.sh(CONTROLLER, sched(lab, "back", tray), check=False)
         st = node_state(lab, tray)
-        return st != "idle" and f"{tray} is {st} in Slurm"
+        if st != SCHED[lab.scheduler]["idle"]:
+            return f"{tray} is {st} in {lab.scheduler}"
+        if lab.scheduler == "k3s":  # the device plugin registered again
+            gpus = lab.sh(CONTROLLER, f"kubectl get node {tray} -o jsonpath='{{.status.allocatable.nvidia\\.com/gpu}}'",
+                          check=False)
+            if (gpus or "").strip() != str(lab.gpus):
+                return f"{tray} has {gpus!r} allocatable GPUs, want {lab.gpus}"
+        return None
     eventually(back, timeout=180, interval=5)
 
 
@@ -106,8 +132,10 @@ def test_force_off_and_on(lab, power_tray):
     finally:
         if b.get(f"{ROOT}/Systems/System_0")["PowerState"] != "On":
             reset(lab, tray, "On")
-    # Drained before the test, so back as drained: slurmd re-registered.
-    eventually(lambda: (st := node_state(lab, tray)) != "drained" and f"Slurm state {st}", timeout=120, interval=5)
+    # Taken out before the test, so back in that state: the node agent
+    # (slurmd, kubelet) re-registered.
+    held = SCHED[lab.scheduler]["held"]
+    eventually(lambda: (st := node_state(lab, tray)) != held and f"{lab.scheduler} state {st}", timeout=120, interval=5)
 
 
 def test_power_on_when_on_is_a_noop(lab, power_tray):

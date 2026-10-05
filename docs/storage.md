@@ -7,11 +7,11 @@
 | Path / endpoint | Backend | Scope | Use |
 |---|---|---|---|
 | `/shared` | Incus volume `cluster-shared` | all Slurm nodes | homes (`/shared/home/<user>`), frameworks venv |
-| `/pfs` | JuiceFS: data in RustFS bucket `pfs`, metadata in Redis | all Slurm nodes | shared datasets and results, per-user `/pfs/<user>` |
+| `/pfs` | JuiceFS: data in RustFS bucket `pfs`, metadata in Redis | all cluster nodes | shared datasets and results, per-user `/pfs/<user>` |
 | `/scratch` (`$SCRATCH`) | btrfs volume per tray, 50 GiB quota | each tray | node-local data, caches, spill files; JuiceFS read cache |
-| `http://slurm-storage:9000` | RustFS (S3) | cluster network and host | object storage with per-user buckets |
+| `http://sched-storage:9000` | RustFS (S3) | cluster network and host | object storage with per-user buckets |
 
-`slurm-storage` (10.107.111.12) runs RustFS (S3 API on `:9000`, web console on `:9001`, data on the Incus volume `rustfs-data`) and Redis (JuiceFS metadata, password-protected, append-only). JuiceFS is mounted through FUSE (Incus provides `/dev/fuse`) on every Slurm node.
+`sched-storage` (10.107.111.12) runs RustFS (S3 API on `:9000`, web console on `:9001`, data on the Incus volume `rustfs-data`) and Redis (JuiceFS metadata, password-protected, append-only, data on the Incus volume `juicefs-meta`). Both volumes survive `make down`, so `/pfs` is kept across rebuilds; if the metadata is lost while the bucket still holds data, `make up` restores it from the newest metadata backup JuiceFS keeps in the bucket (`pfs/meta/dump-*.json.gz`) instead of formatting. JuiceFS is mounted through FUSE (Incus provides `/dev/fuse`) on every cluster node; in k3s mode pods mount it from the tray.
 
 ## Usage
 
@@ -52,8 +52,8 @@ Downloads are verified against the projects' published checksums.
 ## Verification
 
 ```
-bin/ssh root@slurm-worker1 'df -h --output=target,size /pfs /scratch /shared'
-bin/ssh slurm 'echo hi > /pfs/joe/t && srun -N1 -w slurm-worker2 cat /pfs/joe/t'      # written on login, read on a tray
+bin/ssh root@sched-worker1 'df -h --output=target,size /pfs /scratch /shared'
+bin/ssh slurm 'echo hi > /pfs/joe/t && srun -N1 -w sched-worker2 cat /pfs/joe/t'      # written on login, read on a tray
 bin/ssh slurm 'rc ls s3/joe/; rc ls s3/pfs/'                                          # own bucket lists; the JuiceFS bucket is denied
 ```
 

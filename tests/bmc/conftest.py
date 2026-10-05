@@ -24,7 +24,7 @@ import requests
 
 REPO = Path(__file__).resolve().parents[2]
 ROOT = "/redfish/v1"
-CONTROLLER = "slurm-control"
+CONTROLLER = "sched-control"
 
 
 def pytest_addoption(parser):
@@ -143,14 +143,15 @@ class Lab:
     ips: dict
     vars: dict
     trays: list = field(default_factory=list)  # GPU trays in cabling order
-    switch_bmc: str = "slurm-nvswitch-bmc"
-    nvswitch: str = "slurm-nvswitch"  # partition controller host
+    switch_bmc: str = "sched-nvswitch-bmc"
+    nvswitch: str = "sched-nvswitch"  # partition controller host
 
     def __post_init__(self):
         v = self.vars
         self.user, self.password = v["bmc_username"], v["bmc_password"]
         self.gpus, self.nvlinks = int(v["fakegpu_count"]), int(v["fakegpu_nvlinks"])
         self.switches, self.switch_ports = int(v["nvswitch_count"]), int(v["nvswitch_ports"])
+        self.scheduler = v.get("scheduler", "slurm")
 
     def bmc(self, name):
         return BMC(name, self.ips[name], self.user, self.password)
@@ -245,7 +246,7 @@ def _lab():
     if _LAB is None:
         ips = _read_instances()
         _LAB = Lab(ips=ips, vars=_read_vars())
-        # slurm-worker1, slurm-worker2: the order the switch tray is cabled in
+        # sched-worker1, sched-worker2: the order the switch tray is cabled in
         _LAB.trays = sorted(n.removesuffix("-bmc") for n in ips if n.endswith("-bmc") and n != _LAB.switch_bmc)
         if not _LAB.trays or _LAB.switch_bmc not in ips or _LAB.nvswitch not in ips:
             pytest.exit("the lab is not running (make up)", returncode=2)

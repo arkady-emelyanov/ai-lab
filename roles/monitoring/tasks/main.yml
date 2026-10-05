@@ -65,7 +65,7 @@
         daemon_reload: true
 
 - name: Slurm exporter
-  when: inventory_hostname in groups['controller']
+  when: inventory_hostname in groups['controller'] and scheduler == 'slurm'
   block:
     - name: Download prometheus-slurm-exporter
       ansible.builtin.get_url:
@@ -157,6 +157,13 @@
       ansible.builtin.template:
         src: prometheus.yml.j2
         dest: /etc/prometheus/prometheus.yml
+        mode: "0644"
+      notify: Reload prometheus
+
+    - name: Configure scheduler recording rules
+      ansible.builtin.template:
+        src: sched-rules.yml.j2
+        dest: /etc/prometheus/sched-rules.yml
         mode: "0644"
       notify: Reload prometheus
 

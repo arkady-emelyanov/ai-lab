@@ -1,0 +1,12 @@
+- name: Restart k3s
+  ansible.builtin.systemd_service:
+    name: "{{ k3s_unit }}"
+    state: restarted
+    daemon_reload: true
+  when: k3s_unit != ''
+
+- name: Restart fakedp
+  ansible.builtin.systemd_service:
+    name: fakedp
+    state: restarted
+    daemon_reload: true

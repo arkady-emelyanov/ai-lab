@@ -9,7 +9,14 @@
     secrets: "{{ playbook_dir | dirname }}/.secrets"
     # --project flag for an instance
     proj: "--project {{ hostvars[item].ansible_incus_project }}"
+    limits: "{{ instance_limits | combine(instance_limits_k3s if scheduler == 'k3s' else {}) }}"
   tasks:
+    - name: Check the scheduler setting
+      ansible.builtin.assert:
+        that: scheduler in ['slurm', 'k3s']
+        fail_msg: "scheduler must be slurm or k3s, not {{ scheduler }}"
+        quiet: true
+
     # ---- GPU trays project and Incus API for BMC power control ------------------
 
     - name: Create the GPU trays project (shares default profiles, networks, volumes)
@@ -76,8 +83,8 @@
       ansible.builtin.command: >-
         incus launch {{ incus_image }} {{ item }} {{ proj }}
         --profile {{ incus_profile }}
-        -c limits.cpu={{ instance_limits[role].cpu }}
-        -c limits.memory={{ instance_limits[role].memory }}
+        -c limits.cpu={{ limits[role].cpu }}
+        -c limits.memory={{ limits[role].memory }}
         -c security.nesting=true
       vars:
         role: "{{ ['controller', 'login', 'workers', 'storage', 'nvswitch', 'bmc'] | select('in', hostvars[item].group_names) | first }}"
@@ -160,6 +167,19 @@
       changed_when: ra.rc == 0
       failed_when: ra.rc != 0 and 'already exists' not in ra.stderr
 
+    - name: Create the JuiceFS metadata volume (Redis data)
+      ansible.builtin.command: incus storage volume create {{ shared_pool }} {{ juicefs_meta_volume }}
+      register: mv
+      changed_when: mv.rc == 0
+      failed_when: mv.rc != 0 and 'already exists' not in mv.stderr
+
+    - name: Attach the JuiceFS metadata volume
+      ansible.builtin.command: >-
+        incus storage volume attach {{ shared_pool }} {{ juicefs_meta_volume }} {{ storage_host }} /var/lib/redis
+      register: ma
+      changed_when: ma.rc == 0
+      failed_when: ma.rc != 0 and 'already exists' not in ma.stderr
+
     # JuiceFS mounts through FUSE; unprivileged containers get /dev/fuse from Incus.
     - name: Give Slurm nodes /dev/fuse
       ansible.builtin.command: >-
@@ -186,6 +206,17 @@
       register: dev
       changed_when: dev.rc == 0
       failed_when: dev.rc != 0 and 'already exists' not in dev.stderr
+
+    # kubelet's OOM watcher reads the kernel log; unprivileged containers
+    # have no /dev/kmsg of their own.
+    - name: Give Kubernetes nodes the kernel log (k3s)
+      ansible.builtin.command: >-
+        incus config device add {{ item }} kmsg unix-char source=/dev/kmsg path=/dev/kmsg {{ proj }}
+      loop: "{{ groups['controller'] + groups['workers'] }}"
+      when: scheduler == 'k3s'
+      register: kmsg
+      changed_when: kmsg.rc == 0
+      failed_when: kmsg.rc != 0 and 'already exists' not in kmsg.stderr
 
     - name: Create a sideband volume per tray
       ansible.builtin.command: incus storage volume create {{ shared_pool }} sideband-{{ hostvars[item].bmc_tray }}

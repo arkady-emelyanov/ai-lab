@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+[Unit]
+Description=topograph cluster topology generator
+After=network-online.target {{ 'slurmctld.service' if scheduler == 'slurm' else 'k3s.service' }}
+
+[Service]
+{% if scheduler == 'k3s' %}
+# Kubernetes engine: in-cluster credentials staged where client-go reads them.
+Environment=KUBERNETES_SERVICE_HOST=127.0.0.1 KUBERNETES_SERVICE_PORT={{ k3s_port }}
+ExecStartPre=/bin/sh -c 'd=/var/run/secrets/kubernetes.io/serviceaccount; mkdir -p $d && cp /etc/topograph/serviceaccount/* $d/'
+{% endif %}
+ExecStart=/usr/local/bin/topograph -c /etc/topograph/topograph-config.yaml
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

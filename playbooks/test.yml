@@ -1,5 +1,6 @@
-# End-to-end checks: jobs run through Slurm as a directory user, frameworks
-# see the emulated NVL8 domain, the BMCs answer, metrics reach Prometheus.
+# End-to-end checks: jobs run through the scheduler (Slurm or k3s) as a
+# directory user, frameworks see the emulated NVL8 domain, the BMCs answer,
+# metrics reach Prometheus.
 # make test (after make up; framework jobs need make frameworks).
 - name: Slurm jobs as a cluster user
   hosts: login
@@ -8,70 +9,170 @@
     home: "{{ shared_mount }}/home/{{ cluster_users[0].name }}"
     venv_ready: "{{ venv.stat.exists }}"
   tasks:
-    # Waits out jobs still completing (e.g. from a previous run).
-    - name: Both trays are up
-      ansible.builtin.command: sinfo -h -N -o "%N %T"
-      register: sinfo
-      changed_when: false
-      retries: 24
-      delay: 5
-      until: sinfo.stdout_lines | select('search', ' (idle|mixed|allocated)$') | list | length == groups['workers'] | length
+    - name: Slurm
+      when: scheduler == 'slurm'
+      block:
+        # Waits out jobs still completing (e.g. from a previous run).
+        - name: Both trays are up
+          ansible.builtin.command: sinfo -h -N -o "%N %T"
+          register: sinfo
+          changed_when: false
+          retries: 24
+          delay: 5
+          until: sinfo.stdout_lines | select('search', ' (idle|mixed|allocated)$') | list | length == groups['workers'] | length
 
-    - name: Check for the frameworks venv
-      ansible.builtin.stat:
-        path: "{{ frameworks_venv }}/bin/python"
-      register: venv
+        - name: Check for the frameworks venv
+          ansible.builtin.stat:
+            path: "{{ frameworks_venv }}/bin/python"
+          register: venv
 
-    - name: Copy the examples
-      ansible.builtin.copy:
-        src: "{{ repo_root }}/examples/"
-        dest: "{{ home }}/examples/"
-        owner: "{{ user }}"
-        group: "{{ user }}"
-        mode: preserve
+        - name: Copy the examples
+          ansible.builtin.copy:
+            src: "{{ repo_root }}/examples/"
+            dest: "{{ home }}/examples/"
+            owner: "{{ user }}"
+            group: "{{ user }}"
+            mode: preserve
 
-    - name: Run example jobs (sbatch --wait)
-      ansible.builtin.command:
-        cmd: su - {{ user }} -c 'cd examples && sbatch --wait --parsable {{ item.script }}'
-      loop:
-        - { script: gpu-topology.sbatch, needs_venv: false }
-        - { script: nvl8-hello.sbatch, needs_venv: false }
-        - { script: ddp-train.sbatch, needs_venv: true }
-        - { script: ray-cluster.sbatch, needs_venv: true }
-      loop_control:
-        label: "{{ item.script }}"
-      when: not item.needs_venv or venv_ready
-      register: jobs
-      changed_when: true
+        - name: Run example jobs (sbatch --wait)
+          ansible.builtin.command:
+            cmd: su - {{ user }} -c 'cd examples && sbatch --wait --parsable {{ item.script }}'
+          loop:
+            - { script: gpu-topology.sbatch, needs_venv: false }
+            - { script: nvl8-hello.sbatch, needs_venv: false }
+            - { script: ddp-train.sbatch, needs_venv: true }
+            - { script: ray-cluster.sbatch, needs_venv: true }
+          loop_control:
+            label: "{{ item.script }}"
+          when: not item.needs_venv or venv_ready
+          register: jobs
+          changed_when: true
 
-    - name: Read job output
-      ansible.builtin.slurp:
-        src: "{{ home }}/examples/{{ item.item.script | replace('.sbatch', '') }}-{{ item.stdout | trim }}.out"
-      loop: "{{ jobs.results | rejectattr('skipped', 'defined') | list }}"
-      loop_control:
-        label: "{{ item.item.script }}"
-      register: outputs
+        - name: Read job output
+          ansible.builtin.slurp:
+            src: "{{ home }}/examples/{{ item.item.script | replace('.sbatch', '') }}-{{ item.stdout | trim }}.out"
+          loop: "{{ jobs.results | rejectattr('skipped', 'defined') | list }}"
+          loop_control:
+            label: "{{ item.item.script }}"
+          register: outputs
 
-    - name: Check job output
-      ansible.builtin.assert:
-        that: (item.content | b64decode) is search(expected[item.item.item.script])
-        fail_msg: "{{ item.item.item.script }}: expected /{{ expected[item.item.item.script] }}/ in its output"
-        quiet: true
-      loop: "{{ outputs.results }}"
-      loop_control:
-        label: "{{ item.item.item.script }}"
-      vars:
-        expected:
-          gpu-topology.sbatch: "Completed, {{ nvl_cluster_uuid }}, {{ nvl_clique_id }}"
-          nvl8-hello.sbatch: "rank 7 on"
-          ddp-train.sbatch: "rank 7/8 on"
-          ray-cluster.sbatch: "8 tasks on"
+        - name: Check job output
+          ansible.builtin.assert:
+            that: (item.content | b64decode) is search(expected[item.item.item.script])
+            fail_msg: "{{ item.item.item.script }}: expected /{{ expected[item.item.item.script] }}/ in its output"
+            quiet: true
+          loop: "{{ outputs.results }}"
+          loop_control:
+            label: "{{ item.item.item.script }}"
+          vars:
+            expected:
+              gpu-topology.sbatch: "Completed, {{ nvl_cluster_uuid }}, {{ nvl_clique_id }}"
+              nvl8-hello.sbatch: "rank 7 on"
+              ddp-train.sbatch: "rank 7/8 on"
+              ray-cluster.sbatch: "8 tasks on"
 
-    - name: Jobs are recorded in accounting
-      ansible.builtin.command: sacct -n -X -u {{ user }} -o JobID,State -j {{ jobs.results | rejectattr('skipped', 'defined') | map(attribute='stdout') | map('trim') | join(',') }}
-      register: sacct
-      changed_when: false
-      failed_when: sacct.stdout_lines | reject('search', 'COMPLETED') | list | length > 0
+        - name: Jobs are recorded in accounting
+          ansible.builtin.command: sacct -n -X -u {{ user }} -o JobID,State -j {{ jobs.results | rejectattr('skipped', 'defined') | map(attribute='stdout') | map('trim') | join(',') }}
+          register: sacct
+          changed_when: false
+          failed_when: sacct.stdout_lines | reject('search', 'COMPLETED') | list | length > 0
+
+- name: Kubernetes jobs as a cluster user
+  hosts: login
+  vars:
+    user: "{{ cluster_users[0].name }}"
+    home: "{{ shared_mount }}/home/{{ cluster_users[0].name }}"
+    venv_ready: "{{ venv.stat.exists }}"
+    kubectl: su - {{ cluster_users[0].name }} -c
+  tasks:
+    - name: k3s
+      when: scheduler == 'k3s'
+      block:
+        # GPU Feature Discovery and topograph label the trays within a minute or two.
+        - name: Both trays are ready with their GPUs, clique and topology labels
+          ansible.builtin.command: >-
+            {{ kubectl }} 'kubectl get nodes -l nvidia.com/gpu.present=true -o jsonpath="{range .items[*]}{.metadata.name}
+            {.status.conditions[?(@.type==\"Ready\")].status} {.status.allocatable.nvidia\.com/gpu}
+            {.metadata.labels.nvidia\.com/gpu\.clique} {.metadata.labels.accelerator\.topograph\.run/domain}{\"\n\"}{end}"'
+          register: nodes
+          changed_when: false
+          retries: 36
+          delay: 5
+          until: >-
+            nodes.stdout_lines | select('search', ' True ' ~ fakegpu_count ~ ' ' ~ nvl_cluster_uuid ~ '.' ~ nvl_clique_id
+            ~ ' ' ~ nvl_cluster_uuid ~ '.' ~ nvl_clique_id ~ '$') | list | length == groups['workers'] | length
+
+        - name: Check for the frameworks venv
+          ansible.builtin.stat:
+            path: "{{ frameworks_venv }}/bin/python"
+          register: venv
+
+        - name: Copy the examples
+          ansible.builtin.copy:
+            src: "{{ repo_root }}/examples/"
+            dest: "{{ home }}/examples/"
+            owner: "{{ user }}"
+            group: "{{ user }}"
+            mode: preserve
+
+        - name: Run example jobs (submit --wait)
+          ansible.builtin.command:
+            cmd: "{{ kubectl }} 'cd examples/k8s && ./submit --wait {{ item.manifest }}'"
+          loop:
+            - { manifest: gpu-topology.yaml, needs_venv: false }
+            - { manifest: nvl8-hello.yaml, needs_venv: false }
+            - { manifest: ddp-train.yaml, needs_venv: true }
+            - { manifest: ray-cluster.yaml, needs_venv: true }
+          loop_control:
+            label: "{{ item.manifest }}"
+          when: not item.needs_venv or venv_ready
+          register: jobs
+          changed_when: true
+          failed_when: false
+
+        - name: Read job output
+          ansible.builtin.slurp:
+            src: "{{ home }}/examples/k8s/{{ item.stdout | trim }}.out"
+          loop: "{{ jobs.results | rejectattr('skipped', 'defined') | list }}"
+          loop_control:
+            label: "{{ item.item.manifest }}"
+          register: outputs
+
+        - name: Check job output
+          ansible.builtin.assert:
+            that:
+              - item.item.rc == 0
+              - (item.content | b64decode) is search(expected[item.item.item.manifest])
+            fail_msg: "{{ item.item.item.manifest }}: failed or no /{{ expected[item.item.item.manifest] }}/ in its output"
+            quiet: true
+          loop: "{{ outputs.results }}"
+          loop_control:
+            label: "{{ item.item.item.manifest }}"
+          vars:
+            expected:
+              gpu-topology.yaml: "Completed, {{ nvl_cluster_uuid }}, {{ nvl_clique_id }}"
+              nvl8-hello.yaml: "rank 7 on"
+              ddp-train.yaml: "rank 7/8 on"
+              ray-cluster.yaml: "8 tasks on"
+
+        - name: Every pod of nvl8-hello got its own GPU
+          ansible.builtin.assert:
+            that: >-
+              outputs.results | selectattr('item.item.manifest', 'equalto', 'nvl8-hello.yaml') | map(attribute='content')
+              | map('b64decode') | first | regex_findall('GPU-[0-9a-f-]+') | unique | length == fakegpu_count * groups['workers'] | length
+            quiet: true
+
+        - name: A user reads cluster state but not other namespaces
+          ansible.builtin.command: "{{ kubectl }} '{{ item.cmd }}'"
+          loop:
+            - { cmd: kubectl get nodes, allowed: true }
+            - { cmd: kubectl get clusterqueues, allowed: true }
+            - { cmd: kubectl -n kube-system get pods, allowed: false }
+          loop_control:
+            label: "{{ item.cmd }}"
+          register: access
+          changed_when: false
+          failed_when: (access.rc == 0) != item.allowed
 
 - name: Shared filesystem
   hosts: cluster
@@ -82,7 +183,7 @@
 
     - name: A file written on one node is readable on every other
       ansible.builtin.copy:
-        content: "{{ ansible_date_time.epoch }}\n"
+        content: "{{ ansible_facts['date_time']['epoch'] }}\n"
         dest: "{{ juicefs_mount }}/.test-roundtrip"
         mode: "0644"
       when: inventory_hostname == groups['login'][0]
@@ -91,7 +192,7 @@
       ansible.builtin.command: cat {{ juicefs_mount }}/.test-roundtrip
       register: roundtrip
       changed_when: false
-      failed_when: roundtrip.stdout | trim != hostvars[groups['login'][0]].ansible_date_time.epoch
+      failed_when: roundtrip.stdout | trim != hostvars[groups['login'][0]].ansible_facts['date_time']['epoch']
 
 - name: Object storage
   hosts: storage
@@ -104,16 +205,63 @@
   hosts: login
   vars:
     user: "{{ cluster_users[0].name }}"
+    s3_script: >-
+      echo test > /tmp/s3test-$$ &&
+      rc cp /tmp/s3test-$$ s3/{{ cluster_users[0].name }}/test/ && rc ls s3/{{ cluster_users[0].name }}/test/ &&
+      ! rc ls s3/{{ juicefs_bucket }}/ 2>/dev/null; rc rm --recursive --force s3/{{ cluster_users[0].name }}/test/ >/dev/null
   tasks:
-    - name: A user can write and list their own bucket, but not others
+    - name: A user can write and list their own bucket, but not others (Slurm job)
       ansible.builtin.command:
-        cmd: >-
-          su - {{ user }} -c 'srun -N1 bash -c "echo test > /tmp/s3test-$$ &&
-          rc cp /tmp/s3test-$$ s3/{{ user }}/test/ && rc ls s3/{{ user }}/test/ &&
-          ! rc ls s3/{{ juicefs_bucket }}/ 2>/dev/null; rc rm --recursive --force s3/{{ user }}/test/ >/dev/null"'
+        cmd: su - {{ user }} -c 'srun -N1 bash -c "{{ s3_script }}"'
       register: s3test
       changed_when: false
       failed_when: s3test.rc != 0 or s3test.stdout is not search('s3test')
+      when: scheduler == 'slurm'
+
+    - name: The same from a pod (k3s)
+      when: scheduler == 'k3s'
+      block:
+        - name: Write the test job
+          ansible.builtin.copy:
+            dest: "{{ shared_mount }}/home/{{ user }}/examples/k8s/s3test.yaml"
+            owner: "{{ user }}"
+            group: "{{ user }}"
+            mode: "0644"
+            content: |
+              apiVersion: jobset.x-k8s.io/v1alpha2
+              kind: JobSet
+              metadata:
+                name: "@NAME@"
+                labels: {kueue.x-k8s.io/queue-name: {{ k3s_queue }}}
+              spec:
+                replicatedJobs:
+                  - name: s3
+                    template:
+                      spec:
+                        backoffLimit: 0
+                        template:
+                          spec:
+                            restartPolicy: Never
+                            securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+                            containers:
+                              - name: s3
+                                image: {{ k3s_pod_image }}
+                                env: [{name: HOME, value: "@HOME@"}]
+                                command: [bash, -c, {{ s3_script | to_json }}]
+                                resources: {requests: {cpu: 100m, memory: 64Mi}}
+                                volumeMounts:
+                                  - {name: shared, mountPath: /shared}
+                                  - {name: rc, mountPath: /usr/local/bin/rc}
+                            volumes:
+                              - {name: shared, hostPath: {path: /shared, type: Directory}}
+                              - {name: rc, hostPath: {path: /usr/local/bin/rc, type: File}}
+
+        - name: A user can write and list their own bucket, but not others (pod)
+          ansible.builtin.command:
+            cmd: su - {{ user }} -c 'cd examples/k8s && name=$(./submit --wait s3test.yaml) && cat $name.out'
+          register: s3test
+          changed_when: false
+          failed_when: s3test.rc != 0 or s3test.stdout is not search('s3test')
 
 - name: Tray BMCs
   hosts: controller
@@ -158,11 +306,21 @@
 - name: Topology discovery
   hosts: controller
   tasks:
-    - name: topograph sees the trays in one NVLink block
+    - name: topograph sees the trays in one NVLink block (Slurm)
       ansible.builtin.command: update-topology --dry-run
       register: topo
       changed_when: false
       failed_when: topo.stdout is not search('BlockName=\\S+ Nodes=' ~ (groups['workers'] | first | regex_replace('[0-9]+$', '')) ~ '\\[')
+      when: scheduler == 'slurm'
+
+    - name: topograph labels every tray with the NVLink domain and the IB switches (k3s)
+      ansible.builtin.command: update-topology --dry-run
+      register: topo
+      changed_when: false
+      failed_when: >-
+        topo.stdout_lines | select('search', nvl_cluster_uuid ~ '.' ~ nvl_clique_id ~ ' +S-') | list | length
+        != groups['workers'] | length
+      when: scheduler == 'k3s'
 
 - name: Metrics
   hosts: controller
@@ -182,11 +340,11 @@
       register: dashboards
       failed_when: dashboards.json | length < grafana_dashboards | length + 2
 
-    - name: Slurm GPU allocation and NVLink fabric metrics are collected
+    - name: Scheduler GPU allocation and NVLink fabric metrics are collected
       ansible.builtin.uri:
         url: http://localhost:9090/api/v1/query?query={{ item.query | urlencode }}
       loop:
-        - { query: slurm_node_gpus, count: "{{ groups['workers'] | length }}" }
+        - { query: sched_node_gpus_alloc, count: "{{ groups['workers'] | length }}" }
         - { query: nvlink_gpu_links, count: "{{ fakegpu_count * groups['workers'] | length }}" }
         - { query: nvswitch_ports_up, count: "{{ nvswitch_count }}" }
       loop_control:

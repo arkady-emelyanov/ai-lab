@@ -1,0 +1,43 @@
+# Prints the emulated GPU topology of every tray in the NVL8 domain: one pod
+# per tray with all 4 of its GPUs (k8s version of gpu-topology.sbatch).
+# Submit: ./submit --wait gpu-topology.yaml
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: "@NAME@"
+  labels: {kueue.x-k8s.io/queue-name: gpu}
+spec:
+  replicatedJobs:
+    - name: tray
+      template:
+        spec:
+          parallelism: 2
+          completions: 2
+          completionMode: Indexed
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                # Both pods in one NVLink domain (topograph's label).
+                kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+            spec:
+              restartPolicy: Never
+              securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+              containers:
+                - name: topology
+                  image: docker.io/library/buildpack-deps:noble
+                  env:
+                    - name: NODE_NAME
+                      valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+                  command: [bash, -c]
+                  args:
+                    - |
+                      echo "== $NODE_NAME: GPUs"
+                      nvidia-smi -L
+                      echo "== $NODE_NAME: NVLink matrix"
+                      nvidia-smi topo -m | head -5
+                      echo "== $NODE_NAME: NVLink fabric (must match on all trays)"
+                      nvidia-smi --query-gpu=index,pci.bus_id,fabric.state,fabric.cluster_uuid,fabric.clique_id --format=csv,noheader
+                  resources:
+                    limits: {nvidia.com/gpu: 4}
+                    requests: {cpu: 500m, memory: 256Mi}

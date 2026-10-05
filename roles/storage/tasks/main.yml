@@ -92,6 +92,17 @@
 
 # ---- Redis (JuiceFS metadata) ---------------------------------------------------------
 
+# Redis' data directory is the juicefs-meta volume (provision.yml); a fresh
+# volume is owned by root.
+- name: Let Redis own its data directory
+  ansible.builtin.file:
+    path: /var/lib/redis
+    state: directory
+    owner: redis
+    group: redis
+    mode: "0750"
+  notify: Restart redis
+
 - name: Configure Redis for JuiceFS metadata
   ansible.builtin.copy:
     content: |

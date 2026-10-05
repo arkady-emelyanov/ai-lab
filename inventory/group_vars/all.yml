@@ -12,6 +12,32 @@ instance_limits:
   bmc: { cpu: 1, memory: 256MiB }
   storage: { cpu: 2, memory: 4GiB }
   nvswitch: { cpu: 1, memory: 256MiB }
+# ---- Scheduler --------------------------------------------------------------------
+# Workload layer on the same emulated hardware: slurm or k3s (Kubernetes).
+# Changing it on a built cluster: make down && make up (volumes are kept).
+scheduler: slurm
+# k3s mode: the server (control plane, add-ons) shares the controller with
+# LDAP, Prometheus and Grafana; kubelet and pods need more room on the trays.
+instance_limits_k3s:
+  controller: { cpu: 2, memory: 3GiB }
+  workers: { cpu: 4, memory: 10GiB }
+k3s_version: v1.36.5+k3s1
+k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313
+k3s_port: 6443
+# Add-ons, installed by k3s' Helm controller.
+nfd_chart_version: 0.19.0
+kueue_chart_version: 0.20.0
+jobset_chart_version: 0.12.0
+ksm_chart_version: 8.6.0
+ksm_node_port: 30808
+# NVIDIA GPU Feature Discovery (image of NVIDIA's k8s-device-plugin release).
+gfd_image: nvcr.io/nvidia/k8s-device-plugin:v0.20.1
+# Image for GPU pods: Ubuntu 24.04 with Python, so the frameworks venv on
+# /shared and the fake GPU libraries (built on the trays) run unchanged.
+k3s_pod_image: docker.io/library/buildpack-deps:noble
+# Kueue: one queue per user namespace, all feeding one ClusterQueue.
+k3s_queue: gpu
+
 # Project for the GPU trays; it shares the default project's profiles,
 # networks and storage volumes.
 trays_project: trays
@@ -36,7 +62,7 @@ slurm_partition: gpu
 # association (account) to run jobs.
 slurm_accounts:
   - name: lab
-    description: Slurm lab
+    description: AI lab
     organization: example.com
 slurmdbd_db: slurm_acct_db
 # Must stay below the instance memory limit (MiB).
@@ -170,6 +196,9 @@ juicefs_name: pfs
 juicefs_bucket: pfs
 juicefs_mount: /pfs
 juicefs_meta_url: redis://{{ storage_host }}:6379/1
+# Incus volume holding Redis' data (the filesystem's metadata) on the storage
+# node, so make down / make up keep /pfs like the object data it describes.
+juicefs_meta_volume: juicefs-meta
 # Local read cache: node-local scratch on the trays, the root disk elsewhere.
 juicefs_cache_dir: "{{ scratch_mount ~ '/juicefs-cache' if inventory_hostname in groups['workers'] else '/var/cache/juicefs' }}"
 juicefs_cache_mib: 10240

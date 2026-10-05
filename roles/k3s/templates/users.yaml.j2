@@ -1,0 +1,69 @@
+# {{ ansible_managed }}
+# Directory users: a namespace each (their workloads, their queue), edit
+# rights there, and read access to cluster-wide state they need to plan jobs
+# (nodes and their GPU/topology labels, queues).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-user
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [kueue.x-k8s.io]
+    resources: [clusterqueues, resourceflavors, topologies]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lab-users
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-user
+subjects:
+  - {apiGroup: rbac.authorization.k8s.io, kind: Group, name: lab-users}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-user-namespace
+rules:
+  - apiGroups: [jobset.x-k8s.io]
+    resources: [jobsets]
+    verbs: ["*"]
+  - apiGroups: [kueue.x-k8s.io]
+    resources: [localqueues, workloads]
+    verbs: [get, list, watch]
+{% for user in cluster_users %}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ user.name }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ user.name }}-edit
+  namespace: {{ user.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - {apiGroup: rbac.authorization.k8s.io, kind: User, name: {{ user.name }}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ user.name }}-lab
+  namespace: {{ user.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-user-namespace
+subjects:
+  - {apiGroup: rbac.authorization.k8s.io, kind: User, name: {{ user.name }}}
+{% endfor %}

@@ -4,14 +4,14 @@
 
 ## Overview
 
-On GB200-class systems the NVLink domain is managed from the switch trays: NVIDIA's NMX Controller (NMX-C) owns the partitions (which GPUs may talk over NVLink), and NMX Telemetry exposes the fabric's state and counters. The lab's `slurm-nvswitch` host runs `fakenmxc`, which plays both roles:
+On GB200-class systems the NVLink domain is managed from the switch trays: NVIDIA's NMX Controller (NMX-C) owns the partitions (which GPUs may talk over NVLink), and NMX Telemetry exposes the fabric's state and counters. The lab's `sched-nvswitch` host runs `fakenmxc`, which plays both roles:
 
 | Interface | Port | Purpose |
 |---|---|---|
 | gRPC (`nmxlab.v1.NMXController`, server reflection) | 9370 | partitions, domain/GPU/switch/topology inventory |
 | HTTP `/metrics` (Prometheus text) | 9372 | partitions, per-GPU NVLink state and traffic, per-switch port state and throughput |
 
-The API is modelled on NMX-C's public documentation (Hello handshake, default partition 32766, partition ids 1–32765, GPUs addressed by UID or location) but uses its own `.proto` (`fakenmxc/proto/nmxc.proto`); NVIDIA's `.proto` is proprietary and not reused.
+The API is modelled on NMX-C's public documentation (Hello handshake, default partition 32766, partition ids 1–32765, GPUs addressed by UID or location) but uses its own `.proto` (`fakenmxc/proto/nmxc.proto`); NVIDIA's `.proto` is proprietary and not reused: it ships with the switch tray firmware ("the NMX-Controller gRPC API Guide, which is a part of the Switch Tray firmware package", [GB200 NVL Partition User's Guide](https://docs.nvidia.com/multi-node-nvlink-systems/partition-guide-v1-2.pdf) §4), and the copy in NVIDIA's open-source infra-controller is marked [`LicenseRef-NvidiaProprietary`](https://github.com/dsx-ai-factory/infra-controller/blob/755d11644ce46ef3a7244830b6bef8fe3b386110/crates/rpc/proto/nmx_c.proto#L2-L10) (use or redistribution without an NVIDIA licence agreement prohibited). Clients written against NVIDIA's NMX-C therefore cannot talk to the lab's controller.
 
 ## How it works
 
@@ -23,17 +23,17 @@ The API is modelled on NMX-C's public documentation (Hello handshake, default pa
 
 ## Usage
 
-With [grpcurl](https://github.com/fullstorydev/grpcurl) (`.cache/tools/bin/grpcurl` after the build tools are fetched, or any installation) from your machine:
+With `bin/grpcurl` from your machine ([grpcurl](https://github.com/fullstorydev/grpcurl), built with Go into `.cache/tools` on first use):
 
 ```
-nmx() { grpcurl -plaintext -d "$2" 10.107.111.34:9370 nmxlab.v1.NMXController/$1; }
+nmx() { bin/grpcurl -plaintext -d "$2" 10.107.111.34:9370 nmxlab.v1.NMXController/$1; }
 nmx Hello '{"gateway_id": "me"}'                                    # required first, per gateway id
 nmx GetDomainProperties '{"gateway_id": "me"}'
 nmx GetGpuInfoList '{"gateway_id": "me", "slot_ids": [2]}'           # tray 2: uuid, location, partition, clique, links, health
 gpus='[{"slot_id":2,"gpu_id":0},{"slot_id":2,"gpu_id":1},{"slot_id":2,"gpu_id":2},{"slot_id":2,"gpu_id":3}]'
 nmx RemoveGpusFromPartition "{\"gateway_id\": \"me\", \"partition_id\": 32766, \"locations\": $gpus}"
 nmx CreatePartition "{\"gateway_id\": \"me\", \"partition_name\": \"tray2\", \"partition_id\": 7, \"locations\": $gpus}"
-bin/ssh slurm-worker2 nvidia-smi --query-gpu=fabric.cliqueId --format=csv     # now 7
+bin/ssh sched-worker2 nvidia-smi --query-gpu=fabric.cliqueId --format=csv     # now 7
 ```
 
 | RPC | Purpose |
@@ -46,7 +46,7 @@ bin/ssh slurm-worker2 nvidia-smi --query-gpu=fabric.cliqueId --format=csv     # 
 | `GetPartitionCount`, `GetPartitionIdList`, `GetPartitionInfoList` | partitions |
 | `CreatePartition`, `DeletePartition`, `AddGpusToPartition`, `RemoveGpusFromPartition` | partition management; errors `NMX_ST_GPU_IN_USE`, `NMX_ST_NOT_FOUND`, `NMX_ST_ALREADY_EXISTS`, `NMX_ST_INVALID_ARGUMENT` |
 
-`grpcurl -plaintext 10.107.111.34:9370 describe nmxlab.v1.NMXController` lists every RPC and message.
+`bin/grpcurl -plaintext 10.107.111.34:9370 describe nmxlab.v1.NMXController` lists every RPC and message.
 
 **Fabric metrics** (`curl http://10.107.111.34:9372/metrics`, scraped by Prometheus as job `nvlink`):
 
@@ -64,9 +64,9 @@ bin/ssh slurm-worker2 nvidia-smi --query-gpu=fabric.cliqueId --format=csv     # 
 ## Verification
 
 ```
-grpcurl -plaintext -d '{"gateway_id":"me"}' 10.107.111.34:9370 nmxlab.v1.NMXController/Hello     # domainUuid
+bin/grpcurl -plaintext -d '{"gateway_id":"me"}' 10.107.111.34:9370 nmxlab.v1.NMXController/Hello     # domainUuid
 curl -s http://10.107.111.34:9372/metrics | grep -E '^nvswitch_ports_up|^nvlink_partition_gpus'
-bin/ssh slurm-worker1 nvidia-smi --query-gpu=fabric.clusterUuid,fabric.cliqueId --format=csv
+bin/ssh sched-worker1 nvidia-smi --query-gpu=fabric.clusterUuid,fabric.cliqueId --format=csv
 ```
 
 `make test` checks the gRPC port, that every GPU reports the domain UUID and a clique, and that Prometheus has the fabric series. During the DDP example, `rate(nvlink_gpu_tx_bytes_total[1m])` rises on the GPUs in use.

@@ -1,0 +1,39 @@
+# One pod per GPU across the whole NVL8 domain: 8 pods with 1 GPU each,
+# admitted together (gang) into one NVLink domain. Each reports the tray and
+# GPU it got (k8s version of nvl8-hello.sbatch).
+# Submit: ./submit --wait nvl8-hello.yaml
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: "@NAME@"
+  labels: {kueue.x-k8s.io/queue-name: gpu}
+spec:
+  replicatedJobs:
+    - name: rank
+      template:
+        spec:
+          parallelism: 8
+          completions: 8
+          completionMode: Indexed
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+            spec:
+              restartPolicy: Never
+              securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+              containers:
+                - name: hello
+                  image: docker.io/library/buildpack-deps:noble
+                  env:
+                    - name: NODE_NAME
+                      valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+                  command: [bash, -c]
+                  args:
+                    - |
+                      gpu=$(nvidia-smi --query-gpu=name,uuid,fabric.clique_id --format=csv,noheader)
+                      echo "rank $JOB_COMPLETION_INDEX on $NODE_NAME NVIDIA_VISIBLE_DEVICES=$NVIDIA_VISIBLE_DEVICES: $gpu"
+                  resources:
+                    limits: {nvidia.com/gpu: 1}
+                    requests: {cpu: 250m, memory: 128Mi}

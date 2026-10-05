@@ -34,11 +34,11 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 
 **Management inputs.** NVML reads the tray's sideband (written by the BMCs and the partition controller): NVLinks disabled by the tray BMC or switch BMC report inactive (`nvidia-smi topo -m` shows e.g. `NV16`), and each GPU reports the clique of its NVLink partition.
 
-**CUDA_VISIBLE_DEVICES** is honoured (indices and UUIDs), so a job sees exactly the GPUs Slurm gave it.
+**Visible GPUs.** As with the real driver, a process sees only the GPUs whose device node `/dev/nvidia<n>` exists in its mount namespace: all of them on the tray, only the allocated ones in a Kubernetes pod (CDI injects one node per GPU). On top of that, `CUDA_VISIBLE_DEVICES` is honoured (indices and UUIDs), so a Slurm job sees exactly the GPUs Slurm gave it. GPU identities (UUID, serial, PCI address) derive from the tray name in `/etc/fakegpu.conf` (`host`), so a container, whose hostname differs, sees the tray's GPUs.
 
 ## Usage
 
-On a tray (`bin/ssh slurm-worker1`) or inside a job:
+On a tray (`bin/ssh sched-worker1`) or inside a job:
 
 ```
 nvidia-smi                       # table with processes
@@ -68,7 +68,7 @@ Debugging: `FAKEGPU_DEBUG=1` logs CUDA entry points resolved to no-ops and unkno
 ## Verification
 
 ```
-bin/ssh slurm-worker1 nvidia-smi -L                          # 4 × NVIDIA GB200 with UUIDs
+bin/ssh sched-worker1 nvidia-smi -L                          # 4 × NVIDIA GB200 with UUIDs
 bin/ssh slurm 'srun -N1 --gpus-per-node=2 nvidia-smi -L'    # a job sees its 2 GPUs
 bin/ssh slurm sbatch < examples/gpu-topology.sbatch          # topology, NVLink matrix, fabric per tray
 ```

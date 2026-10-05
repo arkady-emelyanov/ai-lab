@@ -137,7 +137,7 @@ def test_link_down_shows_at_both_ends(lab, downed_link):
 
 def _grpc(lab, method, **req):
     req.setdefault("gateway_id", "bmc-tests")
-    p = subprocess.run([str(REPO / ".cache/tools/bin/grpcurl"), "-plaintext", "-d", json.dumps(req),
+    p = subprocess.run([str(REPO / "bin/grpcurl"), "-plaintext", "-d", json.dumps(req),
                         f"{lab.ips[lab.nvswitch]}:{lab.vars['nmxc_port']}", f"nmxlab.v1.NMXController/{method}"],
                        capture_output=True, text=True, timeout=30)
     assert p.returncode == 0, f"{method}: {p.stderr.strip()}"
@@ -148,8 +148,6 @@ def _grpc(lab, method, **req):
 def tray_partition(lab):
     """The last tray's GPUs in their own NVLink partition (id 7); back to the
     default partition afterwards."""
-    if not (REPO / ".cache/tools/bin/grpcurl").exists():
-        pytest.skip("grpcurl not built (make init)")
     _grpc(lab, "Hello")
     parts = _grpc(lab, "GetPartitionInfoList").get("partitions", [])
     if [p["partitionId"] for p in parts] != [32766]:
@@ -182,12 +180,14 @@ def test_access_link_down_fails_running_job(lab, downed_link):
     lose NVLink connectivity. This causes the workload in the partition to run
     into errors." A DDP job across the domain must fail when one of its GPUs
     loses an NVLink."""
-    if lab.sh("slurm-login", "test -x /shared/venv/bin/python", check=False) is None:
+    if lab.scheduler != "slurm":
+        pytest.skip("submits through Slurm (sbatch/sacct)")
+    if lab.sh("sched-login", "test -x /shared/venv/bin/python", check=False) is None:
         pytest.skip("needs the frameworks venv (make frameworks)")
     if lab.sh(CONTROLLER, "squeue -h").strip():
         pytest.skip("jobs are running; this test needs the whole domain")
     down, tray, g, link = downed_link
-    job = lab.sh("slurm-login", "su - joe -c 'cd examples && sbatch --parsable ddp-train.sbatch --steps 1000000'").strip()
+    job = lab.sh("sched-login", "su - joe -c 'cd examples && sbatch --parsable ddp-train.sbatch --steps 1000000'").strip()
     try:
         eventually(lambda: (s := _squeue_state(lab, job)) != "RUNNING" and f"job {job} is {s}", timeout=120, interval=3)
         time.sleep(30)  # past NCCL initialisation, into training

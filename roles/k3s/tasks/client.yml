@@ -1,0 +1,3 @@
+# kubectl for users on the login node; their kubeconfig is in their home.
+- name: Install k3s (for kubectl)
+  ansible.builtin.include_tasks: install.yml

@@ -1,0 +1,28 @@
+#!/bin/bash
+# Submits an example JobSet as you, the way sbatch submits a batch script:
+# fills in your uid, gid and home, names the run <example>-<n>, queues it in
+# your namespace's Kueue queue, and prints the run's name.
+#
+#   ./submit nvl8-hello.yaml            submit, print the name
+#   ./submit --wait nvl8-hello.yaml     also wait for it to finish and write
+#                                       its pods' output to <name>.out
+#                                       (exit status: 0 completed, 1 failed)
+set -euo pipefail
+
+wait=false
+[[ ${1:-} == --wait ]] && { wait=true; shift; }
+[[ $# -eq 1 && -f $1 ]] || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+name=$(basename "$1" .yaml)-$(date +%s%N | tail -c 7)
+sed -e "s/@NAME@/$name/g" -e "s/@UID@/$(id -u)/g" -e "s/@GID@/$(id -g)/g" -e "s|@HOME@|$HOME|g" "$1" \
+    | kubectl create -f - >/dev/null
+echo "$name"
+$wait || exit 0
+
+# A JobSet ends Completed or Failed.
+until state=$(kubectl get jobset "$name" -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type}{"\n"}{end}' \
+              | grep -m1 -E '^(Completed|Failed)$'); do
+    sleep 5
+done
+kubectl logs -l jobset.sigs.k8s.io/jobset-name="$name" --prefix --tail=-1 --max-log-requests=16 > "$name.out" 2>&1 || true
+[[ $state == Completed ]]

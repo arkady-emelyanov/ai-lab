@@ -7,8 +7,8 @@
 #   make test-bmc    BMC integration tests (pytest); -disruptive power-cycles a tray,
 #                    -conformance lists gaps to real GB200 behaviour
 #   make shell       login node as joe          make shell-root   login node as root
-#   make shell-NODE  root shell on any instance (e.g. make shell-slurm-worker1)
-#   bin/ssh slurm    ssh as joe to the login node (root@slurm, slurm-control, slurm-worker1, ...)
+#   make shell-NODE  root shell on any instance (e.g. make shell-sched-worker1)
+#   bin/ssh slurm    ssh as joe to the login node (root@slurm, sched-control, sched-worker1, ...)
 #   make down        delete instances (volumes kept)
 #   make purge       delete instances and volumes
 #
@@ -25,7 +25,7 @@ RUN      = $(INCUS_SG) '$(ANSIBLE) $(1) </dev/null'
 
 .PHONY: init proto check up provision configure frameworks test test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
 
-init: $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
+init: $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
 	@chmod -R go-rwx $(SECRETS)
 
 $(VENV)/.done: requirements.yml
@@ -45,6 +45,11 @@ fakenmxc/fakenmxc: $(wildcard fakenmxc/*.go) $(wildcard fakenmxc/gen/nmxlabv1/*.
 	@command -v go >/dev/null || { echo "ERROR: Go is required to build fakenmxc"; exit 1; }
 	cd fakenmxc && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o fakenmxc .
 
+# GPU device plugin for the k3s scheduler (kubelet API, CDI devices).
+fakedp/fakedp: $(wildcard fakedp/*.go) fakedp/go.mod
+	@command -v go >/dev/null || { echo "ERROR: Go is required to build fakedp"; exit 1; }
+	cd fakedp && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o fakedp .
+
 proto:
 	PATH=$(CURDIR)/.cache/tools/bin:$$PATH $(CURDIR)/.cache/tools/protoc/bin/protoc -I fakenmxc/proto \
 		--go_out=fakenmxc/gen/nmxlabv1 --go_opt=paths=source_relative \
@@ -55,7 +60,7 @@ $(SECRETS)/munge.key:
 	dd if=/dev/urandom of=$@ bs=1024 count=1 status=none
 	chmod 0600 $@
 
-$(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.secret:
+$(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token:
 	mkdir -p -m 0700 $(SECRETS)
 	head -c 24 /dev/urandom | base64 | tr -d '/+=' > $@
 	chmod 0600 $@
@@ -72,7 +77,7 @@ $(SECRETS)/ssh/id_ed25519:
 # The controller's own key (pdsh to the trays for topograph).
 $(SECRETS)/ssh/controller_ed25519:
 	mkdir -p -m 0700 $(SECRETS)/ssh
-	ssh-keygen -q -t ed25519 -N '' -C slurm-control -f $@
+	ssh-keygen -q -t ed25519 -N '' -C sched-control -f $@
 
 # topograph needs a newer Go than may be installed: the go command fetches
 # the required toolchain (verified against the checksum database).
@@ -100,6 +105,13 @@ check:
 	@test "$$(sysctl -n fs.inotify.max_user_instances)" -ge 1024 \
 		|| { echo "ERROR: fs.inotify.max_user_instances is $$(sysctl -n fs.inotify.max_user_instances); containers' systemd runs out"; \
 		     echo "  of inotify instances (\"Too many open files\"). Incus ships the fix; apply it: sudo sysctl --system"; exit 1; }
+	@test "$$(sysctl -n kernel.keys.maxkeys)" -ge 2000 -a "$$(sysctl -n kernel.keys.maxbytes)" -ge 2000000 \
+		|| { echo "ERROR: kernel.keys.maxkeys/maxbytes are $$(sysctl -n kernel.keys.maxkeys)/$$(sysctl -n kernel.keys.maxbytes); every unprivileged"; \
+		     echo "  container shares one keyring quota, so container runtimes fail with \"disk quota exceeded\"."; \
+		     echo "  Incus recommends 2000/2000000. Run:"; \
+		     echo "  echo 'kernel.keys.maxkeys = 2000' | sudo tee /etc/sysctl.d/60-incus-keys.conf"; \
+		     echo "  echo 'kernel.keys.maxbytes = 2000000' | sudo tee -a /etc/sysctl.d/60-incus-keys.conf"; \
+		     echo "  sudo sysctl --system"; exit 1; }
 	@echo "host ready"
 
 up: init provision configure
@@ -142,10 +154,10 @@ purge: init
 	$(call RUN,playbooks/destroy.yml --tags all$(,)purge)
 
 shell:
-	$(INCUS_SG) 'incus exec slurm-login -- su - joe'
+	$(INCUS_SG) 'incus exec sched-login -- su - joe'
 
 shell-root:
-	$(INCUS_SG) 'incus exec slurm-login -- bash -l'
+	$(INCUS_SG) 'incus exec sched-login -- bash -l'
 
 shell-%:
 	$(INCUS_SG) 'incus exec $* -- bash -l'

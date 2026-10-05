@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Redfish request to a GPU tray's BMC; extra arguments are passed to curl.
 #
-#   bin/redfish slurm-worker1 /redfish/v1/Systems/System_0
-#   bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0/Ports/NVLink_3/Settings \
+#   bin/redfish sched-worker1 /redfish/v1/Systems/System_0
+#   bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0/Ports/NVLink_3/Settings \
 #       -X PATCH -d '{"LinkState": "Disabled"}'
-#   bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Actions/ComputerSystem.Reset \
+#   bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Actions/ComputerSystem.Reset \
 #       -X POST -d '{"ResetType": "ForceRestart"}'
 #
 # Uses the BMC credentials from inventory/group_vars/all.yml (bmc_username,

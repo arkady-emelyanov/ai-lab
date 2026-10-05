@@ -1,5 +1,5 @@
 # Grafana on the controller: Prometheus as the default datasource and
-# provisioned dashboards (GPU exporter, node exporter, lab overview, Slurm & fabric).
+# provisioned dashboards (GPU exporter, node exporter, lab overview, scheduler & fabric).
 - name: Add the Grafana APT key
   ansible.builtin.get_url:
     url: https://apt.grafana.com/gpg.key
@@ -7,13 +7,25 @@
     mode: "0644"
 
 - name: Add the Grafana repository
-  ansible.builtin.apt_repository:
-    repo: deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main
-    filename: grafana
+  ansible.builtin.deb822_repository:
+    name: grafana
+    types: deb
+    uris: https://apt.grafana.com
+    suites: stable
+    components: main
+    signed_by: /etc/apt/keyrings/grafana.asc
+  register: grafana_repo
+
+# Written by the former one-line repository definition.
+- name: Remove the old repository file
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/grafana.list
+    state: absent
 
 - name: Install Grafana
   ansible.builtin.apt:
     name: grafana
+    update_cache: "{{ grafana_repo.changed }}"
 
 - name: Provision the Prometheus datasource
   ansible.builtin.copy:
@@ -36,7 +48,7 @@
       apiVersion: 1
       providers:
         - name: lab
-          folder: Slurm lab
+          folder: Lab
           type: file
           options:
             path: /var/lib/grafana/dashboards
@@ -70,7 +82,7 @@
     owner: grafana
     group: grafana
     mode: "0644"
-  loop: [lab-overview.json, slurm-fabric.json]
+  loop: [lab-overview.json, sched-fabric.json]
 
 - name: Start Grafana
   ansible.builtin.systemd_service:

@@ -23,13 +23,15 @@ bin/ssh slurm 'cat nvl8-hello-*.out'
 | `ddp-train.sbatch` + `ddp_train.py` | 2 nodes × 4 GPUs (`torchrun`, NCCL) | data-parallel training of an MLP; prints step time, samples/s, TFLOP/s per GPU; arguments are passed through (`--batch`, `--width`, `--layers`, `--steps`) |
 | `ray-cluster.sbatch` + `ray_demo.py` | 2 nodes × 4 GPUs | starts a Ray cluster in the allocation (temp and spill on `$SCRATCH`) and runs one GPU task per GPU |
 
+With `scheduler: k3s` the same four examples exist as Kueue-queued JobSets in `examples/k8s/` (`./submit --wait <example>.yaml`); see [Kubernetes (k3s)](kubernetes.md#usage).
+
 Expected `nvl8-hello` output: eight ranks, four per tray, each bound to a different GPU, all in the same NVLink clique:
 
 ```
-job 14 on slurm-worker[1-2]: 8 tasks
-0: rank 0 on slurm-worker1 CUDA_VISIBLE_DEVICES=0: NVIDIA GB200, GPU-d026216d-…, 1, scratch  198G
+job 14 on sched-worker[1-2]: 8 tasks
+0: rank 0 on sched-worker1 CUDA_VISIBLE_DEVICES=0: NVIDIA GB200, GPU-d026216d-…, 1, scratch  198G
 …
-7: rank 7 on slurm-worker2 CUDA_VISIBLE_DEVICES=3: NVIDIA GB200, GPU-d01e22ed-…, 1, scratch  198G
+7: rank 7 on sched-worker2 CUDA_VISIBLE_DEVICES=3: NVIDIA GB200, GPU-d01e22ed-…, 1, scratch  198G
 ```
 
 **Writing your own jobs:** build models directly on the GPU (`with torch.device("cuda")`): GPU memory is lazily backed, while a model built on the CPU first occupies the tray's host RAM (8 GiB per tray). Timing reacts to sizes as on real hardware: larger GEMMs take longer, all-reduce time grows with gradient size.

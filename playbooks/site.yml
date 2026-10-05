@@ -1,8 +1,23 @@
-# Configures the Slurm cluster and the tray BMCs on the instances created by
-# provision.yml.
+# Configures the cluster and the BMCs on the instances created by
+# provision.yml. The workload layer is Slurm or k3s (scheduler in
+# inventory/group_vars/all.yml); everything else is shared.
+- name: Check the scheduler setting
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Scheduler is slurm or k3s
+      ansible.builtin.assert:
+        that: scheduler in ['slurm', 'k3s']
+        fail_msg: "scheduler must be slurm or k3s, not {{ scheduler }}"
+        quiet: true
+
 - name: Base system
   hosts: cluster
-  roles: [common, munge]
+  roles:
+    - common
+    - role: munge
+      when: scheduler == 'slurm'
 
 - name: Identity directory
   hosts: controller
@@ -22,11 +37,53 @@
 
 - name: Slurm
   hosts: cluster
-  roles: [slurm]
+  roles:
+    - role: slurm
+      when: scheduler == 'slurm'
 
 - name: Slurm accounting
   hosts: controller
-  roles: [slurmdbd]
+  roles:
+    - role: slurmdbd
+      when: scheduler == 'slurm'
+
+- name: Kubernetes control plane (k3s server)
+  hosts: controller
+  tasks:
+    - name: k3s server
+      ansible.builtin.include_role:
+        name: k3s
+      when: scheduler == 'k3s'
+
+- name: Kubernetes GPU nodes (k3s agents)
+  hosts: workers
+  tasks:
+    - name: k3s agent and GPUs
+      ansible.builtin.include_role:
+        name: k3s
+        tasks_from: "{{ k3s_part }}"
+      loop: [node, gpu]
+      loop_control:
+        loop_var: k3s_part
+      when: scheduler == 'k3s'
+
+- name: Kubernetes add-ons, queues and users
+  hosts: controller
+  tasks:
+    - name: Cluster configuration
+      ansible.builtin.include_role:
+        name: k3s
+        tasks_from: cluster
+      when: scheduler == 'k3s'
+
+- name: kubectl on the login node
+  hosts: login
+  tasks:
+    - name: k3s client
+      ansible.builtin.include_role:
+        name: k3s
+        tasks_from: client
+      when: scheduler == 'k3s'
 
 - name: Storage node (RustFS, Redis, per-user S3)
   hosts: storage

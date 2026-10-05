@@ -32,10 +32,12 @@ struct fake_dev { int idx; };
 typedef struct fake_dev *nvmlDevice_t;
 static struct fake_dev devs[FG_MAX_GPUS];
 
+/* Handles are per visible GPU; dev_idx gives the physical index that
+ * identity and state are keyed by (fakegpu.h). */
 static int dev_idx(nvmlDevice_t d)
 {
     if (d < devs || d >= devs + fg_count()) return -1;
-    return (int)(d - devs);
+    return fg_phys((int)(d - devs));
 }
 
 #define CHECK_DEV(d)                                                \
@@ -121,7 +123,7 @@ API nvmlReturn_t nvmlDeviceGetHandleByUUID(const char *uuid, nvmlDevice_t *d)
     char u[64];
     if (!uuid || !d) return NVML_ERROR_INVALID_ARGUMENT;
     for (int i = 0; i < fg_count(); i++) {
-        fg_uuid_str(i, u, sizeof u);
+        fg_uuid_str(fg_phys(i), u, sizeof u);
         if (!strcasecmp(u, uuid)) return nvmlDeviceGetHandleByIndex_v2((unsigned)i, d);
     }
     return NVML_ERROR_NOT_FOUND;
@@ -132,8 +134,8 @@ API nvmlReturn_t nvmlDeviceGetHandleByPciBusId_v2(const char *bus, nvmlDevice_t 
     char b[32], l[32];
     if (!bus || !d) return NVML_ERROR_INVALID_ARGUMENT;
     for (int i = 0; i < fg_count(); i++) {
-        fg_pci_str(i, b, sizeof b, 0);
-        fg_pci_str(i, l, sizeof l, 1);
+        fg_pci_str(fg_phys(i), b, sizeof b, 0);
+        fg_pci_str(fg_phys(i), l, sizeof l, 1);
         if (!strcasecmp(b, bus) || !strcasecmp(l, bus)) return nvmlDeviceGetHandleByIndex_v2((unsigned)i, d);
     }
     return NVML_ERROR_NOT_FOUND;
@@ -145,12 +147,18 @@ API nvmlReturn_t nvmlDeviceGetIndex(nvmlDevice_t d, unsigned *i)
 {
     CHECK_DEV(d);
     if (!i) return NVML_ERROR_INVALID_ARGUMENT;
-    *i = (unsigned)idx;
+    *i = (unsigned)(d - devs);
     return NVML_SUCCESS;
 }
 
-/* Slurm builds the /dev/nvidiaN path from this. */
-API nvmlReturn_t nvmlDeviceGetMinorNumber(nvmlDevice_t d, unsigned *m) { return nvmlDeviceGetIndex(d, m); }
+/* The /dev/nvidiaN number (Slurm builds the device path from it): physical. */
+API nvmlReturn_t nvmlDeviceGetMinorNumber(nvmlDevice_t d, unsigned *m)
+{
+    CHECK_DEV(d);
+    if (!m) return NVML_ERROR_INVALID_ARGUMENT;
+    *m = (unsigned)idx;
+    return NVML_SUCCESS;
+}
 
 /* ---- identity ---------------------------------------------------------- */
 

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# grpcurl for the lab's NVLink partition controller (fakenmxc, plaintext,
+# server reflection); arguments are passed through. Built with Go into
+# .cache/tools on first use (pinned version).
+#
+#   bin/grpcurl -plaintext 10.107.111.34:9370 list
+#   bin/grpcurl -plaintext -d '{"gateway_id": "me"}' 10.107.111.34:9370 nmxlab.v1.NMXController/Hello
+set -euo pipefail
+
+version=v1.9.4
+repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+bin="$repo/.cache/tools/bin/grpcurl"
+if ! go version -m "$bin" 2>/dev/null | grep -q "fullstorydev/grpcurl[[:space:]]*$version"; then
+    command -v go >/dev/null || { echo "Go is required to build grpcurl" >&2; exit 1; }
+    echo "building grpcurl $version into .cache/tools/bin" >&2
+    GOBIN="$repo/.cache/tools/bin" CGO_ENABLED=0 go install "github.com/fullstorydev/grpcurl/cmd/grpcurl@$version" >&2
+fi
+exec "$bin" "$@"

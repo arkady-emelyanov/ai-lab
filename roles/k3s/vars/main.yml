@@ -1,0 +1,9 @@
+# k3s unit per node role: the server on the controller, agents on the trays,
+# none on the login node (kubectl only).
+k3s_unit: >-
+  {{ 'k3s' if inventory_hostname in groups['controller']
+     else 'k3s-agent' if inventory_hostname in groups['workers'] else '' }}
+k3s_kubeconfig: /etc/rancher/k3s/k3s.yaml
+k3s_containerd_dir: /var/lib/rancher/k3s/agent/etc/containerd
+k3s_manifests_dir: /var/lib/rancher/k3s/server/manifests
+k3s_client_ca: /var/lib/rancher/k3s/server/tls/client-ca

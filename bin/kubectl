@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# kubectl against the lab's k3s cluster (scheduler: k3s) as cluster admin;
+# arguments are passed through. Uses the k3s binary fetched by make up.
+#
+#   bin/kubectl get nodes -L nvidia.com/gpu.clique
+#   bin/kubectl -n joe get jobsets
+set -euo pipefail
+repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+kubeconfig="$repo/.secrets/kubeconfig"
+[[ -f $kubeconfig ]] || { echo "no $kubeconfig: is the lab built with scheduler: k3s?" >&2; exit 1; }
+exec "$repo/.cache/k3s/k3s" kubectl --kubeconfig "$kubeconfig" "$@"

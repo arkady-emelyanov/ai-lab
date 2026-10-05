@@ -46,16 +46,55 @@
   failed_when: false
   when: inventory_hostname == groups['controller'][0]
 
-- name: Format the filesystem (once, from the controller)
-  ansible.builtin.command: >-
-    juicefs format --storage s3
-    --bucket http://{{ storage_host }}:{{ rustfs_port }}/{{ juicefs_bucket }}
-    --access-key {{ rustfs_access_key }} --secret-key {{ rustfs_secret_key }}
-    {{ juicefs_meta_url }} {{ juicefs_name }}
+# No metadata but data in the bucket (metadata lost, or kept from a lab built
+# before it had its own volume): restore the newest of the metadata backups
+# JuiceFS writes into the bucket (meta/dump-*.json.gz) rather than refusing
+# to format a non-empty volume. Backups omit the secret key, and the bucket
+# address may have changed (renamed storage node): both are set again.
+- name: Restore or create the filesystem (once, from the controller)
+  when: inventory_hostname == groups['controller'][0] and status.rc != 0
   environment:
     META_PASSWORD: "{{ redis_password }}"
-  when: inventory_hostname == groups['controller'][0] and status.rc != 0
-  no_log: true
+  block:
+    - name: Fetch the metadata backups from the bucket
+      ansible.builtin.command: >-
+        juicefs sync --dirs
+        minio://{{ rustfs_access_key }}:{{ rustfs_secret_key }}@{{ storage_host }}:{{ rustfs_port }}/{{ juicefs_bucket }}/{{ juicefs_name }}/meta/
+        /var/tmp/juicefs-meta/
+      register: backups
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Find the newest backup
+      ansible.builtin.find:
+        paths: /var/tmp/juicefs-meta
+        patterns: dump-*.json.gz
+      register: dumps
+
+    - name: Restore the metadata from it
+      ansible.builtin.shell: |
+        set -e
+        juicefs load {{ juicefs_meta_url }} {{ (dumps.files | sort(attribute='path') | last).path }}
+        juicefs config {{ juicefs_meta_url }} --force \
+          --bucket http://{{ storage_host }}:{{ rustfs_port }}/{{ juicefs_bucket }} \
+          --access-key {{ rustfs_access_key }} --secret-key {{ rustfs_secret_key }}
+      when: dumps.matched > 0
+      no_log: true
+
+    - name: Format the filesystem
+      ansible.builtin.command: >-
+        juicefs format --storage s3
+        --bucket http://{{ storage_host }}:{{ rustfs_port }}/{{ juicefs_bucket }}
+        --access-key {{ rustfs_access_key }} --secret-key {{ rustfs_secret_key }}
+        {{ juicefs_meta_url }} {{ juicefs_name }}
+      when: dumps.matched == 0
+      no_log: true
+
+    - name: Remove the fetched backups
+      ansible.builtin.file:
+        path: /var/tmp/juicefs-meta
+        state: absent
 
 # Once mounted, the mount point is JuiceFS' root; leave its mode alone.
 - name: Create the mount point

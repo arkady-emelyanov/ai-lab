@@ -1,0 +1,89 @@
+# A Ray cluster as a JobSet: a head pod on one tray, a worker pod on the
+# other, each with 4 GPUs; the head runs the driver and the JobSet completes
+# when it does (k8s version of ray-cluster.sbatch). Ray spills to node-local
+# scratch. Needs the shared venv (make frameworks).
+# Submit: ./submit --wait ray-cluster.yaml
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: "@NAME@"
+  labels: {kueue.x-k8s.io/queue-name: gpu}
+spec:
+  successPolicy:
+    operator: All
+    targetReplicatedJobs: [head]
+  replicatedJobs:
+    - name: head
+      template:
+        spec:
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+            spec:
+              restartPolicy: Never
+              securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+              containers:
+                - name: ray
+                  image: docker.io/library/buildpack-deps:noble
+                  workingDir: "@HOME@/examples"
+                  env:
+                    - {name: HOME, value: "@HOME@"}
+                  command: [bash, -c]
+                  args:
+                    - |
+                      source /shared/venv/bin/activate
+                      ray start --head --port=6379 --num-gpus=4 --num-cpus=2 --object-store-memory=1000000000 \
+                          --temp-dir="/scratch/ray-$HOSTNAME" --include-dashboard=false
+                      sleep 15
+                      python ray_demo.py; rc=$?
+                      ray stop --force >/dev/null 2>&1
+                      exit $rc
+                  resources:
+                    limits: {nvidia.com/gpu: 4}
+                    requests: {cpu: "2", memory: 4Gi}
+                  volumeMounts:
+                    - {name: shared, mountPath: /shared}
+                    - {name: scratch, mountPath: /scratch}
+              volumes:
+                - {name: shared, hostPath: {path: /shared, type: Directory}}
+                - {name: scratch, hostPath: {path: /scratch, type: Directory}}
+    - name: worker
+      template:
+        spec:
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+            spec:
+              restartPolicy: Never
+              securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+              containers:
+                - name: ray
+                  image: docker.io/library/buildpack-deps:noble
+                  env:
+                    - {name: HOME, value: "@HOME@"}
+                    - name: JOBSET
+                      valueFrom: {fieldRef: {fieldPath: "metadata.labels['jobset.sigs.k8s.io/jobset-name']"}}
+                  command: [bash, -c]
+                  args:
+                    - |
+                      source /shared/venv/bin/activate
+                      # The head may still be starting: retry for up to two minutes.
+                      for _ in $(seq 24); do
+                          ray start --address="$JOBSET-head-0-0.$JOBSET:6379" --num-gpus=4 --num-cpus=2 \
+                              --object-store-memory=1000000000 --block && exit 0
+                          sleep 5
+                      done
+                      exit 1
+                  resources:
+                    limits: {nvidia.com/gpu: 4}
+                    requests: {cpu: "2", memory: 4Gi}
+                  volumeMounts:
+                    - {name: shared, mountPath: /shared}
+                    - {name: scratch, mountPath: /scratch}
+              volumes:
+                - {name: shared, hostPath: {path: /shared, type: Directory}}
+                - {name: scratch, hostPath: {path: /scratch, type: Directory}}

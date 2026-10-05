@@ -6,7 +6,7 @@ their port connections, then HCA blocks), as seen from any node. The fabric
 is described in /etc/fakeib.json:
 
     {"spine": "LAB-IBSPINE-01", "leaf": "LAB-IBLEAF-01",
-     "nodes": [{"name": "slurm-worker1", "hcas": 4}, ...]}
+     "nodes": [{"name": "sched-worker1", "hcas": 4}, ...]}
 
 Every node's HCAs (mlx5_0..N-1, 4xNDR) connect to the leaf switch; the leaf
 has uplinks to the spine. GUIDs and LIDs are derived from names, so output

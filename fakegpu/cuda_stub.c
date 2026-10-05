@@ -42,7 +42,7 @@ static int match_uuid(const char *tok, size_t len)
 {
     char u[64];
     for (int i = 0; i < fg_count(); i++) {
-        fg_uuid_str(i, u, sizeof u);
+        fg_uuid_str(fg_phys(i), u, sizeof u);
         if (len >= 8 && strncasecmp(u, tok, len) == 0) return i;
     }
     return -1;
@@ -53,7 +53,7 @@ static void vis_init(void)
     int n = fg_count();
     const char *env = getenv("CUDA_VISIBLE_DEVICES");
     if (!env) {
-        for (int i = 0; i < n; i++) vis_map[vis_count++] = i;
+        for (int i = 0; i < n; i++) vis_map[vis_count++] = fg_phys(i);
         return;
     }
     /* Like the real driver: stop at the first invalid or duplicate entry. */
@@ -70,6 +70,7 @@ static void vis_init(void)
             if (end == p + len && v >= 0 && v < n) idx = (int)v;
         }
         if (idx < 0) break;
+        idx = fg_phys(idx); /* entries count among the GPUs present */
         for (int i = 0; i < vis_count; i++)
             if (vis_map[i] == idx) idx = -1;
         if (idx < 0) break;

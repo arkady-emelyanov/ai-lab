@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+token-file: /etc/rancher/k3s/token
+{% if k3s_unit == 'k3s' %}
+# Ingress and load balancer are not needed; metrics come from Prometheus.
+disable: [traefik, servicelb, metrics-server]
+write-kubeconfig-mode: "0600"
+tls-san: [{{ inventory_hostname }}]
+# Workloads run on the trays; the controller keeps the control plane and
+# add-ons (which tolerate this taint).
+node-taint:
+  - CriticalAddonsOnly=true:NoExecute
+{% else %}
+server: https://{{ groups['controller'][0] }}:{{ k3s_port }}
+node-label:
+  - nvidia.com/gpu.present=true
+{% endif %}
+# kubelet in an unprivileged container (user namespace).
+kubelet-arg:
+  - feature-gates=KubeletInUserNamespace=true

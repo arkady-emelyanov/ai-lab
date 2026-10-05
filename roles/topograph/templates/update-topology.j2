@@ -1,15 +1,29 @@
 #!/bin/bash
 # {{ ansible_managed }}
+{% if scheduler == 'slurm' %}
 # Regenerates /etc/slurm/topology.conf with topograph from the live fabric:
 # the InfiniBand switch tree (ibnetdiscover) and the NVLink domains/cliques
 # (nvidia-smi) of the trays, as topology/block. Then reconfigures Slurm.
 #   update-topology            generate, install, reconfigure
 #   update-topology --dry-run  print the generated topology only
+{% else %}
+# Relabels the trays with topograph from the live fabric: the InfiniBand
+# switch tree (ibnetdiscover) as fabric.topograph.run/tier-N and the NVLink
+# domain/clique (nvidia-smi) as accelerator.topograph.run/domain, which
+# Kueue's topology-aware scheduling uses.
+#   update-topology            generate and label (topograph applies labels)
+#   update-topology --dry-run  the same, then print the trays' labels
+{% endif %}
 set -euo pipefail
 
 api=http://localhost:{{ topograph_port }}
+{% if scheduler == 'slurm' %}
 payload='{"provider": {"name": "infiniband-bm", "params": {"accelerator": {"source": "nvidia-smi"}}},
           "engine": {"name": "slurm", "params": {"plugin": "topology/block"}}}'
+{% else %}
+payload='{"provider": {"name": "infiniband-bm", "params": {"accelerator": {"source": "nvidia-smi"}}},
+          "engine": {"name": "k8s", "params": {"nodeSelector": {"nvidia.com/gpu.present": "true"}}}}'
+{% endif %}
 
 uid=$(curl -sf -X POST -H "Content-Type: application/json" -d "$payload" "$api/v1/generate")
 for _ in $(seq 1 60); do
@@ -23,6 +37,14 @@ if [ "$code" != 200 ]; then
     exit 1
 fi
 
+{% if scheduler == 'k3s' %}
+rm -f /tmp/topology.$$
+if [ "${1:-}" = "--dry-run" ]; then
+    kubectl get nodes -l nvidia.com/gpu.present=true \
+        -L accelerator.topograph.run/domain,fabric.topograph.run/tier-0,fabric.topograph.run/tier-1
+fi
+exit 0
+{% endif %}
 # Slurm 23.11 predates the BlockSizes keyword; it uses the default block sizes.
 new=$(grep -v '^BlockSizes=' /tmp/topology.$$); rm -f /tmp/topology.$$
 if [ "${1:-}" = "--dry-run" ]; then

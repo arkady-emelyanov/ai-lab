@@ -13,24 +13,26 @@ Slurm's `topology/block` places jobs inside NVLink domains. Instead of a hand-wr
 
 Each NVLink partition (cluster UUID + clique) becomes one Slurm block.
 
+In k3s mode the same discovery feeds topograph's Kubernetes engine instead: it labels the trays `accelerator.topograph.run/domain=<cluster UUID>.<clique>`, `fabric.topograph.run/tier-0=<leaf>` and `tier-1=<spine>`, which Kueue's topology-aware scheduling uses ([Kubernetes](kubernetes.md#how-it-works)). topograph still runs on the controller; its unit provides the in-cluster credentials its Kubernetes engine expects, and the trays carry the `topograph.run/instance`/`region` annotations it maps nodes with.
+
 ## Usage
 
 ```
-bin/ssh slurm-control update-topology --dry-run    # print what topograph generates
-bin/ssh slurm-control update-topology              # install /etc/slurm/topology.conf and reconfigure Slurm
-bin/ssh slurm-control scontrol show topology
+bin/ssh sched-control update-topology --dry-run    # print what topograph generates
+bin/ssh sched-control update-topology              # install /etc/slurm/topology.conf and reconfigure Slurm
+bin/ssh sched-control scontrol show topology
 ```
 
-A systemd timer (`update-topology.timer`) runs it every minute; an unchanged topology is left alone, so partition changes made through the [partition controller](nvlink-partitions.md) reach Slurm within a minute. Example after moving tray 2 into its own partition:
+A systemd timer (`update-topology.timer`) runs it every minute; an unchanged topology is left alone, so partition changes made through the [partition controller](nvlink-partitions.md) reach the scheduler within a minute (in k3s mode `update-topology --dry-run` prints the trays' labels). Example after moving tray 2 into its own partition:
 
 ```
 # block001=7f3c2a10-5b4e-4d6a-9c1e-2b8f0e6d4a91.1
-BlockName=block001 Nodes=slurm-worker1
+BlockName=block001 Nodes=sched-worker1
 # block002=7f3c2a10-5b4e-4d6a-9c1e-2b8f0e6d4a91.7
-BlockName=block002 Nodes=slurm-worker2
+BlockName=block002 Nodes=sched-worker2
 ```
 
-topograph's API is also available directly on `slurm-control:49021` (`POST /v1/generate`, `GET /v1/topology?uid=…`).
+topograph's API is also available directly on `sched-control:49021` (`POST /v1/generate`, `GET /v1/topology?uid=…`).
 
 ## Configuration
 
@@ -45,9 +47,9 @@ topograph's API is also available directly on `slurm-control:49021` (`POST /v1/g
 ## Verification
 
 ```
-bin/ssh slurm-control 'PDSH_RCMD_TYPE=ssh pdsh -w slurm-worker[1-2] "sudo ibnetdiscover | grep -c mlx5"'   # 16 per node (fabric-wide view)
-bin/ssh slurm-control update-topology --dry-run
-bin/ssh slurm-control systemctl list-timers update-topology.timer
+bin/ssh sched-control 'PDSH_RCMD_TYPE=ssh pdsh -w sched-worker[1-2] "sudo ibnetdiscover | grep -c mlx5"'   # 16 per node (fabric-wide view)
+bin/ssh sched-control update-topology --dry-run
+bin/ssh sched-control systemctl list-timers update-topology.timer
 ```
 
 `make test` checks that topograph generates a block containing both trays.

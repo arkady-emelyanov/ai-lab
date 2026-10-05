@@ -1,6 +1,6 @@
 {
-  "title": "Slurm lab overview",
-  "uid": "slurm-lab-overview",
+  "title": "Lab overview",
+  "uid": "ai-lab-overview",
   "schemaVersion": 39,
   "version": 1,
   "refresh": "10s",
@@ -209,6 +209,6 @@
     }
   ],
   "tags": [
-    "slurm-lab"
+    "ai-lab"
   ]
 }

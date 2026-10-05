@@ -84,7 +84,7 @@ def diagram(img):
 
     for t, (tx0, ty0, tx1, ty1) in enumerate(trays):
         d.rounded_rectangle([tx0, ty0, tx1, ty1], radius=14, fill=PANEL, outline=PANEL_EDGE, width=2)
-        d.text((tx0 + 16, ty0 + 12), f"slurm-worker{t + 1}", font=bold(17), fill=TEXT)
+        d.text((tx0 + 16, ty0 + 12), f"sched-worker{t + 1}", font=bold(17), fill=TEXT)
         for g in range(4):
             gx = tx0 + 16 + (g % 2) * 92
             gy = ty0 + 50 + (g // 2) * 64
@@ -103,15 +103,15 @@ def main():
     d = ImageDraw.Draw(img)
 
     x = 64
-    d.text((x, 92), "slurm-lab", font=bold(88), fill=TEXT)
+    d.text((x, 92), "ai-lab", font=bold(88), fill=TEXT)
     d.rectangle([x, 206, x + 120, 212], fill=GREEN)
     d.text((x, 236), "An emulated NVIDIA GB200 NVL8", font=bold(36), fill=TEXT)
     d.text((x, 282), "GPU cluster on one Linux machine", font=bold(36), fill=TEXT)
-    d.text((x, 340), "Real Slurm, storage and monitoring on fake GPUs:", font=regular(22), fill=MUTED)
+    d.text((x, 340), "Real Slurm or Kubernetes, storage and monitoring on fake GPUs:", font=regular(22), fill=MUTED)
     d.text((x, 368), "every call succeeds, takes realistic time, nothing computes.", font=regular(22), fill=MUTED)
 
     f = regular(18)
-    rows = [["Slurm", "CUDA · NVML · NCCL", "NVLink partitions", "Redfish BMCs"],
+    rows = [["Slurm · k3s", "CUDA · NVML · NCCL", "NVLink partitions", "Redfish BMCs"],
             ["PyTorch · Ray", "JuiceFS · S3", "Prometheus · Grafana", "Incus · Ansible"]]
     y = 430
     for row in rows:
@@ -121,7 +121,7 @@ def main():
         y += 50
 
     d.text((x, 574), "$ make up && make test", font=mono(20), fill=GREEN)
-    d.text((W - 60, 606), "github.com/arkady-emelyanov/slurm-lab", font=regular(17), fill=MUTED, anchor="rs")
+    d.text((W - 60, 606), "github.com/arkady-emelyanov/ai-lab", font=regular(17), fill=MUTED, anchor="rs")
     img.save(OUT, optimize=True)
     print(OUT)
 

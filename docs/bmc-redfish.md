@@ -8,14 +8,14 @@ The lab runs three BMCs, one per tray, each in its own container, serving Redfis
 
 | BMC | Address | Role | Manages |
 |---|---|---|---|
-| `slurm-worker1-bmc`, `slurm-worker2-bmc` | .31, .32 | `tray` | the GPU tray: power, its 4 GPUs and their 18 NVLink ports each |
-| `slurm-nvswitch-bmc` | .33 | `nvswitch` | the NVLink switch tray: fabric, 2 NVSwitch chips × 72 ports |
+| `sched-worker1-bmc`, `sched-worker2-bmc` | .31, .32 | `tray` | the GPU tray: power, its 4 GPUs and their 18 NVLink ports each |
+| `sched-nvswitch-bmc` | .33 | `nvswitch` | the NVLink switch tray: fabric, 2 NVSwitch chips × 72 ports |
 
 Credentials: `root` / `0penBmc` (OpenBMC's default; `bmc_username`, `bmc_password`). Basic auth and Redfish sessions (`X-Auth-Token`) are supported; the service root is unauthenticated.
 
 ## Usage
 
-`bin/redfish <tray> <path> [curl args]` sends a request to `<tray>-bmc` (e.g. `bin/redfish slurm-worker1 …`, `bin/redfish slurm-nvswitch …`) with the configured credentials. Errors use Redfish's `@Message.ExtendedInfo` format.
+`bin/redfish <tray> <path> [curl args]` sends a request to `<tray>-bmc` (e.g. `bin/redfish sched-worker1 …`, `bin/redfish sched-nvswitch …`) with the configured credentials. Errors use Redfish's `@Message.ExtendedInfo` format.
 
 **GPU tray BMC:**
 
@@ -43,10 +43,10 @@ Cabling: GPU *g* (numbered across trays) link *l* lands on switch *l mod 2*, por
 
 ```
 for l in 3 4; do
-  bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Processors/GPU_2/Ports/NVLink_$l/Settings -X PATCH -d '{"LinkState": "Disabled"}'
+  bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Processors/GPU_2/Ports/NVLink_$l/Settings -X PATCH -d '{"LinkState": "Disabled"}'
 done
-bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Actions/ComputerSystem.Reset -X POST -d '{"ResetType": "ForceRestart"}'
-bin/ssh slurm-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
+bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Actions/ComputerSystem.Reset -X POST -d '{"ResetType": "ForceRestart"}'
+bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 ```
 
 ## How it works
@@ -58,9 +58,9 @@ bin/ssh slurm-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 ## Verification
 
 ```
-bin/redfish slurm-worker1 /redfish/v1/Systems/System_0 | jq '{PowerState, ProcessorSummary}'
-bin/redfish slurm-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0 | jq .UUID       # == nvidia-smi UUID on the tray
-bin/redfish slurm-nvswitch /redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_0/Ports | jq '."Members@odata.count"'   # 72
+bin/redfish sched-worker1 /redfish/v1/Systems/System_0 | jq '{PowerState, ProcessorSummary}'
+bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Processors/GPU_0 | jq .UUID       # == nvidia-smi UUID on the tray
+bin/redfish sched-nvswitch /redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_0/Ports | jq '."Members@odata.count"'   # 72
 ```
 
 `make test` checks that both tray BMCs report their tray powered on with 4 GPUs and that the switch BMC exposes 72 ports per switch. `make test-bmc` runs the BMC integration tests, with disruptive and GB200-conformance tiers ([Testing](testing.md#bmc-integration-tests)).

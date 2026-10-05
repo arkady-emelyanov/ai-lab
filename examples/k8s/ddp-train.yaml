@@ -1,0 +1,49 @@
+# PyTorch DDP across the whole NVL8 domain: 2 pods (one per tray) x 4 GPUs,
+# torchrun in each, rendezvous on pod 0 through the JobSet's DNS names
+# (k8s version of ddp-train.sbatch). Needs the shared venv (make frameworks).
+# Submit: ./submit --wait ddp-train.yaml
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: "@NAME@"
+  labels: {kueue.x-k8s.io/queue-name: gpu}
+spec:
+  replicatedJobs:
+    - name: node
+      template:
+        spec:
+          parallelism: 2
+          completions: 2
+          completionMode: Indexed
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+            spec:
+              restartPolicy: Never
+              securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+              containers:
+                - name: torchrun
+                  image: docker.io/library/buildpack-deps:noble
+                  workingDir: "@HOME@/examples"
+                  env:
+                    - {name: HOME, value: "@HOME@"}
+                    - name: JOBSET
+                      valueFrom: {fieldRef: {fieldPath: "metadata.labels['jobset.sigs.k8s.io/jobset-name']"}}
+                  command: [bash, -c]
+                  args:
+                    - |
+                      source /shared/venv/bin/activate
+                      exec torchrun --nnodes=2 --nproc-per-node=4 \
+                          --rdzv-backend=c10d --rdzv-endpoint="$JOBSET-node-0-0.$JOBSET:29500" --rdzv-id="$JOBSET" \
+                          ddp_train.py
+                  resources:
+                    limits: {nvidia.com/gpu: 4}
+                    requests: {cpu: "2", memory: 4Gi}
+                  volumeMounts:
+                    - {name: shared, mountPath: /shared}
+                    - {name: scratch, mountPath: /scratch}
+              volumes:
+                - {name: shared, hostPath: {path: /shared, type: Directory}}
+                - {name: scratch, hostPath: {path: /scratch, type: Directory}}

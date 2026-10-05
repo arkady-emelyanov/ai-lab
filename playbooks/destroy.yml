@@ -1,5 +1,6 @@
-# Deletes all cluster instances. Volumes (shared, per-worker scratch) and the
-# munge key are kept; `make purge` also deletes the volumes and scratch pool.
+# Deletes all cluster instances. Volumes (shared, per-worker scratch, object
+# data and its JuiceFS metadata) and the secrets are kept; `make purge` also
+# deletes the volumes and scratch pool.
 - name: Destroy Incus instances
   hosts: localhost
   connection: local
@@ -45,12 +46,17 @@
       changed_when: del.rc == 0
       failed_when: del.rc != 0 and 'not found' not in del.stderr
 
+    # `trust remove` takes a fingerprint, not the certificate's name.
     - name: Revoke BMC certificates
-      ansible.builtin.command: incus config trust remove {{ item }}
+      ansible.builtin.shell: |
+        set -o pipefail
+        incus config trust list --format csv -c nf | awk -F, -v n={{ item }} '$1 == n {print $2}' |
+            while read -r fp; do incus config trust remove "$fp"; echo removed; done
+      args:
+        executable: /bin/bash
       loop: "{{ groups['tray_bmc'] }}"
       register: del
-      changed_when: del.rc == 0
-      failed_when: del.rc != 0 and 'not found' not in del.stderr | lower
+      changed_when: "'removed' in del.stdout"
 
     - name: Delete the trays project
       ansible.builtin.command: incus project delete {{ trays_project }}
@@ -60,6 +66,12 @@
 
     - name: Delete the object storage volume
       ansible.builtin.command: incus storage volume delete {{ shared_pool }} {{ rustfs_volume }}
+      register: del
+      changed_when: del.rc == 0
+      failed_when: del.rc != 0 and 'not found' not in del.stderr
+
+    - name: Delete the JuiceFS metadata volume
+      ansible.builtin.command: incus storage volume delete {{ shared_pool }} {{ juicefs_meta_volume }}
       register: del
       changed_when: del.rc == 0
       failed_when: del.rc != 0 and 'not found' not in del.stderr

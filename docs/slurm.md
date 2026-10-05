@@ -4,11 +4,23 @@
 
 ## Overview
 
-Slurm 23.11 (Ubuntu 24.04 packages) schedules jobs onto the two GPU trays. `slurmctld` and `slurmdbd` (with MariaDB) run on `slurm-control`, `slurmd` on the trays, and the login node has the client tools. Authentication is munge; accounting is enforced (every user needs an association with an account).
+With `scheduler: slurm` in `inventory/group_vars/all.yml` (the default) the lab runs Slurm 23.11 (Ubuntu 24.04 packages) on the emulated hardware: the fake GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Kubernetes (k3s)](kubernetes.md) mode. It is one or the other: in Slurm mode no Kubernetes component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
+
+| Component | Where | Role |
+|---|---|---|
+| `slurmctld` | `sched-control` | controller: partition `gpu`, GPU GRES, block topology |
+| `slurmdbd` + MariaDB | `sched-control` | accounting, enforced: every user needs an association with an account |
+| `slurmd` | `sched-worker1`, `sched-worker2` | runs job steps on the trays, binds GPUs |
+| munge | every cluster node | authentication between the daemons and clients |
+| Client tools | `sched-login` | `sbatch`, `srun`, `squeue`, `sacct`, ... for directory users |
+| topograph | systemd on `sched-control` | generates `topology.conf` from the live fabric every minute ([Topology](topology.md)) |
+| prometheus-slurm-exporter, `slurm-gpu-metrics` | `sched-control` | Slurm and GPU-allocation metrics ([Monitoring](monitoring.md)) |
+
+## How it works
 
 | Setting | Value | Why |
 |---|---|---|
-| Partition | `gpu` (default), nodes `slurm-worker[1-2]` | |
+| Partition | `gpu` (default), nodes `sched-worker[1-2]` | |
 | Nodes | 1 socket × 4 cores, 7500 MiB, `TmpDisk` 50 GiB, `Gres=gpu:gb200:4` | matches the container limits |
 | GRES | `gres.conf` with `/dev/nvidia0-3`, `Links=` NV18 all-to-all | GPU binding sets `CUDA_VISIBLE_DEVICES` |
 | Selection | `select/cons_tres`, `CR_Core_Memory`, `DefMemPerCPU=1875` | jobs that do not ask for memory get a per-CPU share |
@@ -17,9 +29,13 @@ Slurm 23.11 (Ubuntu 24.04 packages) schedules jobs onto the two GPU trays. `slur
 | Jobs in containers | `proctrack/linuxproc`, `task/none`, `CgroupPlugin=autodetect` | no cgroup confinement or CPU binding in unprivileged containers |
 | Scratch | `TmpFS=/scratch`; `TaskProlog` sets `SCRATCH` | `--tmp` requests node-local space |
 
+- **GPUs in jobs.** The trays have all four `/dev/nvidia<n>` nodes; Slurm allocates GPUs as GRES and sets `CUDA_VISIBLE_DEVICES`, which the fake CUDA driver honours, so a job sees exactly the GPUs it was given ([Fake GPUs](fake-gpu.md)).
+- **Topology.** topograph turns the InfiniBand switch tree and the NVLink domain and clique of every tray into `topology/block` blocks; a partition change through the partition controller reaches `topology.conf` within a minute, and Slurm keeps jobs that fit one block inside it.
+- **Users.** Directory users (LDAP) get an association with their account from `slurm_accounts`; jobs on the trays run as the user, with homes on `/shared`.
+
 ## Usage
 
-From the login node (`bin/ssh slurm`) or straight from your machine (`bin/ssh slurm <command>`):
+From the login node (`bin/ssh slurm` or `bin/ssh login`) or straight from your machine (`bin/ssh slurm <command>`):
 
 ```
 sinfo -N -o "%N %G %c %m %d %T"                 # nodes, GPUs, CPUs, memory, scratch, state
@@ -28,6 +44,13 @@ sbatch examples/nvl8-hello.sbatch                # one task per GPU across the d
 squeue; sacct -X -o JobID,JobName,User,Account,AllocTRES%40,State
 scontrol show topology                           # NVLink blocks
 ```
+
+| Example | Kubernetes equivalent | What it does |
+|---|---|---|
+| `gpu-topology.sbatch` | `k8s/gpu-topology.yaml` | one task per tray with its 4 GPUs: Slurm topology, `nvidia-smi -L`, `topo -m`, fabric state |
+| `nvl8-hello.sbatch` | `k8s/nvl8-hello.yaml` | 8 tasks × 1 GPU across the domain |
+| `ddp-train.sbatch` | `k8s/ddp-train.yaml` | PyTorch DDP, 2 nodes × 4 GPUs, torchrun per node |
+| `ray-cluster.sbatch` | `k8s/ray-cluster.yaml` | Ray head and worker on the allocation, driver on the head |
 
 From your machine, a job script can be submitted on stdin: `bin/ssh slurm sbatch < examples/nvl8-hello.sbatch`. Give jobs submitted this way a name (`#SBATCH -J name`), otherwise `%x` in output paths becomes `(null)`.
 
@@ -39,18 +62,19 @@ Resource requests behave as on a real GPU cluster: `--gpus-per-node`, `--gpus-pe
 bin/ssh slurm sinfo                                          # gpu* up, 2 nodes idle
 bin/ssh slurm 'srun -N2 --ntasks-per-node=4 --gpus-per-task=1 bash -c "echo \$(hostname) \$CUDA_VISIBLE_DEVICES"'
 bin/ssh slurm sacct -X -o JobID,AllocTRES%50                 # gres/gpu=N recorded per job
-bin/ssh slurm-control scontrol show config | grep -E 'TRES|Topology|DefMem'
+bin/ssh sched-control scontrol show config | grep -E 'TRES|Topology|DefMem'
 ```
 
-`make test` runs the example jobs and checks that every one is recorded as `COMPLETED` in accounting.
+`make test` in Slurm mode checks that both trays are available, runs the four examples as `joe` and checks their output, that every job is `COMPLETED` in accounting, S3 access from a job, topograph's block topology, and the scheduler-neutral metrics. `make test-bmc-disruptive` drains a tray, power-cycles it through its BMC and checks slurmd registers again.
 
 ## Limitations
 
 - Slurm 23.11: `--segment` and `BlockSizes` (newer block-topology features) are not available; Slurm packs jobs into as few blocks as possible.
 - No cgroup confinement: a job can use more CPU or memory than it asked for inside its container.
 - After a tray is powered off (e.g. through its BMC), Slurm marks it down only after `SlurmdTimeout` (300 s).
+- After the host is suspended, the controller marks the trays down for not responding; they come back with `scontrol update nodename=sched-worker[1-2] state=resume` (slurmd registers only when it starts).
 
 ## References
 
 - [Slurm documentation](https://slurm.schedmd.com/documentation.html): [slurm.conf](https://slurm.schedmd.com/slurm.conf.html), [gres.conf](https://slurm.schedmd.com/gres.conf.html), [topology.conf](https://slurm.schedmd.com/topology.conf.html), [accounting](https://slurm.schedmd.com/accounting.html)
-- Roles: `roles/slurm` (configuration, `TaskProlog`), `roles/slurmdbd` (MariaDB, cluster, accounts, associations), `roles/munge`
+- Sources: `roles/slurm` (configuration, `TaskProlog`), `roles/slurmdbd` (MariaDB, cluster, accounts, associations), `roles/munge`, `examples/*.sbatch`, `roles/topograph/`

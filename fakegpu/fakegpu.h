@@ -17,9 +17,12 @@
  *   copy_max_mb   copies larger than this are timed but not performed, so
  *                 big "device" buffers never touch host RAM (default 64)
  *   state_path    shared occupancy file (default /dev/shm/fakegpu)
+ *   host          tray name GPU identities derive from (default: hostname;
+ *                 set it so containers, whose hostname differs, see the
+ *                 tray's GPUs)
  *
- * GPU UUIDs are a hash of hostname + index: stable per node, unique across
- * nodes.
+ * GPU UUIDs are a hash of the tray name + index: stable per tray, unique
+ * across trays.
  */
 #ifndef FAKEGPU_H
 #define FAKEGPU_H
@@ -54,6 +57,7 @@ static struct {
     double latency_scale;
     unsigned long long copy_max_mb;
     char state_path[200];
+    char host[128];
 } fg_cfg;
 static pthread_once_t fg_cfg_once = PTHREAD_ONCE_INIT;
 
@@ -77,12 +81,13 @@ static void fg_set(const char *key, const char *val)
     else if (!strcmp(key, "latency_scale")) fg_cfg.latency_scale = strtod(val, NULL);
     else if (!strcmp(key, "copy_max_mb")) fg_cfg.copy_max_mb = strtoull(val, NULL, 10);
     else if (!strcmp(key, "state_path")) snprintf(fg_cfg.state_path, sizeof fg_cfg.state_path, "%s", val);
+    else if (!strcmp(key, "host")) snprintf(fg_cfg.host, sizeof fg_cfg.host, "%s", val);
 }
 
 static void fg_load(void)
 {
     static const char *keys[] = {"count", "name", "mem_mb", "cluster_uuid", "clique_id", "sideband_dir",
-                                 "latency_scale", "copy_max_mb", "state_path"};
+                                 "latency_scale", "copy_max_mb", "state_path", "host"};
     fg_cfg.count = 4;
     snprintf(fg_cfg.name, sizeof fg_cfg.name, "NVIDIA GB200");
     fg_cfg.mem_mb = 189471;
@@ -126,7 +131,28 @@ static void fg_load(void)
 }
 
 static inline void fg_init(void) { pthread_once(&fg_cfg_once, fg_load); }
-static inline int fg_count(void) { fg_init(); return fg_cfg.count; }
+
+/* Like the real driver, a process sees only the GPUs whose device node
+ * /dev/nvidia<n> exists in its mount namespace: all of them on the tray, the
+ * allocated ones in a container (CDI injects one node per GPU). Visible
+ * ordinals are dense; identity (UUID, PCI bus, minor number), sideband state
+ * and telemetry stay keyed by the physical index. */
+static int fg_present[FG_MAX_GPUS], fg_present_count;
+static pthread_once_t fg_present_once = PTHREAD_ONCE_INIT;
+
+static void fg_scan(void)
+{
+    fg_init();
+    for (int i = 0; i < fg_cfg.count; i++) {
+        char dev[32];
+        snprintf(dev, sizeof dev, "/dev/nvidia%d", i);
+        if (access(dev, F_OK) == 0) fg_present[fg_present_count++] = i;
+    }
+}
+
+/* GPUs visible to this process, and the physical index of visible GPU i. */
+static inline int fg_count(void) { pthread_once(&fg_present_once, fg_scan); return fg_present_count; }
+static inline int fg_phys(int i) { return i >= 0 && i < fg_count() ? fg_present[i] : -1; }
 static inline const char *fg_name(void) { fg_init(); return fg_cfg.name; }
 static inline unsigned long long fg_mem_bytes(void) { fg_init(); return fg_cfg.mem_mb << 20; }
 static inline const unsigned char *fg_cluster_uuid(void) { fg_init(); return fg_cfg.cluster_uuid; }
@@ -178,7 +204,9 @@ static inline unsigned fg_gpu_clique(int gpu)
 static inline void fg_uuid(int idx, unsigned char out[16])
 {
     char host[256] = "localhost";
-    gethostname(host, sizeof host - 1);
+    fg_init();
+    if (fg_cfg.host[0]) snprintf(host, sizeof host, "%s", fg_cfg.host);
+    else gethostname(host, sizeof host - 1);
     uint64_t h = 1469598103934665603ULL; /* FNV-1a */
     for (const char *p = host; *p; p++) h = (h ^ (unsigned char)*p) * 1099511628211ULL;
     for (int i = 0; i < 16; i++) {

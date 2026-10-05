@@ -3,6 +3,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Scheduler-neutral series (sched_*) for the dashboards, from Slurm or k3s.
+rule_files:
+  - /etc/prometheus/sched-rules.yml
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -32,10 +36,16 @@ scrape_configs:
           - {{ host }}:9567
 {% endfor %}
 
+{% if scheduler == 'slurm' %}
   - job_name: slurm
     scrape_interval: 30s
     static_configs:
       - targets: [localhost:{{ slurm_exporter_port }}]
+{% else %}
+  - job_name: kube-state-metrics
+    static_configs:
+      - targets: ['{{ groups["controller"][0] }}:{{ ksm_node_port }}']
+{% endif %}
 
   - job_name: nvlink
     static_configs:

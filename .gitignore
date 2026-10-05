@@ -1,10 +1,12 @@
 .venv/
 .collections/
 .secrets/
+PLAN.md
 fakegpu/build/
 fakegpu/*.so.*
 .omc/
 fakebmc/fakebmc
 .cache/
 fakenmxc/fakenmxc
+fakedp/fakedp
 __pycache__/

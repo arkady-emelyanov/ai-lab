@@ -1,0 +1,46 @@
+# The k3s binary (server, agent, kubectl, crictl in one), fetched once on
+# the host and verified against the release checksum.
+- name: Create the download directory
+  ansible.builtin.file:
+    path: "{{ repo_root }}/.cache/k3s"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Download k3s
+  ansible.builtin.get_url:
+    url: https://github.com/k3s-io/k3s/releases/download/{{ k3s_version | urlencode }}/k3s
+    dest: "{{ repo_root }}/.cache/k3s/k3s-{{ k3s_version }}"
+    checksum: sha256:{{ k3s_sha256 }}
+    mode: "0755"
+  delegate_to: localhost
+  run_once: true
+
+- name: Link the host's kubectl to it (bin/kubectl)
+  ansible.builtin.file:
+    src: k3s-{{ k3s_version }}
+    dest: "{{ repo_root }}/.cache/k3s/k3s"
+    state: link
+  delegate_to: localhost
+  run_once: true
+
+- name: Install k3s
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/.cache/k3s/k3s-{{ k3s_version }}"
+    dest: /usr/local/bin/k3s
+    mode: "0755"
+  notify: Restart k3s
+
+- name: Link kubectl and crictl to k3s
+  ansible.builtin.file:
+    src: k3s
+    dest: /usr/local/bin/{{ item }}
+    state: link
+  loop: [kubectl, crictl]
+
+- name: Create the k3s configuration directory
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    mode: "0755"

@@ -1,0 +1,75 @@
+# A k3s node (server on the controller, agent on the trays) in an
+# unprivileged Incus container. Needs, beyond a default install:
+#   - /dev/kmsg (provision.yml) and kubelet's KubeletInUserNamespace gate;
+#   - containerd without the unprivileged port/ICMP sysctls, which runc
+#     cannot set from a nested user namespace;
+#   - the host's kernel keyring quota raised (make check).
+- name: Install k3s
+  ansible.builtin.include_tasks: install.yml
+
+- name: Store the cluster token
+  ansible.builtin.copy:
+    content: "{{ lookup('file', repo_root ~ '/.secrets/k3s.token') }}\n"
+    dest: /etc/rancher/k3s/token
+    mode: "0600"
+  notify: Restart k3s
+
+- name: Configure k3s
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    mode: "0600"
+  notify: Restart k3s
+
+- name: Install the k3s unit
+  ansible.builtin.template:
+    src: k3s.service.j2
+    dest: /etc/systemd/system/{{ k3s_unit }}.service
+    mode: "0644"
+  notify: Restart k3s
+
+- name: Start k3s
+  ansible.builtin.systemd_service:
+    name: "{{ k3s_unit }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply configuration changes now
+  ansible.builtin.meta: flush_handlers
+
+# k3s writes containerd's configuration on start; the template derived from
+# it differs only in the two sysctls, so this converges after one restart.
+- name: Wait for k3s' containerd configuration
+  ansible.builtin.wait_for:
+    path: "{{ k3s_containerd_dir }}/config.toml"
+    timeout: 120
+
+- name: Read the generated containerd configuration
+  ansible.builtin.slurp:
+    src: "{{ k3s_containerd_dir }}/config.toml"
+  register: containerd_config
+
+- name: Keep containerd from setting unprivileged port and ICMP sysctls
+  ansible.builtin.copy:
+    content: >-
+      {{ containerd_config.content | b64decode
+         | replace('enable_unprivileged_ports = true', 'enable_unprivileged_ports = false')
+         | replace('enable_unprivileged_icmp = true', 'enable_unprivileged_icmp = false') }}
+    dest: "{{ k3s_containerd_dir }}/config-v3.toml.tmpl"
+    mode: "0644"
+  notify: Restart k3s
+
+- name: Apply the containerd template now
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the node to be ready
+  ansible.builtin.command: k3s kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout=180s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  delegate_to: "{{ groups['controller'][0] }}"
+  changed_when: false
+  retries: 3
+  delay: 10
+  register: ready
+  until: ready.rc == 0

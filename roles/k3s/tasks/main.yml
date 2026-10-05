@@ -1,0 +1,5 @@
+# k3s, the lab's Kubernetes scheduler (scheduler: k3s). site.yml runs the
+# parts in order: node (server, then agents), gpu (trays), cluster
+# (controller), client (login node); this default runs the node part.
+- name: Set up the k3s node
+  ansible.builtin.include_tasks: node.yml

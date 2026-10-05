@@ -16,7 +16,7 @@ Everything runs on one Linux host as Incus system containers, created and config
 | `make configure` | `playbooks/site.yml`: configures every instance (idempotent; re-run after changing variables). |
 | `make frameworks` | `playbooks/frameworks.yml`: PyTorch and Ray venv on `/shared` (several GB). |
 | `make test` | `playbooks/test.yml`: end-to-end checks ([Testing](testing.md)). |
-| `make down` | Deletes all instances; volumes, secrets and caches stay. |
+| `make down` | Deletes all instances; volumes (homes and venv, object data and its JuiceFS metadata, scratch), secrets and caches stay. |
 | `make purge` | Also deletes volumes, the scratch pool, the `trays` project and BMC certificates. |
 | `make shell` / `make shell-root` / `make shell-<instance>` | Shells via `incus exec` ([Identity & access](identity-and-access.md)). |
 | `make proto` | Regenerates the partition controller's gRPC code (needs the tools in `.cache/tools`). |
@@ -29,9 +29,9 @@ All tunables live in `inventory/group_vars/all.yml`; the instance list, groups, 
 
 | Group | Instances |
 |---|---|
-| `cluster` (`controller`, `login`, `workers`) | Slurm nodes |
-| `storage` | `slurm-storage` |
-| `nvswitch` | `slurm-nvswitch` |
+| `cluster` (`controller`, `login`, `workers`) | scheduler nodes (Slurm or k3s) |
+| `storage` | `sched-storage` |
+| `nvswitch` | `sched-nvswitch` |
 | `bmc` (`tray_bmc`, `nvswitch_bmc`) | the three BMCs |
 
 **Secrets** (`.secrets/`, git-ignored, owner-only, created by `make init` or on first use):
@@ -39,13 +39,14 @@ All tunables live in `inventory/group_vars/all.yml`; the instance list, groups, 
 | File | Used for |
 |---|---|
 | `munge.key` | Slurm authentication |
+| `k3s.token` | k3s cluster join token; `kubeconfig` (written by `make up` in k3s mode) is the admin kubeconfig for `bin/kubectl` |
 | `slurmdbd.pass`, `ldap-admin.pass`, `redis.pass`, `grafana.pass` | service passwords |
 | `rustfs.access`, `rustfs.secret` | RustFS admin keys |
 | `ssh/id_ed25519` | admin (root) SSH key; `ssh/controller_ed25519` lets the controller run pdsh on the trays |
 | `bmc/*.crt`, `bmc/*.key`, `bmc/incus-server.crt` | tray BMC Incus client certificates, pinned Incus server certificate |
 | `users/<name>.pass`, `users/<name>.s3` | generated user passwords (when none is set) and S3 secrets |
 
-**Playbook order** (`site.yml`): base system (packages, `/etc/hosts`, munge) → LDAP → SSSD and SSH → login tools → fake GPUs → Slurm → accounting → storage and per-user S3 → JuiceFS and S3 clients → fake InfiniBand → topograph → monitoring → Grafana → BMCs → switch tray host.
+**Playbook order** (`site.yml`): base system (packages, `/etc/hosts`, munge for Slurm) → LDAP → SSSD and SSH → login tools → fake GPUs → Slurm and accounting, or k3s (server, agents with GPUs, add-ons and users, kubectl) → storage and per-user S3 → JuiceFS and S3 clients → fake InfiniBand → topograph → monitoring → Grafana → BMCs → switch tray host.
 
 ## Verification
 
@@ -62,6 +63,7 @@ sg incus-admin -c 'incus list --all-projects -c ns4'   # all instances RUNNING w
 | `make check`: not in `incus-admin` | `sudo usermod -aG incus-admin $USER` |
 | `make check`: containers get no DNS | Incus' dnsmasq is denied reading NetworkManager's `no-stub-resolv.conf` by AppArmor. `make check` prints the drop-in to add under `/etc/apparmor.d/abstractions/nameservice.d/`. |
 | `make check`: `fs.inotify.max_user_instances` too low; containers boot without network ("Too many open files") | Incus ships `/etc/sysctl.d/10-incus-inotify.conf` (1024) but it only applies after a reboot: `sudo sysctl --system`. |
+| Container runtimes fail with `disk quota exceeded` (k3s pods stuck in `ContainerCreating`) | All unprivileged containers map root to one host uid and share its kernel keyring quota (200 keys by default). `make check` asks for Incus' recommended `kernel.keys.maxkeys=2000`, `kernel.keys.maxbytes=2000000` and prints the commands. |
 | A node shows `down*` in Slurm after a restart | Addresses are static, so this should not happen; if it does, `make configure` restarts the Slurm daemons when `/etc/hosts` changes. |
 | Host bind mounts with `shift=true` fail | Ubuntu's Incus 6.0.0 cannot do idmapped mounts on kernels ≥ 6.9 ([lxc/incus#882](https://github.com/lxc/incus/issues/882)); the lab uses Incus volumes instead. |
 | topograph build fails with `GOSUMDB=off` | The Makefile enables the checksum database for that one build; a newer Go toolchain is downloaded automatically. |

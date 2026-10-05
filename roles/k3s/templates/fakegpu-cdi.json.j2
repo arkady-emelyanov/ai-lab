@@ -1,0 +1,25 @@
+{#- CDI 0.6.0: one device per GPU, named by index and by UUID (the device
+    plugin allocates by UUID). -#}
+{%- set devices = [] -%}
+{%- for idx, uuid in gpu_list -%}
+{%-   for name in [idx, uuid] -%}
+{%-     set _ = devices.append({'name': name, 'containerEdits': {'deviceNodes': [{'path': '/dev/nvidia' ~ idx}]}}) -%}
+{%-   endfor -%}
+{%- endfor -%}
+{%- set ro = ['bind', 'ro'] -%}
+{{ {
+  'cdiVersion': '0.6.0',
+  'kind': 'nvidia.com/gpu',
+  'devices': devices,
+  'containerEdits': {
+    'deviceNodes': [{'path': '/dev/nvidiactl'}],
+    'env': ['LD_PRELOAD=' ~ preload, 'LD_LIBRARY_PATH=' ~ fakegpu_prefix ~ '/lib/fakegpu'],
+    'mounts': [
+      {'hostPath': fakegpu_prefix ~ '/lib/fakegpu', 'containerPath': fakegpu_prefix ~ '/lib/fakegpu', 'options': ro},
+      {'hostPath': fakegpu_prefix ~ '/bin/nvidia-smi', 'containerPath': '/usr/bin/nvidia-smi', 'options': ro},
+      {'hostPath': '/etc/fakegpu.conf', 'containerPath': '/etc/fakegpu.conf', 'options': ro},
+      {'hostPath': sideband_tray_path, 'containerPath': sideband_tray_path, 'options': ro},
+      {'hostPath': telemetry_tray_path, 'containerPath': telemetry_tray_path, 'options': ['bind', 'rw']},
+    ],
+  },
+} | to_nice_json }}

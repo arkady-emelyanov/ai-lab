@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+# Kueue: the trays' GPUs as one flavour with topology-aware scheduling over
+# the labels topograph writes (InfiniBand spine, leaf, NVLink domain), one
+# ClusterQueue owning the quota, one LocalQueue per user namespace.
+{% set trays = groups['workers'] | length %}
+{% set limits = instance_limits | combine(instance_limits_k3s) %}
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: Topology
+metadata:
+  name: nvl
+spec:
+  levels:
+    - nodeLabel: fabric.topograph.run/tier-1
+    - nodeLabel: fabric.topograph.run/tier-0
+    - nodeLabel: accelerator.topograph.run/domain
+    - nodeLabel: kubernetes.io/hostname
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ResourceFlavor
+metadata:
+  name: {{ fakegpu_type }}
+spec:
+  nodeLabels: {nvidia.com/gpu.present: "true"}
+  topologyName: nvl
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: ClusterQueue
+metadata:
+  name: {{ k3s_queue }}
+spec:
+  namespaceSelector: {}
+  resourceGroups:
+    - coveredResources: [cpu, memory, nvidia.com/gpu]
+      flavors:
+        - name: {{ fakegpu_type }}
+          resources:
+            - {name: cpu, nominalQuota: {{ limits.workers.cpu * trays }}}
+            - {name: memory, nominalQuota: {{ (limits.workers.memory | regex_replace('GiB$', '') | int - 1) * trays }}Gi}
+            - {name: nvidia.com/gpu, nominalQuota: {{ fakegpu_count * trays }}}
+{% for user in cluster_users %}
+---
+apiVersion: kueue.x-k8s.io/v1beta2
+kind: LocalQueue
+metadata:
+  name: {{ k3s_queue }}
+  namespace: {{ user.name }}
+spec:
+  clusterQueue: {{ k3s_queue }}
+{% endfor %}

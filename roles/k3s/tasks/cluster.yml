@@ -1,0 +1,172 @@
+# Cluster-wide configuration from the controller: add-ons, GPU Feature
+# Discovery, Kueue queues, users, and access for the host.
+- name: Look up the bridge network
+  ansible.builtin.command: incus network get {{ incus_bridge }} ipv4.address
+  register: bridge
+  delegate_to: localhost
+  changed_when: false
+
+# Pods resolve through CoreDNS, which does not read the nodes' /etc/hosts
+# where the lab's names live (common role). k3s imports coredns-custom;
+# CoreDNS' hosts plugin is taken by k3s' NodeHosts, so each name is a
+# template answering its A record.
+- name: Resolve lab hostnames in pods
+  ansible.builtin.command: kubectl apply -f -
+  args:
+    stdin: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: coredns-custom, namespace: kube-system}
+      data:
+        lab-hosts.override: |
+      {% for name in groups['all'] %}
+          template IN A {{ name }} {
+            answer "{{ '{{' }} .Name {{ '}}' }} 60 IN A {{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[name].ip_host }}"
+          }
+      {% endfor %}
+  register: corefile
+  changed_when: "' unchanged' not in corefile.stdout"
+
+- name: Install the add-on charts (k3s Helm controller)
+  ansible.builtin.template:
+    src: addons.yaml.j2
+    dest: "{{ k3s_manifests_dir }}/lab-addons.yaml"
+    mode: "0600"
+
+- name: Install GPU Feature Discovery
+  ansible.builtin.template:
+    src: gfd.yaml.j2
+    dest: "{{ k3s_manifests_dir }}/lab-gfd.yaml"
+    mode: "0600"
+
+- name: Wait for the Kueue and JobSet APIs
+  ansible.builtin.command: >-
+    kubectl wait --for condition=established --timeout=20s
+    crd/clusterqueues.kueue.x-k8s.io crd/topologies.kueue.x-k8s.io crd/jobsets.jobset.x-k8s.io
+  register: crds
+  until: crds.rc == 0
+  retries: 30
+  delay: 10
+  changed_when: false
+
+# Kueue's webhooks answer only once its controller runs.
+- name: Wait for the Kueue and JobSet controllers
+  ansible.builtin.command: kubectl -n {{ item }} rollout status deployment --timeout=300s
+  loop: [kueue-system, jobset-system]
+  changed_when: false
+
+- name: Render users, namespaces and queues
+  ansible.builtin.template:
+    src: "{{ item }}.yaml.j2"
+    dest: /etc/rancher/k3s/lab-{{ item }}.yaml
+    mode: "0600"
+  loop: [users, queues]
+
+- name: Apply users, namespaces and queues
+  ansible.builtin.command: kubectl apply -f /etc/rancher/k3s/lab-{{ item }}.yaml
+  loop: [users, queues]
+  register: applied
+  changed_when: applied.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+  retries: 5
+  delay: 10
+  until: applied.rc == 0
+
+# ---- users' credentials ----------------------------------------------------------
+
+# Client certificates signed by the cluster's client CA: CN is the user,
+# O the group the cluster-wide read access is bound to.
+- name: Create the user credentials directory
+  ansible.builtin.file:
+    path: /etc/rancher/k3s/users
+    state: directory
+    mode: "0700"
+
+- name: Issue a client certificate per user
+  ansible.builtin.shell: |
+    set -e
+    d=/etc/rancher/k3s/users
+    openssl ecparam -name prime256v1 -genkey -noout -out $d/{{ item.name }}.key
+    openssl req -new -key $d/{{ item.name }}.key -subj "/O=lab-users/CN={{ item.name }}" -out $d/{{ item.name }}.csr
+    openssl x509 -req -in $d/{{ item.name }}.csr -CA {{ k3s_client_ca }}.crt -CAkey {{ k3s_client_ca }}.key \
+      -CAcreateserial -days 3650 -out $d/{{ item.name }}.crt
+  args:
+    creates: /etc/rancher/k3s/users/{{ item.name }}.crt
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Read user credentials and the server CA
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop: >-
+    {{ ['/var/lib/rancher/k3s/server/tls/server-ca.crt']
+       + cluster_users | map(attribute='name') | map('regex_replace', '^(.*)$', '/etc/rancher/k3s/users/\1.crt') | list
+       + cluster_users | map(attribute='name') | map('regex_replace', '^(.*)$', '/etc/rancher/k3s/users/\1.key') | list }}
+  register: creds
+  no_log: true
+
+- name: Create each user's ~/.kube
+  ansible.builtin.file:
+    path: "{{ shared_mount }}/home/{{ item.name }}/.kube"
+    state: directory
+    owner: "{{ item.uid }}"
+    group: "{{ item.uid }}"
+    mode: "0700"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Write each user's kubeconfig (their namespace by default)
+  ansible.builtin.template:
+    src: kubeconfig.j2
+    dest: "{{ shared_mount }}/home/{{ item.name }}/.kube/config"
+    owner: "{{ item.uid }}"
+    group: "{{ item.uid }}"
+    mode: "0600"
+  vars:
+    files: "{{ dict(creds.results | map(attribute='source') | zip(creds.results | map(attribute='content'))) }}"
+    server: https://{{ inventory_hostname }}:{{ k3s_port }}
+    server_ca: "{{ files['/var/lib/rancher/k3s/server/tls/server-ca.crt'] }}"
+    cert: "{{ files['/etc/rancher/k3s/users/' ~ item.name ~ '.crt'] }}"
+    key: "{{ files['/etc/rancher/k3s/users/' ~ item.name ~ '.key'] }}"
+    user: "{{ item.name }}"
+    kube_namespace: "{{ item.name }}"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+# ---- nodes and host access ---------------------------------------------------------
+
+# topograph maps nodes to instances by these (bare metal: the host name).
+- name: Read the trays' topograph annotations
+  ansible.builtin.command: >-
+    kubectl get node {{ item }}
+    -o jsonpath={.metadata.annotations.topograph\\.run/instance}/{.metadata.annotations.topograph\\.run/region}
+  loop: "{{ groups['workers'] }}"
+  register: annotations
+  changed_when: false
+
+- name: Annotate the trays for topograph
+  ansible.builtin.command: >-
+    kubectl annotate node {{ item.item }} --overwrite
+    topograph.run/instance={{ item.item }} topograph.run/region=local
+  loop: "{{ annotations.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stdout != item.item ~ '/local'
+
+- name: Read the administrator kubeconfig
+  ansible.builtin.slurp:
+    src: "{{ k3s_kubeconfig }}"
+  register: admin_kubeconfig
+
+- name: Save it for the host (bin/kubectl)
+  ansible.builtin.copy:
+    content: >-
+      {{ admin_kubeconfig.content | b64decode
+         | replace('https://127.0.0.1:', 'https://' ~ bridge.stdout.split('/')[0].rsplit('.', 1)[0] ~ '.' ~ ip_host ~ ':') }}
+    dest: "{{ repo_root }}/.secrets/kubeconfig"
+    mode: "0600"
+  delegate_to: localhost
+  no_log: true

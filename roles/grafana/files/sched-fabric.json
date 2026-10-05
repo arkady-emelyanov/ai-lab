@@ -1,6 +1,6 @@
 {
-  "title": "Slurm & NVLink fabric",
-  "uid": "slurm-lab-fabric",
+  "title": "Scheduler & NVLink fabric",
+  "uid": "ai-lab-fabric",
   "schemaVersion": 39,
   "version": 1,
   "refresh": "10s",
@@ -43,7 +43,7 @@
       },
       "targets": [
         {
-          "expr": "sum(slurm_partition_gpus_alloc)",
+          "expr": "sched_gpus_alloc",
           "refId": "A"
         }
       ],
@@ -70,7 +70,7 @@
       },
       "targets": [
         {
-          "expr": "sum(slurm_partition_gpus)",
+          "expr": "sched_gpus",
           "refId": "A"
         }
       ],
@@ -97,7 +97,7 @@
       },
       "targets": [
         {
-          "expr": "sum(slurm_account_job_state_total{state=\"RUNNING\"}) or vector(0)",
+          "expr": "sum(sched_jobs{state=\"RUNNING\"}) or vector(0)",
           "refId": "A"
         }
       ],
@@ -124,7 +124,7 @@
       },
       "targets": [
         {
-          "expr": "sum(slurm_account_job_state_total{state=\"PENDING\"}) or vector(0)",
+          "expr": "sum(sched_jobs{state=\"PENDING\"}) or vector(0)",
           "refId": "A"
         }
       ],
@@ -157,7 +157,7 @@
       },
       "targets": [
         {
-          "expr": "slurm_node_gpus_alloc",
+          "expr": "sched_node_gpus_alloc",
           "legendFormat": "{{node}}",
           "refId": "A"
         }
@@ -191,7 +191,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (user) (slurm_job_gpus)",
+          "expr": "sched_user_gpus",
           "legendFormat": "{{user}}",
           "refId": "A"
         }
@@ -225,7 +225,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (state) (slurm_account_job_state_total)",
+          "expr": "sched_jobs",
           "legendFormat": "{{state}}",
           "refId": "A"
         }
@@ -259,7 +259,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (state) (slurm_node_count_per_state)",
+          "expr": "sched_nodes",
           "legendFormat": "{{state}}",
           "refId": "A"
         }
@@ -551,6 +551,6 @@
     }
   ],
   "tags": [
-    "slurm-lab"
+    "ai-lab"
   ]
 }

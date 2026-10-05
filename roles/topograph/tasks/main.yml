@@ -55,20 +55,85 @@
     mode: "0644"
   notify: Restart topograph
 
+# k3s: topograph's Kubernetes engine labels nodes through the API with
+# in-cluster credentials (rest.InClusterConfig: service address in the
+# environment, token and CA at the service account path). It runs here, not
+# in a pod, so pdsh reaches the trays' ibnetdiscover and nvidia-smi as in
+# Slurm mode; the unit stages a service account token where it looks.
+- name: Kubernetes access for topograph (k3s)
+  when: scheduler == 'k3s'
+  block:
+    - name: Create topograph's service account and token
+      ansible.builtin.command: kubectl apply -f -
+      args:
+        stdin: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata: {name: topograph, namespace: kube-system}
+          ---
+          apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/service-account-token
+          metadata:
+            name: topograph-token
+            namespace: kube-system
+            annotations: {kubernetes.io/service-account.name: topograph}
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata: {name: topograph}
+          rules:
+            - apiGroups: [""]
+              resources: [nodes]
+              verbs: [get, list, watch, patch, update]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata: {name: topograph}
+          roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: topograph}
+          subjects: [{kind: ServiceAccount, name: topograph, namespace: kube-system}]
+      register: sa
+      changed_when: sa.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+    - name: Read the token
+      ansible.builtin.command: kubectl -n kube-system get secret topograph-token -o jsonpath={.data.token}
+      register: token
+      until: token.stdout != ''
+      retries: 10
+      delay: 2
+      changed_when: false
+      no_log: true
+
+    - name: Create the credentials directory
+      ansible.builtin.file:
+        path: /etc/topograph/serviceaccount
+        state: directory
+        mode: "0700"
+
+    - name: Store the token and the cluster CA
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: /etc/topograph/serviceaccount/{{ item.name }}
+        mode: "0600"
+      loop:
+        - {name: token, content: "{{ token.stdout | b64decode }}"}
+        - {name: namespace, content: kube-system}
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+      notify: Restart topograph
+
+    - name: Store the cluster CA
+      ansible.builtin.copy:
+        src: /var/lib/rancher/k3s/server/tls/server-ca.crt
+        dest: /etc/topograph/serviceaccount/ca.crt
+        remote_src: true
+        mode: "0644"
+      notify: Restart topograph
+
 - name: Install the topograph unit
-  ansible.builtin.copy:
-    content: |
-      [Unit]
-      Description=topograph cluster topology generator
-      After=network-online.target slurmctld.service
-
-      [Service]
-      ExecStart=/usr/local/bin/topograph -c /etc/topograph/topograph-config.yaml
-      Restart=always
-      RestartSec=3
-
-      [Install]
-      WantedBy=multi-user.target
+  ansible.builtin.template:
+    src: topograph.service.j2
     dest: /etc/systemd/system/topograph.service
     mode: "0644"
   notify: Restart topograph
@@ -86,8 +151,9 @@
     enabled: true
     daemon_reload: true
 
-# Partition and fabric changes reach Slurm within a minute; an unchanged
-# topology is left alone.
+# Partition and fabric changes reach the scheduler within a minute (Slurm's
+# topology.conf, or node labels for Kueue); an unchanged topology is left
+# alone.
 - name: Install the topology refresh timer
   ansible.builtin.copy:
     content: "{{ item.content }}"
@@ -97,8 +163,8 @@
     - name: update-topology.service
       content: |
         [Unit]
-        Description=Regenerate Slurm topology.conf with topograph
-        After=topograph.service slurmctld.service
+        Description=Regenerate the scheduler's topology with topograph
+        After=topograph.service
         Requires=topograph.service
 
         [Service]
@@ -107,7 +173,7 @@
     - name: update-topology.timer
       content: |
         [Unit]
-        Description=Regenerate Slurm topology.conf every minute
+        Description=Regenerate the scheduler's topology every minute
 
         [Timer]
         OnBootSec=2min

@@ -4,11 +4,11 @@
 
 ## Overview
 
-Users exist once, in OpenLDAP on `slurm-control`, and every Slurm node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their LDAP password or their own SSH key; root logs in with the lab's admin key only. The same user list also creates each user's Slurm association and S3 identity.
+Users exist once, in OpenLDAP on `sched-control`, and every Slurm node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their LDAP password or their own SSH key; root logs in with the lab's admin key only. The same user list also creates each user's Slurm association and S3 identity.
 
 | Piece | Where | Notes |
 |---|---|---|
-| OpenLDAP (`slapd`) | `slurm-control` | base `dc=example,dc=com`; `ou=people`, `ou=groups`; user private groups (GID = UID) |
+| OpenLDAP (`slapd`) | `sched-control` | base `dc=example,dc=com`; `ou=people`, `ou=groups`; user private groups (GID = UID) |
 | SSSD | every Slurm node | `id_provider`, `auth_provider` and `chpass_provider` = ldap |
 | sshd | every instance | root: key only; users: password or key |
 | `bin/ssh`, `bin/scp`, `bin/ssh-copy-id` | host | wrappers that resolve current addresses from Incus |
@@ -21,7 +21,7 @@ Users exist once, in OpenLDAP on `slurm-control`, and every Slurm node resolves 
 |---|---|---|
 | `bin/ssh slurm` | login node | `joe` (password `joe`, or joe's own key) |
 | `bin/ssh root@slurm` | login node | root (admin key `.secrets/ssh/id_ed25519`) |
-| `bin/ssh slurm-control` (or any instance name) | that instance | root |
+| `bin/ssh sched-control` (or any instance name) | that instance | root |
 | `bin/ssh slurm sbatch < job.sh` | login node | runs a command, here submitting a job from stdin |
 | `bin/scp file slurm:` | login node | copies files |
 | `make shell`, `make shell-root`, `make shell-<instance>` | via `incus exec`, no SSH | joe / root / root |
@@ -39,15 +39,15 @@ cluster_users:
     password: joe       # omit to generate one into .secrets/users/<name>.pass
 ```
 
-This creates the LDAP entry and private group, the home with skeleton files, the Slurm association, the S3 user and bucket with credentials in the home. Passwords are re-applied on every `make configure`, so a change made with `passwd` is reverted.
+This creates the LDAP entry and private group, the home with skeleton files, the Slurm association (k3s mode: a namespace with a Kueue queue and `~/.kube/config`), the S3 user and bucket with credentials in the home. Passwords are re-applied on every `make configure`, so a change made with `passwd` is reverted.
 
 ## Verification
 
 ```
-bin/ssh root@slurm-worker1 getent passwd joe     # resolved via SSSD: joe:*:2001:2001:Joe <joe@example.com>:...
-bin/ssh root@slurm-worker1 grep -c '^joe:' /etc/passwd    # 0: no local account
+bin/ssh root@sched-worker1 getent passwd joe     # resolved via SSSD: joe:*:2001:2001:Joe <joe@example.com>:...
+bin/ssh root@sched-worker1 grep -c '^joe:' /etc/passwd    # 0: no local account
 bin/ssh slurm id                                  # uid=2001(joe) gid=2001(joe) groups=2001(joe)
-bin/ssh root@slurm-control sacctmgr show assoc user=joe format=user,account
+bin/ssh root@sched-control sacctmgr show assoc user=joe format=user,account
 ```
 
 ## Limitations
