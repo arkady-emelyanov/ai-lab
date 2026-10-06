@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""NVLink domain and partitions through the lab's partition controller
+(fakenmxc on sched-nvswitch, gRPC), with readable output.
+
+  bin/nvlink domain                          domain properties and state
+  bin/nvlink trays                           compute trays (slot ids) and switch trays
+  bin/nvlink gpus [TRAY...]                  GPUs: partition, clique, active NVLinks, health
+  bin/nvlink topology                        active NVLinks per GPU and per NVSwitch
+  bin/nvlink partitions                      partitions and their GPUs
+  bin/nvlink create NAME [--id N] GPU...     new partition (its GPUs must be in none)
+  bin/nvlink delete PARTITION                its GPUs end up in no partition
+  bin/nvlink add PARTITION GPU...
+  bin/nvlink remove PARTITION GPU...
+
+GPU: a tray (all its GPUs) or tray:indices, by name or slot id, e.g.
+sched-worker2, sched-worker2:0-1, 2:0,3. PARTITION: id or name.
+--json prints the controller's responses instead of tables. Calls go through
+bin/grpcurl; `bin/grpcurl -plaintext <address> describe` lists the raw API.
+"""
+import argparse
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+SERVICE = "nmxlab.v1.NMXController"
+GATEWAY = "bin-nvlink"
+HEALTH = {"NMX_GPU_HEALTH_HEALTHY": "healthy", "NMX_GPU_HEALTH_DEGRADED_BANDWIDTH": "degraded",
+          "NMX_GPU_HEALTH_UNKNOWN": "unknown"}
+
+
+def fail(msg):
+    sys.exit(f"nvlink: {msg}")
+
+
+def controller_address():
+    """sched-nvswitch's address from Incus (current after rebuilds) and the gRPC port."""
+    cmd = ["incus", "list", "--all-projects", "--format", "json"]
+    p = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        p = subprocess.run(["sg", "incus-admin", "-c", " ".join(cmd)], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        fail(f"incus list: {p.stderr.strip()}")
+    for inst in json.loads(p.stdout):
+        if inst["name"] == "sched-nvswitch" and inst["status"] == "Running":
+            for a in ((inst.get("state") or {}).get("network") or {}).get("eth0", {}).get("addresses", []):
+                if a["family"] == "inet":
+                    port = re.search(r"^nmxc_port:\s*(\d+)", (REPO / "inventory/group_vars/all.yml").read_text(), re.M)
+                    return f"{a['address']}:{port[1] if port else 9370}"
+    fail("sched-nvswitch is not running (make up)")
+
+
+class Controller:
+    def __init__(self, address, raw):
+        self.address, self.raw = address, raw
+        self.call("Hello", {"major_version": 1})
+
+    def call(self, method, body=None):
+        body = {"gateway_id": GATEWAY, **(body or {})}
+        p = subprocess.run([str(REPO / "bin/grpcurl"), "-plaintext", "-d", json.dumps(body), self.address,
+                            f"{SERVICE}/{method}"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if p.returncode != 0:
+            fail(f"{method}: {p.stderr.strip()}")
+        out = json.loads(p.stdout or "{}")
+        code = out.get("returnCode", "NMX_ST_SUCCESS")
+        if code != "NMX_ST_SUCCESS":
+            fail(f"{method}: {code}" + (f": {self.readable(out['message'])}" if out.get("message") else ""))
+        return out
+
+    def readable(self, message):
+        """The controller names GPUs by UID; show them as tray:index."""
+        if not re.search(r"GPU \d{6,}", message):
+            return message
+        names = {g.get("gpuUid"): f"{g.get('hostname')}:{g.get('location', {}).get('gpuId', 0)}" for g in self.gpus()}
+        return re.sub(r"GPU (\d{6,})", lambda m: "GPU " + names.get(m[1], m[1]), message)
+
+    # ---- lookups ----------------------------------------------------------------
+
+    def trays(self):
+        """{hostname: slot_id}"""
+        nodes = self.call("GetComputeNodeInfoList").get("nodes", [])
+        return {n["hostname"]: n.get("location", {}).get("slotId", 0) for n in nodes}
+
+    def gpus(self, slots=None):
+        return self.call("GetGpuInfoList", {"slot_ids": slots} if slots else {}).get("gpus", [])
+
+    def partitions(self):
+        return self.call("GetPartitionInfoList").get("partitions", [])
+
+    def partition_id(self, ref):
+        if ref.isdigit():
+            return int(ref)
+        for p in self.partitions():
+            if p.get("partitionName") == ref:
+                return p.get("partitionId", 0)
+        fail(f"no partition named {ref!r}")
+
+    def locations(self, specs):
+        """GPU specs (tray or tray:indices) -> Location messages."""
+        trays = self.trays()
+        by_slot = {slot: name for name, slot in trays.items()}
+        gpus_per_tray = {}
+        for g in self.gpus():
+            gpus_per_tray.setdefault(g.get("hostname"), []).append(g.get("location", {}).get("gpuId", 0))
+        out = []
+        for spec in specs:
+            tray, _, idx = spec.partition(":")
+            name = by_slot.get(int(tray)) if tray.isdigit() else tray
+            if name not in trays:
+                fail(f"{spec}: no tray {tray!r} (trays: {', '.join(sorted(trays))})")
+            ids = sorted(gpus_per_tray.get(name, [])) if not idx else indices(idx, spec)
+            out += [{"slot_id": trays[name], "gpu_id": i} for i in ids]
+        return out
+
+
+def indices(text, spec):
+    ids = []
+    for part in text.split(","):
+        m = re.fullmatch(r"(\d+)(?:-(\d+))?", part)
+        if not m:
+            fail(f"{spec}: GPU indices are like 0, 0-3 or 0,2")
+        lo, hi = int(m[1]), int(m[2] or m[1])
+        ids += range(lo, hi + 1)
+    return ids
+
+
+def table(header, rows):
+    rows = [[str(c) for c in r] for r in rows]
+    widths = [max(len(h), *(len(r[i]) for r in rows)) if rows else len(h) for i, h in enumerate(header)]
+    for r in [header] + rows:
+        print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
+
+
+def gpu_ranges(gpus):
+    """GPUs as tray:indices, e.g. sched-worker1:0-3 sched-worker2:1"""
+    per = {}
+    for g in gpus:
+        per.setdefault(g.get("hostname", "?"), []).append(g.get("location", {}).get("gpuId", 0))
+    parts = []
+    for tray, ids in sorted(per.items()):
+        ids, runs = sorted(ids), []
+        for i in ids:
+            if runs and i == runs[-1][1] + 1:
+                runs[-1][1] = i
+            else:
+                runs.append([i, i])
+        parts.append(f"{tray}:" + ",".join(f"{a}" if a == b else f"{a}-{b}" for a, b in runs))
+    return " ".join(parts) or "-"
+
+
+# ---- commands ---------------------------------------------------------------------
+
+def cmd_domain(c, a):
+    props, state = c.call("GetDomainProperties"), c.call("GetDomainStateInfo")
+    if c.raw:
+        return print(json.dumps({"properties": props, "state": state}, indent=2))
+    print(f"domain      {props.get('domainName')} ({props.get('domainUuid')})")
+    print(f"state       {state.get('controlPlaneState', 'UNKNOWN').removeprefix('NMX_CONTROL_PLANE_STATE_')}")
+    print(f"trays       {props.get('computeNodeCount', 0)} compute, {props.get('switchNodeCount', 0)} switch")
+    print(f"GPUs        {props.get('gpuCount', 0)} x {props.get('nvlinksPerGpu', 0)} NVLinks")
+    print(f"partitions  default {props.get('defaultPartitionId')}, at most {props.get('maxPartitions')}")
+
+
+def cmd_trays(c, a):
+    nodes, switches = c.call("GetComputeNodeInfoList"), c.call("GetSwitchNodeInfoList")
+    if c.raw:
+        return print(json.dumps({"compute": nodes, "switch": switches}, indent=2))
+    table(["TRAY", "SLOT", "GPUS"], [[n["hostname"], n.get("location", {}).get("slotId", 0), n.get("gpuCount", 0)]
+                                     for n in nodes.get("nodes", [])])
+    print()
+    table(["SWITCH TRAY", "SWITCHES", "PORTS EACH", "DISABLED"],
+          [[s["hostname"], s.get("switchCount", 0), s.get("portsPerSwitch", 0), s.get("disabledPorts", 0)]
+           for s in switches.get("nodes", [])])
+
+
+def cmd_gpus(c, a):
+    slots = None
+    if a.trays:
+        trays = c.trays()
+        slots = [int(t) if t.isdigit() else trays.get(t) or fail(f"no tray {t!r}") for t in a.trays]
+    gpus = c.gpus(slots)
+    if c.raw:
+        return print(json.dumps(gpus, indent=2))
+    table(["TRAY", "GPU", "UUID", "PARTITION", "CLIQUE", "NVLINKS", "HEALTH"],
+          [[g.get("hostname"), g.get("location", {}).get("gpuId", 0), g.get("uuid"), g.get("partitionId", "-"),
+            g.get("cliqueId", 0), g.get("activeNvlinks", 0), HEALTH.get(g.get("health"), g.get("health"))]
+           for g in gpus])
+
+
+def cmd_topology(c, a):
+    links = c.call("GetTopologyInfo").get("connections", [])
+    if c.raw:
+        return print(json.dumps(links, indent=2))
+    gpus = {g.get("gpuUid"): g for g in c.gpus()}
+    switches = sorted({l.get("switchId", 0) for l in links})
+    per = {}
+    for l in links:
+        row = per.setdefault(l.get("gpuUid"), {"total": 0, "active": 0, **{s: 0 for s in switches}})
+        row["total"] += 1
+        if l.get("active"):
+            row["active"] += 1
+            row[l.get("switchId", 0)] += 1
+    rows = []
+    for uid, r in per.items():
+        g = gpus.get(uid, {})
+        rows.append([g.get("hostname", uid), g.get("location", {}).get("gpuId", 0), f"{r['active']}/{r['total']}"]
+                    + [r[s] for s in switches])
+    table(["TRAY", "GPU", "ACTIVE"] + [f"NVSWITCH_{s}" for s in switches], sorted(rows, key=lambda r: (r[0], r[1])))
+
+
+def cmd_partitions(c, a):
+    parts = c.partitions()
+    if c.raw:
+        return print(json.dumps(parts, indent=2))
+    gpus = {g.get("gpuUid"): g for g in c.gpus()}
+    table(["ID", "NAME", "GPUS", "STATE", "HEALTH", "MEMBERS"],
+          [[p.get("partitionId", 0), p.get("partitionName", "")
+            + (" (default)" if p.get("isDefault") and p.get("partitionName") != "default" else ""), len(p.get("gpuUids", [])), p.get("state", ""),
+            HEALTH.get(p.get("health"), p.get("health")), gpu_ranges([gpus[u] for u in p.get("gpuUids", []) if u in gpus])]
+           for p in sorted(parts, key=lambda p: p.get("partitionId", 0))])
+    unassigned = [g for g in gpus.values() if not g.get("partitionId")]
+    if unassigned:
+        print(f"\nin no partition: {gpu_ranges(unassigned)}")
+
+
+def result(c, out):
+    if c.raw:
+        return print(json.dumps(out, indent=2))
+    p = out.get("partition", {})
+    print(out.get("message", "done") + (f": {p.get('partitionId')} {p.get('partitionName', '')}".rstrip() if p else ""))
+
+
+def cmd_create(c, a):
+    result(c, c.call("CreatePartition", {"partition_name": a.name, "partition_id": a.id or 0,
+                                         "locations": c.locations(a.gpus)}))
+
+
+def cmd_delete(c, a):
+    result(c, c.call("DeletePartition", {"partition_id": c.partition_id(a.partition)}))
+
+
+def cmd_add(c, a):
+    result(c, c.call("AddGpusToPartition", {"partition_id": c.partition_id(a.partition),
+                                            "locations": c.locations(a.gpus)}))
+
+
+def cmd_remove(c, a):
+    result(c, c.call("RemoveGpusFromPartition", {"partition_id": c.partition_id(a.partition),
+                                                 "locations": c.locations(a.gpus)}))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="bin/nvlink", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog="\n".join(__doc__.split("\n")[2:]))
+    ap.add_argument("--json", action="store_true", help="print the controller's responses")
+    ap.add_argument("--address", help="controller host:port (default: sched-nvswitch from Incus)")
+    sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    sub.add_parser("domain", help="domain properties and state").set_defaults(fn=cmd_domain)
+    sub.add_parser("trays", help="compute and switch trays").set_defaults(fn=cmd_trays)
+    p = sub.add_parser("gpus", help="GPUs with partition, clique, NVLinks and health")
+    p.add_argument("trays", nargs="*", metavar="TRAY")
+    p.set_defaults(fn=cmd_gpus)
+    sub.add_parser("topology", help="active NVLinks per GPU and NVSwitch").set_defaults(fn=cmd_topology)
+    sub.add_parser("partitions", help="partitions and their GPUs").set_defaults(fn=cmd_partitions)
+    p = sub.add_parser("create", help="create a partition")
+    p.add_argument("name")
+    p.add_argument("--id", type=int, help="partition id (default: next free)")
+    p.add_argument("gpus", nargs="+", metavar="GPU")
+    p.set_defaults(fn=cmd_create)
+    p = sub.add_parser("delete", help="delete a partition")
+    p.add_argument("partition", metavar="PARTITION")
+    p.set_defaults(fn=cmd_delete)
+    for name, fn, help_ in (("add", cmd_add, "add GPUs to a partition"),
+                            ("remove", cmd_remove, "remove GPUs from a partition")):
+        p = sub.add_parser(name, help=help_)
+        p.add_argument("partition", metavar="PARTITION")
+        p.add_argument("gpus", nargs="+", metavar="GPU")
+        p.set_defaults(fn=fn)
+    a = ap.parse_args()
+    a.fn(Controller(a.address or controller_address(), a.json), a)
+
+
+if __name__ == "__main__":
+    main()

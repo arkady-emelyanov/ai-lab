@@ -114,7 +114,8 @@ Each page covers: overview, usage, verification, references (plus configuration 
 | `make down`, `make purge` | delete instances (keep volumes); delete everything |
 | `bin/ssh login`, `bin/ssh root@<instance>` | SSH as joe / root; `bin/scp`, `bin/ssh-copy-id` likewise |
 | `bin/kubectl <args>` | kubectl as cluster admin (k3s mode) |
-| `bin/grpcurl <args>` | grpcurl for the NVLink partition controller (built on first use) |
+| `bin/nvlink <command>` | NVLink domain and partitions: `domain`, `gpus`, `topology`, `partitions`, `create`, `delete`, `add`, `remove` |
+| `bin/grpcurl <args>` | grpcurl for the NVLink partition controller's raw API (built on first use) |
 | `make shell`, `make shell-<instance>` | shells through `incus exec` |
 | `bin/redfish <tray> <path> [curl args]` | Redfish requests to a BMC |
 | `bin/ssh sched-control update-topology` | regenerate the scheduler's topology now (a timer does it every minute) |
@@ -123,7 +124,7 @@ Each page covers: overview, usage, verification, references (plus configuration 
 
 ```
 Makefile                 entry points (init, up, configure, frameworks, test, down, purge, shell)
-bin/                     ssh / scp / ssh-copy-id wrappers, redfish, kubectl and grpcurl helpers
+bin/                     ssh / scp / ssh-copy-id wrappers, redfish, nvlink, kubectl and grpcurl helpers
 inventory/               instances and groups (hosts.yml), all tunables (group_vars/all.yml)
 playbooks/               provision (Incus), site (configuration), frameworks, test, destroy
 roles/                   one role per component (see the component pages)

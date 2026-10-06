@@ -13,7 +13,7 @@ Device nodes, NVML and CUDA behaviour, Redfish resources, partition semantics an
 **Hosts and the management network.** Every instance sits on the Incus bridge; your machine reaches them through the `bin/` wrappers and a browser. The scheduler daemons are Slurm's or k3s', never both.
 
 ```
- your machine (Incus host): bin/ssh · bin/kubectl · bin/redfish · bin/grpcurl · browser (Grafana, Prometheus)
+ your machine (Incus host): bin/ssh · bin/kubectl · bin/redfish · bin/nvlink · browser (Grafana, Prometheus)
         │
  ═══════╧════════════ management Ethernet: Incus bridge incusbr0, 10.107.111.0/24 ═══════════════════════
         │                   │                   │                   │                      │

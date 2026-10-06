@@ -23,18 +23,21 @@ The API is modelled on NMX-C's public documentation (Hello handshake, default pa
 
 ## Usage
 
-With `bin/grpcurl` from your machine ([grpcurl](https://github.com/fullstorydev/grpcurl), built with Go into `.cache/tools` on first use):
+`bin/nvlink` from your machine wraps the controller's gRPC API: it says `Hello`, names GPUs by tray and index instead of `Location` messages, and prints tables (`--json` for the raw responses):
 
 ```
-nmx() { bin/grpcurl -plaintext -d "$2" 10.107.111.34:9370 nmxlab.v1.NMXController/$1; }
-nmx Hello '{"gateway_id": "me"}'                                    # required first, per gateway id
-nmx GetDomainProperties '{"gateway_id": "me"}'
-nmx GetGpuInfoList '{"gateway_id": "me", "slot_ids": [2]}'           # tray 2: uuid, location, partition, clique, links, health
-gpus='[{"slot_id":2,"gpu_id":0},{"slot_id":2,"gpu_id":1},{"slot_id":2,"gpu_id":2},{"slot_id":2,"gpu_id":3}]'
-nmx RemoveGpusFromPartition "{\"gateway_id\": \"me\", \"partition_id\": 32766, \"locations\": $gpus}"
-nmx CreatePartition "{\"gateway_id\": \"me\", \"partition_name\": \"tray2\", \"partition_id\": 7, \"locations\": $gpus}"
+bin/nvlink domain                                 # UUID, sizes, control plane state
+bin/nvlink gpus sched-worker2                     # uuid, partition, clique, active NVLinks, health
+bin/nvlink topology                               # active links per GPU and NVSwitch
+bin/nvlink partitions                             # partitions and their GPUs, GPUs in none
+bin/nvlink remove default sched-worker2           # a GPU belongs to one partition: out of the default first
+bin/nvlink create tray2 --id 7 sched-worker2      # GPUs as tray (all), tray:0-1 or slot:index
 bin/ssh sched-worker2 nvidia-smi --query-gpu=fabric.cliqueId --format=csv     # now 7
+bin/nvlink delete tray2                           # its GPUs end up in no partition
+bin/nvlink add default sched-worker2              # back to the default partition
 ```
+
+The underlying RPCs, for clients of your own (`bin/grpcurl`, [grpcurl](https://github.com/fullstorydev/grpcurl) built with Go into `.cache/tools` on first use, calls them directly):
 
 | RPC | Purpose |
 |---|---|
@@ -46,7 +49,7 @@ bin/ssh sched-worker2 nvidia-smi --query-gpu=fabric.cliqueId --format=csv     # 
 | `GetPartitionCount`, `GetPartitionIdList`, `GetPartitionInfoList` | partitions |
 | `CreatePartition`, `DeletePartition`, `AddGpusToPartition`, `RemoveGpusFromPartition` | partition management; errors `NMX_ST_GPU_IN_USE`, `NMX_ST_NOT_FOUND`, `NMX_ST_ALREADY_EXISTS`, `NMX_ST_INVALID_ARGUMENT` |
 
-`bin/grpcurl -plaintext 10.107.111.34:9370 describe nmxlab.v1.NMXController` lists every RPC and message.
+`bin/grpcurl -plaintext 10.107.111.34:9370 describe nmxlab.v1.NMXController` lists every RPC and message; a raw call needs `Hello` first with the same `gateway_id`, e.g. `bin/grpcurl -plaintext -d '{"gateway_id": "me"}' 10.107.111.34:9370 nmxlab.v1.NMXController/Hello`.
 
 **Fabric metrics** (`curl http://10.107.111.34:9372/metrics`, scraped by Prometheus as job `nvlink`):
 
@@ -64,7 +67,7 @@ bin/ssh sched-worker2 nvidia-smi --query-gpu=fabric.cliqueId --format=csv     # 
 ## Verification
 
 ```
-bin/grpcurl -plaintext -d '{"gateway_id":"me"}' 10.107.111.34:9370 nmxlab.v1.NMXController/Hello     # domainUuid
+bin/nvlink domain                                 # domain UUID, CONFIGURED
 curl -s http://10.107.111.34:9372/metrics | grep -E '^nvswitch_ports_up|^nvlink_partition_gpus'
 bin/ssh sched-worker1 nvidia-smi --query-gpu=fabric.clusterUuid,fabric.cliqueId --format=csv
 ```
