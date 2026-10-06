@@ -48,7 +48,7 @@ make test          # end-to-end checks
 
 ```
 bin/scp -r examples login:                      # copy the example jobs to joe's home
-bin/ssh login                                   # login node as joe (password: joe)
+bin/ssh login                                   # login node as joe (joe's lab key, no password)
 cd examples/slurm
 sinfo -N -o "%N %G %T"                          # two trays, gpu:gb200:4 each
 srun -N2 --gpus-per-node=4 nvidia-smi -L        # all 8 GPUs

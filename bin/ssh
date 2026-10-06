@@ -2,8 +2,8 @@
 # ssh, scp and ssh-copy-id for the cluster; arguments are passed through.
 # bin/scp and bin/ssh-copy-id are symlinks to this script.
 #
-#   bin/ssh login                      login node as joe (password: joe, or joe's own key
-#                                      once installed with bin/ssh-copy-id)
+#   bin/ssh login                      login node as joe (lab key: .secrets/ssh/users/joe_ed25519)
+#   bin/ssh other@login                another directory user, with their lab key
 #   bin/ssh root@login                 login node as root (admin key: .secrets/ssh/id_ed25519)
 #   bin/ssh sched-control              controller as root (also sched-worker1, sched-worker2,
 #                                      and the tray BMCs sched-worker1-bmc, sched-worker2-bmc)
@@ -43,13 +43,20 @@ trap 'rm -f "$tmp"' EXIT
             printf 'Host %s\n    HostName %s\n    User root\n\n' "$name" "$ip"
         fi
     done <<< "$instances"
-    # The admin key is for root only; users authenticate with their own keys
-    # (ssh-agent / ~/.ssh) or their LDAP password.
+    # The admin key is for root only; directory users get their lab key
+    # (created by make configure), or their LDAP password without one.
     cat <<EOF
 Match user root
     IdentityFile $key
     IdentitiesOnly yes
 
+EOF
+    for user_key in "$repo"/.secrets/ssh/users/*_ed25519; do
+        [[ -f $user_key ]] || continue
+        user=$(basename "$user_key" _ed25519)
+        printf 'Match user %s\n    IdentityFile %s\n    IdentitiesOnly yes\n\n' "$user" "$user_key"
+    done
+    cat <<EOF
 # Instances are disposable and get new host keys when recreated.
 Host *
     StrictHostKeyChecking no

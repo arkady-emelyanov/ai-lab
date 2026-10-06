@@ -4,7 +4,7 @@
 
 ## Overview
 
-Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their LDAP password or their own SSH key; root logs in with the lab's admin key only. The same user list also creates each user's S3 identity and, depending on the scheduler, their Slurm association or their Kubernetes namespace, queue and credentials ([Kubernetes](kubernetes.md#how-it-works)).
+Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their lab SSH key (one per user, generated into `.secrets/ssh/users/` and used by `bin/ssh`), their own key or their LDAP password; root logs in with the lab's admin key only. The same user list also creates each user's S3 identity and, depending on the scheduler, their Slurm association or their Kubernetes namespace, queue and credentials ([Kubernetes](kubernetes.md#how-it-works)).
 
 | Piece | Where | Notes |
 |---|---|---|
@@ -19,14 +19,14 @@ Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolve
 
 | Command | Lands on | As |
 |---|---|---|
-| `bin/ssh login` | login node | `joe` (password `joe`, or joe's own key) |
+| `bin/ssh login` | login node | `joe`, with joe's lab key (`.secrets/ssh/users/joe_ed25519`); `bin/ssh <user>@login` for another directory user |
 | `bin/ssh root@login` | login node | root (admin key `.secrets/ssh/id_ed25519`) |
 | `bin/ssh sched-control` (or any instance name) | that instance | root |
 | `bin/ssh login sbatch < job.sh` | login node | runs a command, here submitting a job from stdin |
 | `bin/scp file login:` | login node | copies files |
 | `make shell`, `make shell-root`, `make shell-<instance>` | via `incus exec`, no SSH | joe / root / root |
 
-The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. To log in without a password, install your own key once: `bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub login`.
+The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. `make configure` creates a lab key per directory user and authorises it in their home on `/shared`, so it works on every node; `bin/ssh` picks it by user name. Plain `ssh` from elsewhere uses your own key (`bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub login`) or the LDAP password.
 
 **Add a user:** append an entry to `cluster_users` in `inventory/group_vars/all.yml` and run `make configure`:
 

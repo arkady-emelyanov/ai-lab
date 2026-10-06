@@ -1,5 +1,6 @@
 # SSH: root logs in with the admin key from `make init` (.secrets/ssh),
-# cluster users with their LDAP password (checked by SSSD via PAM).
+# cluster users with their lab key (.secrets/ssh/users, used by bin/ssh) or
+# their LDAP password (checked by SSSD via PAM).
 - name: Install the SSH server
   ansible.builtin.apt:
     name: openssh-server
@@ -11,7 +12,38 @@
     user: root
     key: "{{ lookup('file', ssh_key_dir ~ '/id_ed25519.pub') }}"
 
-- name: Root by key only, users by password
+# One key per directory user, kept with the other secrets on this machine;
+# authorised in the user's home on /shared, so it works on every node.
+- name: Create the directory for the users' lab keys
+  ansible.builtin.file:
+    path: "{{ ssh_key_dir }}/users"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  when: inventory_hostname in groups['login']
+
+- name: Create the directory users' lab keys
+  ansible.builtin.command: >-
+    ssh-keygen -q -t ed25519 -N '' -C {{ item.name }}@ai-lab
+    -f {{ ssh_key_dir }}/users/{{ item.name }}_ed25519
+  args:
+    creates: "{{ ssh_key_dir }}/users/{{ item.name }}_ed25519"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  delegate_to: localhost
+  when: inventory_hostname in groups['login']
+
+- name: Authorise the directory users' lab keys
+  ansible.posix.authorized_key:
+    user: "{{ item.name }}"
+    key: "{{ lookup('file', ssh_key_dir ~ '/users/' ~ item.name ~ '_ed25519.pub') }}"
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: inventory_hostname in groups['login']
+
+- name: Root by key only, users by key or password
   ansible.builtin.copy:
     content: |
       PermitRootLogin prohibit-password
