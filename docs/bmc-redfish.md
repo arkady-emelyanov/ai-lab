@@ -23,7 +23,7 @@ Credentials: `root` / `0penBmc` (OpenBMC's default; `bmc_username`, `bmc_passwor
 |---|---|
 | `/redfish/v1/Systems/System_0` | `GET` (PowerState, SerialNumber); `POST Actions/ComputerSystem.Reset` with `ResetType` `On`, `ForceOff`, `GracefulShutdown`, `GracefulRestart`, `ForceRestart`, `PowerCycle` |
 | `/redfish/v1/Systems/HGX_Baseboard_0` | `GET` (PowerState, ProcessorSummary: the GPUs) |
-| `…/HGX_Baseboard_0/Processors/GPU_<n>` | `GET`: model, UUID (matches `nvidia-smi`), serial, PCIe address, NVLink fabric clique (follows partition changes) |
+| `…/HGX_Baseboard_0/Processors/GPU_<n>` | `GET`: model, UUID (matches `nvidia-smi`), serial, PCIe address, NVLink fabric clique (the GPU's, which changes with its partition at the GPU's next reset) |
 | `…/GPU_<n>/EnvironmentMetrics` | `GET`: GPU temperature and power (`TemperatureCelsius`, `PowerWatts`, linked to the GPU chassis' sensors), power limit |
 | `…/GPU_<n>/Ports/NVLink_<k>` | `GET` (`LinkDown` when either end is disabled); `PATCH {"Oem": {"Nvidia": {"LinkDisableSticky": true}}}` |
 | `…/GPU_<n>/Ports/NVLink_<k>/Settings` | `GET`; `PATCH {"LinkState": "Disabled" \| "Enabled"}`, applied at the next tray reset |

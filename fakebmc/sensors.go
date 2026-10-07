@@ -36,6 +36,27 @@ type gpuState struct {
 
 const maxTrayGPUs = 8 // FG_MAX_GPUS
 
+// gpuReset mirrors struct fg_gpu_reset in fakegpu/occupancy.h. The array
+// follows gpu[FG_MAX_GPUS], proc[FG_MAX_PROCS] (16 bytes each) and
+// pidns[FG_MAX_PROCS] (8 bytes each).
+const (
+	maxProcs   = 128 // FG_MAX_PROCS
+	resetEntry = 16  // sizeof(struct fg_gpu_reset)
+)
+
+// gpuClique is the clique the GPU reports through NVML: the one it took at
+// its last reset (a partition change waits for a GPU reset), or before any
+// reset the one its partition has.
+func (s *Server) gpuClique(g int) int {
+	off := maxTrayGPUs*binary.Size(gpuState{}) + maxProcs*16 + maxProcs*8 + g*resetEntry
+	if data, err := os.ReadFile(s.cfg.TelemetryPath); err == nil && len(data) >= off+4 {
+		if c := binary.LittleEndian.Uint32(data[off:]); c != 0 {
+			return int(c) - 1
+		}
+	}
+	return s.state.Clique(g, s.cfg.CliqueID)
+}
+
 // gpuReading is one GPU's sensors at one instant.
 type gpuReading struct {
 	TempC  int     // as nvmlDeviceGetTemperature: whole degrees, rounded

@@ -24,7 +24,7 @@ bin/ssh sched-control scontrol show topology        # Slurm mode
 bin/kubectl get nodes -L accelerator.topograph.run/domain,fabric.topograph.run/tier-0   # k3s mode
 ```
 
-A systemd timer (`update-topology.timer`) runs it every minute; an unchanged topology is left alone, so partition changes made through the [partition controller](nvlink-partitions.md) reach the scheduler within a minute (in k3s mode `update-topology --dry-run` prints the trays' labels). Example after moving tray 2 into its own partition:
+A systemd timer (`update-topology.timer`) runs it every minute; an unchanged topology is left alone, so partition changes made through the [partition controller](nvlink-partitions.md) reach the scheduler within a minute of the GPUs' reset (a GPU reports its new clique only after a reset, as on GB200) (in k3s mode `update-topology --dry-run` prints the trays' labels). Example after moving tray 2 into its own partition:
 
 ```
 # block001=7f3c2a10-5b4e-4d6a-9c1e-2b8f0e6d4a91.1

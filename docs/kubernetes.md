@@ -84,6 +84,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 - No NVIDIA DRA driver or ComputeDomains (IMEX); NVLink placement is through Kueue topology-aware scheduling only.
 - Kubernetes users authenticate with client certificates, not LDAP.
 - Fake NCCL does not communicate between ranks, so a pod failing does not fail its peers' collectives ([Fake GPUs](fake-gpu.md)).
+- No GPU handover between pods: Kubernetes has no node-side hook after a pod ends that could reset its GPUs (Slurm mode uses an epilog). GPUs are reset at tray boot; after an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) for the new clique to reach GFD's and topograph's labels.
 
 ## References
 

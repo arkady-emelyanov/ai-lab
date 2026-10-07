@@ -14,6 +14,10 @@ Sources, cited per test:
            https://docs.nvidia.com/networking-ethernet-software/bmc-user-manual-88.0060.2110/User_Interface_Redfish_Commands.html
   [part]   NVIDIA GB200 NVL Partition User's Guide (DU-12143-001)
            https://docs.nvidia.com/multi-node-nvlink-systems/partition-guide-v1-2.pdf
+  [mc]     NVIDIA Mission Control, NVLink Partition Management
+           https://docs.nvidia.com/mission-control/docs/systems-administration-guide/2.2.0/nvlink-partition-management.html
+  [smi]    nvidia-smi documentation, --gpu-reset
+           https://docs.nvidia.com/deploy/nvidia-smi/
 """
 import json
 import subprocess
@@ -143,30 +147,81 @@ def _grpc(lab, method, **req):
     return json.loads(p.stdout or "{}")
 
 
+def gpu_reset(lab, tray, ids=None):
+    """nvidia-smi --gpu-reset on the tray as root; its output."""
+    return lab.sh(tray, "nvidia-smi --gpu-reset" + (f" -i {ids}" if ids is not None else ""))
+
+
+def recovery_actions(lab, tray):
+    out = lab.sh(tray, "nvidia-smi -q")
+    return [line.split(":", 1)[1].strip() for line in out.splitlines() if "GPU Recovery Action" in line]
+
+
 @pytest.fixture
 def tray_partition(lab):
-    """The last tray's GPUs in their own NVLink partition (id 7); back to the
-    default partition afterwards."""
+    """The last tray's GPUs in their own NVLink partition (id 7), not yet
+    reset; back in the default partition, and reset, afterwards."""
     _grpc(lab, "Hello")
     parts = _grpc(lab, "GetPartitionInfoList").get("partitions", [])
     if [p["partitionId"] for p in parts] != [32766]:
         pytest.skip(f"partitions other than the default exist: {[p['partitionId'] for p in parts]}")
     tray = lab.trays[-1]
+    if lab.sh(tray, "nvidia-smi --query-compute-apps=pid --format=csv,noheader").strip():
+        pytest.skip(f"{tray} has GPU processes; its GPUs cannot be reset")
     uids = [g["gpuUid"] for g in _grpc(lab, "GetGpuInfoList")["gpus"] if g["hostname"] == tray]
     _grpc(lab, "RemoveGpusFromPartition", partition_id=32766, gpu_uids=uids)
     _grpc(lab, "CreatePartition", partition_name="bmc-test", partition_id=7, gpu_uids=uids)
     yield tray, 7
     _grpc(lab, "DeletePartition", partition_id=7)
     _grpc(lab, "AddGpusToPartition", partition_id=32766, gpu_uids=uids)
+    gpu_reset(lab, tray)
+
+
+def test_partition_change_waits_for_gpu_reset(lab, tray_partition):
+    """[mc]: "We need to reset the GPUs (or reboot the nodes) in order for the
+    Clique ID to update"; [part] 4.1: reset a GPU added to a partition (clears
+    its registers and memory, for tenant handover); 10.4: GPU Recovery Action."""
+    tray, pid = tray_partition
+    assert all(g["clique"] != pid for g in lab.smi(tray)), "clique changed without a GPU reset"
+    assert set(recovery_actions(lab, tray)) == {"GPU_RESET"}
+    info = [g for g in _grpc(lab, "GetGpuInfoList")["gpus"] if g["hostname"] == tray]
+    assert all(g.get("resetPending") for g in info), "the partition controller does not report the pending reset"
+
+    assert "All done." in gpu_reset(lab, tray)
+    assert all(g["clique"] == pid for g in lab.smi(tray))
+    assert set(recovery_actions(lab, tray)) == {"None"}
 
 
 def test_bmc_reports_the_partition_clique(lab, tray_partition):
     """[part] 10.3: the GPU's CliqueId is its NVLink partition. The BMC's view
-    of the GPU must follow partition changes like NVML does."""
+    of the GPU follows it as NVML does: after the GPU reset."""
     tray, pid = tray_partition
-    eventually(lambda: any(g["clique"] != pid for g in lab.smi(tray)) and "nvidia-smi clique not updated")
+    gpu_reset(lab, tray)
+    assert all(g["clique"] == pid for g in lab.smi(tray))
     for g in range(lab.gpus):
         assert at(lab.tray_bmc(tray).get(gpu_path(g)), "Oem", "Nvidia", "FabricClique", "CliqueId") == pid
+
+
+def test_gpu_reset_refuses_a_gpu_in_use(lab):
+    """[smi]: --gpu-reset needs root and no process using the GPU."""
+    tray, gpu = lab.trays[0], 3
+    apps = f"nvidia-smi -i {gpu} --query-compute-apps=pid --format=csv,noheader"
+    if lab.sh(tray, apps).strip():
+        pytest.skip(f"{tray} GPU {gpu} is in use")
+    hold = ("import ctypes, time; cu = ctypes.CDLL('libcuda.so.1'); cu.cuInit(0); "
+            "d, c, p = ctypes.c_int(), ctypes.c_void_p(), ctypes.c_uint64(); "
+            f"cu.cuDeviceGet(ctypes.byref(d), {gpu}); cu.cuDevicePrimaryCtxRetain(ctypes.byref(c), d); "
+            "cu.cuCtxSetCurrent(c); cu.cuMemAlloc_v2(ctypes.byref(p), ctypes.c_size_t(1 << 30)); time.sleep(60)")
+    lab.sh(tray, f'systemd-run --unit=bmc-gpu-hold --collect python3 -c "{hold}"')
+    try:
+        eventually(lambda: not lab.sh(tray, apps).strip() and "holder not on the GPU yet")
+        assert lab.sh(tray, f"nvidia-smi --gpu-reset -i {gpu}", check=False) is None, "reset a GPU in use"
+    finally:
+        lab.sh(tray, "systemctl stop bmc-gpu-hold", check=False)
+    eventually(lambda: lab.sh(tray, f"nvidia-smi --gpu-reset -i {gpu}", check=False) is None
+               and "reset still refused after the process ended", timeout=20)
+    assert lab.sh(tray, f"su -s /bin/sh nobody -c 'nvidia-smi --gpu-reset -i {gpu}'", check=False) is None, \
+        "a non-root user reset a GPU"
 
 
 def _squeue_state(lab, job):

@@ -473,7 +473,7 @@ func (s *Server) processor(w http.ResponseWriter, r *http.Request) {
 		"Oem": obj{"Nvidia": obj{
 			"@odata.type":  "#NvidiaProcessor.v1_4_0.NvidiaGPU",
 			"PCIeBusId":    gpuPCIBusID(g),
-			"FabricClique": obj{"ClusterUUID": s.cfg.ClusterUUID, "CliqueId": s.state.Clique(g, s.cfg.CliqueID)},
+			"FabricClique": obj{"ClusterUUID": s.cfg.ClusterUUID, "CliqueId": s.gpuClique(g)},
 		}},
 	})
 }

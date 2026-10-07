@@ -36,6 +36,25 @@ func readTelemetry(path string) ([]gpuState, error) {
 	return states, nil
 }
 
+// The GPU reset state (struct fg_gpu_reset: clique+1, count, reset time)
+// follows gpu[8], proc[128] (16 bytes each) and pidns[128] (8 bytes each).
+const (
+	maxTrayProcs = 128 // FG_MAX_PROCS
+	resetEntry   = 16  // sizeof(struct fg_gpu_reset)
+)
+
+// readResetClique returns the clique GPU idx took at its last reset, as NVML
+// reports it; false before the GPU's first reset or without the file.
+func readResetClique(path string, idx int) (uint32, bool) {
+	data, err := os.ReadFile(path)
+	off := maxTrayGPUs*binary.Size(gpuState{}) + maxTrayProcs*16 + maxTrayProcs*8 + idx*resetEntry
+	if err != nil || len(data) < off+4 {
+		return 0, false
+	}
+	c := binary.LittleEndian.Uint32(data[off:])
+	return c - 1, c != 0
+}
+
 type metricWriter struct{ b strings.Builder }
 
 func (m *metricWriter) header(name, typ, help string) {
@@ -81,6 +100,7 @@ func (c *controller) serveMetrics(w http.ResponseWriter, _ *http.Request) {
 	gpuMetrics := []struct{ name, typ, help string }{
 		{"nvlink_gpu_partition_id", "gauge", "NVLink partition of the GPU (0 = none)."},
 		{"nvlink_gpu_clique_id", "gauge", "NVLink clique the GPU reports (NVML fabric info)."},
+		{"nvlink_gpu_reset_pending", "gauge", "1 while a partition change waits for a GPU reset."},
 		{"nvlink_gpu_links", "gauge", "NVLinks of the GPU."},
 		{"nvlink_gpu_active_links", "gauge", "NVLinks of the GPU that are up."},
 		{"nvlink_gpu_healthy", "gauge", "1 when all NVLinks of the GPU are up."},
@@ -108,13 +128,13 @@ func (c *controller) serveMetrics(w http.ResponseWriter, _ *http.Request) {
 		down := c.disabledLinks(g)
 		labels := map[string]string{"host": info.Hostname, "gpu": fmt.Sprint(g.idx), "uuid": g.uuid,
 			"slot": fmt.Sprint(info.Location.SlotId)}
-		row := gpuRow{labels: labels, values: []float64{float64(info.PartitionId), float64(info.CliqueId),
+		row := gpuRow{labels: labels, values: []float64{float64(info.PartitionId), float64(info.CliqueId), b2f(info.ResetPending),
 			float64(c.cfg.NVLinks), float64(info.ActiveNvlinks), b2f(int(info.ActiveNvlinks) == c.cfg.NVLinks), 0, 0, 0}}
 		var tel *gpuState
 		if ts := telemetry[g.tray]; ts != nil && g.idx < len(ts) {
 			tel = &ts[g.idx]
-			row.values[5], row.values[6] = float64(tel.NVLinkTx), float64(tel.NVLinkRx)
-			row.values[7] = float64(tel.BusyNs) / 1e9
+			row.values[6], row.values[7] = float64(tel.NVLinkTx), float64(tel.NVLinkRx)
+			row.values[8] = float64(tel.BusyNs) / 1e9
 			row.hasTel = true
 		}
 		rows = append(rows, row)
@@ -144,7 +164,7 @@ func (c *controller) serveMetrics(w http.ResponseWriter, _ *http.Request) {
 	for i, gm := range gpuMetrics {
 		m.header(gm.name, gm.typ, gm.help)
 		for _, r := range rows {
-			if i >= 5 && !r.hasTel {
+			if i >= 6 && !r.hasTel { // the counters
 				continue
 			}
 			m.sample(gm.name, r.labels, r.values[i])

@@ -73,6 +73,10 @@ slurm_accounts:
 slurmdbd_db: slurm_acct_db
 # Must stay below the instance memory limit (MiB).
 slurm_node_memory_mb: 7500
+# GPU handover after every job (Slurm Epilog): reset the job's GPUs, which
+# clears their memory and state and applies a pending NVLink partition change,
+# then drain the node if a GPU is still busy or needs recovery.
+gpu_handover_reset: true
 
 # ---- Users (LDAP + SSSD) -------------------------------------------------------
 # Users live only in OpenLDAP on the controller; every node resolves them via

@@ -184,8 +184,9 @@ func (s *State) SwitchPortDown(k LinkKey) bool {
 	return false
 }
 
-// Clique is the GPU's NVLink partition clique as the partition controller
-// published it (fabric-clique), as NVML reports it; def without one.
+// Clique is the clique of the GPU's NVLink partition as the partition
+// controller published it (fabric-clique); def without one. The GPU takes it
+// at its next reset (Server.gpuClique).
 func (s *State) Clique(gpu, def int) int {
 	for _, p := range s.sidebandPairs("fabric-clique") {
 		if p[0] == gpu {

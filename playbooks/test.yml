@@ -419,6 +419,26 @@
       failed_when: misplaced.stdout | length > 0
       when: scheduler == 'k3s'
 
+# After the example jobs: the Slurm epilog reset each job's GPUs (handover),
+# and no GPU is left needing recovery (with either scheduler).
+- name: GPU handover
+  hosts: workers
+  tasks:
+    - name: The epilog reset the GPUs of the example jobs (Slurm)
+      ansible.builtin.command: journalctl -t slurm-epilog --since -3h --no-pager
+      register: epilog
+      changed_when: false
+      failed_when: epilog.stdout is not search('GPUs [0-9,]+ reset')
+      when: scheduler == 'slurm' and gpu_handover_reset
+
+    - name: No GPU needs a reset or other recovery
+      ansible.builtin.command: nvidia-smi -q
+      register: recovery
+      changed_when: false
+      failed_when: >-
+        recovery.stdout_lines | select('search', 'GPU Recovery Action') | list | length != fakegpu_count
+        or recovery.stdout_lines | select('search', 'GPU Recovery Action') | reject('search', ': None$') | list | length > 0
+
 - name: Metrics
   hosts: controller
   tasks:

@@ -126,6 +126,9 @@ message GpuInfo {
   uint32 clique_id = 6;        // as reported by NVML on the tray
   uint32 active_nvlinks = 7;
   GpuHealth health = 8;
+  // The GPU still reports the clique it had before a partition change: a
+  // GPU reset (or node reboot) applies the change, as on GB200.
+  bool reset_pending = 9;
 }
 
 message GpuInfoListRequest {

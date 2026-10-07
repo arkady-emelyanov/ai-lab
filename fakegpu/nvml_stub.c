@@ -699,6 +699,85 @@ typedef struct {
     unsigned char healthSummary; /* v3 only */
 } nvmlGpuFabricInfoV_t;
 
+/* ---- GPU reset and recovery action --------------------------------------- */
+
+/* The clique the GPU took at its last reset (see struct fg_gpu_reset). A GPU
+ * with no reset recorded takes the current partition's clique. */
+static unsigned gpu_clique(int idx)
+{
+    struct fg_occupancy *o = fg_occupancy();
+    unsigned partition = fg_partition_clique(idx);
+    if (!o) return partition;
+    uint32_t taken = __atomic_load_n(&o->reset[idx].clique, __ATOMIC_ACQUIRE);
+    if (taken) return taken - 1;
+    uint32_t expect = 0;
+    if (__atomic_compare_exchange_n(&o->reset[idx].clique, &expect, partition + 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return partition;
+    return expect - 1;
+}
+
+/* nvmlDeviceGpuRecoveryAction_t */
+#define RECOVERY_ACTION_NONE 0
+#define RECOVERY_ACTION_GPU_RESET 1
+
+/* A partition change waits for a GPU reset, as on GB200. */
+static unsigned recovery_action(int idx)
+{
+    return gpu_clique(idx) != fg_partition_clique(idx) ? RECOVERY_ACTION_GPU_RESET : RECOVERY_ACTION_NONE;
+}
+
+/* Lab entry point for nvidia-smi --gpu-reset (not an NVML API): resets
+ * physical GPU idx, which takes its partition's clique and starts idle.
+ * Returns 0, -1 while processes still use the GPU (the real reset refuses
+ * too), -2 without the shared state. */
+API int fakegpu_reset_gpu(unsigned idx)
+{
+    struct fg_occupancy *o = fg_occupancy();
+    if (!o || idx >= FG_MAX_GPUS) return -2;
+    fg_proc_cleanup(0);
+    for (int i = 0; i < FG_MAX_PROCS; i++)
+        if (__atomic_load_n(&o->proc[i].pid, __ATOMIC_ACQUIRE) && o->proc[i].gpu == (int32_t)idx && fg_slot_alive(o, i))
+            return -1;
+    struct fg_gpu_state *g = &o->gpu[idx];
+    __atomic_store_n(&g->util, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g->sample_ns, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g->temp_mc, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&g->temp_ns, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&o->reset[idx].clique, fg_partition_clique(idx) + 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&o->reset[idx].reset_ns, fg_now_ns(), __ATOMIC_RELAXED);
+    __atomic_add_fetch(&o->reset[idx].count, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+
+typedef union { double d; int si; unsigned ui; unsigned long ul; unsigned long long ull; long long sll; unsigned short us; } nvmlValue_t;
+typedef struct {
+    unsigned fieldId, scopeId;
+    long long timestamp, latencyUsec;
+    int valueType;
+    nvmlReturn_t nvmlReturn;
+    nvmlValue_t value;
+} nvmlFieldValue_t;
+
+#define NVML_FI_DEV_GET_GPU_RECOVERY_ACTION 230
+#define NVML_VALUE_TYPE_UNSIGNED_INT 1
+
+/* Only the recovery action is answered; other fields are left as the caller
+ * set them, as before this was implemented. */
+API nvmlReturn_t nvmlDeviceGetFieldValues(nvmlDevice_t d, int count, nvmlFieldValue_t *values)
+{
+    CHECK_DEV(d);
+    if (!values || count < 0) return NVML_ERROR_INVALID_ARGUMENT;
+    for (int i = 0; i < count; i++)
+        if (values[i].fieldId == NVML_FI_DEV_GET_GPU_RECOVERY_ACTION) {
+            values[i].valueType = NVML_VALUE_TYPE_UNSIGNED_INT;
+            values[i].value.ui = recovery_action(idx);
+            values[i].nvmlReturn = NVML_SUCCESS;
+            values[i].timestamp = (long long)time(NULL) * 1000000;
+            values[i].latencyUsec = 0;
+        }
+    return NVML_SUCCESS;
+}
+
 #define FABRIC_STATE_COMPLETED 3
 /* bandwidth not degraded, no route recovery, routes healthy, no access
  * timeout recovery, configuration correct */
@@ -710,7 +789,7 @@ API nvmlReturn_t nvmlDeviceGetGpuFabricInfo(nvmlDevice_t d, nvmlGpuFabricInfo_t 
     if (!f) return NVML_ERROR_INVALID_ARGUMENT;
     memcpy(f->clusterUuid, fg_cluster_uuid(), 16);
     f->status = NVML_SUCCESS;
-    f->cliqueId = fg_gpu_clique(idx);
+    f->cliqueId = gpu_clique(idx);
     f->state = FABRIC_STATE_COMPLETED;
     return NVML_SUCCESS;
 }
@@ -722,7 +801,7 @@ API nvmlReturn_t nvmlDeviceGetGpuFabricInfoV(nvmlDevice_t d, nvmlGpuFabricInfoV_
     unsigned ver = f->version >> 24;
     memcpy(f->clusterUuid, fg_cluster_uuid(), 16);
     f->status = NVML_SUCCESS;
-    f->cliqueId = fg_gpu_clique(idx);
+    f->cliqueId = gpu_clique(idx);
     f->state = FABRIC_STATE_COMPLETED;
     f->healthMask = FABRIC_HEALTHY_MASK;
     if (ver >= 3) f->healthSummary = 1; /* HEALTHY */

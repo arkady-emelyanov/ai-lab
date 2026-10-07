@@ -833,6 +833,9 @@ type GpuInfo struct {
 	CliqueId      uint32                 `protobuf:"varint,6,opt,name=clique_id,json=cliqueId,proto3" json:"clique_id,omitempty"`          // as reported by NVML on the tray
 	ActiveNvlinks uint32                 `protobuf:"varint,7,opt,name=active_nvlinks,json=activeNvlinks,proto3" json:"active_nvlinks,omitempty"`
 	Health        GpuHealth              `protobuf:"varint,8,opt,name=health,proto3,enum=nmxlab.v1.GpuHealth" json:"health,omitempty"`
+	// The GPU still reports the clique it had before a partition change: a
+	// GPU reset (or node reboot) applies the change, as on GB200.
+	ResetPending  bool `protobuf:"varint,9,opt,name=reset_pending,json=resetPending,proto3" json:"reset_pending,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -921,6 +924,13 @@ func (x *GpuInfo) GetHealth() GpuHealth {
 		return x.Health
 	}
 	return GpuHealth_NMX_GPU_HEALTH_UNKNOWN
+}
+
+func (x *GpuInfo) GetResetPending() bool {
+	if x != nil {
+		return x.ResetPending
+	}
+	return false
 }
 
 type GpuInfoListRequest struct {
@@ -1774,7 +1784,7 @@ const file_nmxc_proto_rawDesc = "" +
 	"\x12SwitchNodeInfoList\x126\n" +
 	"\vreturn_code\x18\x01 \x01(\x0e2\x15.nmxlab.v1.ReturnCodeR\n" +
 	"returnCode\x12/\n" +
-	"\x05nodes\x18\x02 \x03(\v2\x19.nmxlab.v1.SwitchNodeInfoR\x05nodes\"\x98\x02\n" +
+	"\x05nodes\x18\x02 \x03(\v2\x19.nmxlab.v1.SwitchNodeInfoR\x05nodes\"\xbd\x02\n" +
 	"\aGpuInfo\x12\x17\n" +
 	"\agpu_uid\x18\x01 \x01(\x04R\x06gpuUid\x12\x12\n" +
 	"\x04uuid\x18\x02 \x01(\tR\x04uuid\x12/\n" +
@@ -1783,7 +1793,8 @@ const file_nmxc_proto_rawDesc = "" +
 	"\fpartition_id\x18\x05 \x01(\rR\vpartitionId\x12\x1b\n" +
 	"\tclique_id\x18\x06 \x01(\rR\bcliqueId\x12%\n" +
 	"\x0eactive_nvlinks\x18\a \x01(\rR\ractiveNvlinks\x12,\n" +
-	"\x06health\x18\b \x01(\x0e2\x14.nmxlab.v1.GpuHealthR\x06health\"\x87\x01\n" +
+	"\x06health\x18\b \x01(\x0e2\x14.nmxlab.v1.GpuHealthR\x06health\x12#\n" +
+	"\rreset_pending\x18\t \x01(\bR\fresetPending\"\x87\x01\n" +
 	"\x12GpuInfoListRequest\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12\x19\n" +

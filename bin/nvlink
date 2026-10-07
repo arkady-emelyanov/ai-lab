@@ -4,7 +4,7 @@
 
   bin/nvlink domain                          domain properties and state
   bin/nvlink trays                           compute trays (slot ids) and switch trays
-  bin/nvlink gpus [TRAY...]                  GPUs: partition, clique, active NVLinks, health
+  bin/nvlink gpus [TRAY...]                  GPUs: partition, clique, pending reset, NVLinks, health
   bin/nvlink topology                        active NVLinks per GPU and per NVSwitch
   bin/nvlink partitions                      partitions and their GPUs
   bin/nvlink create NAME [--id N] GPU...     new partition (its GPUs must be in none)
@@ -14,6 +14,8 @@
 
 GPU: a tray (all its GPUs) or tray:indices, by name or slot id, e.g.
 sched-worker2, sched-worker2:0-1, 2:0,3. PARTITION: id or name.
+A GPU takes a new partition's clique at its next reset (nvidia-smi
+--gpu-reset on the tray, a reboot, or the Slurm epilog after a job).
 --json prints the controller's responses instead of tables. Calls go through
 bin/grpcurl; `bin/grpcurl -plaintext <address> describe` lists the raw API.
 """
@@ -184,9 +186,10 @@ def cmd_gpus(c, a):
     gpus = c.gpus(slots)
     if c.raw:
         return print(json.dumps(gpus, indent=2))
-    table(["TRAY", "GPU", "UUID", "PARTITION", "CLIQUE", "NVLINKS", "HEALTH"],
+    table(["TRAY", "GPU", "UUID", "PARTITION", "CLIQUE", "RESET", "NVLINKS", "HEALTH"],
           [[g.get("hostname"), g.get("location", {}).get("gpuId", 0), g.get("uuid"), g.get("partitionId", "-"),
-            g.get("cliqueId", 0), g.get("activeNvlinks", 0), HEALTH.get(g.get("health"), g.get("health"))]
+            g.get("cliqueId", 0), "pending" if g.get("resetPending") else "-", g.get("activeNvlinks", 0),
+            HEALTH.get(g.get("health"), g.get("health"))]
            for g in gpus])
 
 
@@ -232,14 +235,28 @@ def result(c, out):
     else:
         p = out.get("partition", {})
         print(out.get("message", "done") + (f": {p.get('partitionId')} {p.get('partitionName', '')}".rstrip() if p else ""), flush=True)
-    warn_split_trays(c)
+    gpus = c.gpus()
+    warn_split_trays(gpus)
+    hint_resets(gpus)
 
 
-def warn_split_trays(c):
+def hint_resets(gpus):
+    """A GPU takes its new partition's clique at a GPU reset (as on GB200)."""
+    per = {}
+    for g in gpus:
+        if g.get("resetPending"):
+            per.setdefault(g.get("hostname"), []).append(str(g.get("location", {}).get("gpuId", 0)))
+    for tray, ids in sorted(per.items()):
+        print(f"{tray}: GPUs {','.join(ids)} keep their old clique until reset: "
+              f"bin/ssh {tray} nvidia-smi --gpu-reset -i {','.join(ids)}  (GPUs must be idle; "
+              "with Slurm the epilog resets a job's GPUs when it ends)")
+
+
+def warn_split_trays(gpus):
     """topograph needs all GPUs of a node in one partition (clique); a split
     tray makes its runs fail and leaves the scheduler's topology stale."""
     per = {}
-    for g in c.gpus():
+    for g in gpus:
         per.setdefault(g.get("hostname"), set()).add(g.get("partitionId", 0))  # 0: in no partition
     for tray, parts in sorted(per.items()):
         if len(parts) > 1:

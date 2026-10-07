@@ -48,12 +48,23 @@ struct fg_gpu_state {
     uint64_t nvlink_rx;    /* bytes received over NVLink */
 };
 
+/* GPU reset state (nvidia-smi --gpu-reset). As on GB200, a GPU takes its
+ * NVLink partition's clique at a reset (or node reboot): until then NVML
+ * reports the previous clique and recovery action GPU_RESET. Read by
+ * fakebmc and fakenmxc: keep in sync with their copies of the layout. */
+struct fg_gpu_reset {
+    uint32_t clique;      /* clique taken at the last reset, plus one; 0 = not yet set */
+    uint32_t count;       /* resets so far */
+    uint64_t reset_ns;    /* CLOCK_MONOTONIC time of the last reset */
+};
+
 /* Fields added later go after everything older versions map, so processes
  * still running an older library never read or clear them. */
 struct fg_occupancy {
     struct fg_gpu_state gpu[FG_MAX_GPUS];
     struct fg_proc proc[FG_MAX_PROCS];
     uint64_t pidns[FG_MAX_PROCS]; /* slot owner's PID namespace (inode of /proc/self/ns/pid) */
+    struct fg_gpu_reset reset[FG_MAX_GPUS];
 };
 
 static inline uint64_t fg_now_ns(void)

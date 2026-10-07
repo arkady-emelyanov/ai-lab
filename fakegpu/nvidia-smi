@@ -3,10 +3,11 @@
 
 Supported: default table, -L, topo -m, nvlink -s, -q [-d FABRIC], dmon [-c N],
 --query-gpu=FIELDS / --query-compute-apps=FIELDS --format=csv[,noheader][,nounits],
--i IDS, -l SECONDS.
+-i IDS, -l SECONDS, -r / --gpu-reset [-i IDS] (root, GPUs without processes).
 """
 import ctypes
 import datetime
+import os
 import socket
 import sys
 import time
@@ -26,6 +27,17 @@ class Memory(ctypes.Structure):
 
 class Utilization(ctypes.Structure):
     _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
+
+
+class FieldValue(ctypes.Structure):
+    _fields_ = [("fieldId", ctypes.c_uint), ("scopeId", ctypes.c_uint), ("timestamp", ctypes.c_longlong),
+                ("latencyUsec", ctypes.c_longlong), ("valueType", ctypes.c_int), ("nvmlReturn", ctypes.c_int),
+                ("value", ctypes.c_ulonglong)]
+
+
+FI_GPU_RECOVERY_ACTION = 230  # NVML_FI_DEV_GET_GPU_RECOVERY_ACTION
+RECOVERY_ACTIONS = {0: "None", 1: "GPU_RESET", 2: "NODE_REBOOT", 3: "DRAIN_P2P", 4: "DRAIN_AND_RESET",
+                    5: "RECOVER_IMEX_DOMAIN", 6: "BUS_RESET", 7: "SYSTEM_REBOOT"}
 
 
 class ProcessInfo(ctypes.Structure):
@@ -93,6 +105,10 @@ class Gpu:
         self.clique = fab.cliqueId
         self.fabric_state = {0: "N/A", 1: "Not Started", 2: "In Progress", 3: "Completed"}.get(fab.state, "Unknown")
         self.links = [uint("nvmlDeviceGetNvLinkState", h, link) for link in range(NVLINKS)]
+        self.minor = uint("nvmlDeviceGetMinorNumber", h)
+        fv = FieldValue(fieldId=FI_GPU_RECOVERY_ACTION)
+        check(nvml.nvmlDeviceGetFieldValues(h, 1, ctypes.byref(fv)))
+        self.recovery = RECOVERY_ACTIONS.get(fv.value & 0xFFFFFFFF, "Unknown") if fv.nvmlReturn == 0 else "N/A"
         self.procs = processes(h)
 
 
@@ -200,6 +216,7 @@ def query(devs):
         print(f"    GPU UUID                              : {g.uuid}")
         print(f"    Minor Number                          : {g.index}")
         print(f"    VBIOS Version                         : {g.vbios}")
+        print(f"    GPU Recovery Action                   : {g.recovery}")
         print(f"    Fabric")
         print(f"        State                             : {g.fabric_state}")
         print(f"        Status                            : Success")
@@ -286,6 +303,28 @@ def dmon(ids, count):
             time.sleep(1)
 
 
+def gpu_reset(ids):
+    """Reset GPUs like `nvidia-smi --gpu-reset`: root only, and refused for a GPU
+    any process still uses. The GPU takes its NVLink partition's clique."""
+    if os.geteuid() != 0:
+        sys.exit("Unable to reset GPU: Insufficient Permissions")
+    nvml.fakegpu_reset_gpu.argtypes = [ctypes.c_uint]
+    failed = False
+    for g in gpus(ids):
+        rc = nvml.fakegpu_reset_gpu(g.minor)
+        if rc == 0:
+            print(f"GPU {g.bus_id} was successfully reset.")
+        elif rc == -1:
+            failed = True
+            print(f"Unable to reset GPU {g.bus_id} because it's being used by some other process "
+                  "(e.g. CUDA application). Please first kill all processes using this GPU.", file=sys.stderr)
+        else:
+            failed = True
+            print(f"Unable to reset GPU {g.bus_id}: no GPU state available.", file=sys.stderr)
+    print("All done." if not failed else "Some GPUs could not be reset.")
+    sys.exit(1 if failed else 0)
+
+
 def main(argv):
     check(nvml.nvmlInit_v2())
     ids, fmt, fields, apps, loop, count, rest = None, "csv", None, None, None, None, []
@@ -313,6 +352,8 @@ def main(argv):
             rest.append(a)
     if rest[:1] == ["dmon"]:
         return dmon(ids, count)
+    if rest[:1] in (["-r"], ["--gpu-reset"]):
+        return gpu_reset(ids)
     while True:
         run(ids, fields, apps, fmt, rest, argv)
         if not loop:

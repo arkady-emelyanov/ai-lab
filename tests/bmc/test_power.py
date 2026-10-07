@@ -146,6 +146,8 @@ def test_force_off_and_on(lab, power_tray):
         if b.get(f"{ROOT}/Systems/System_0")["PowerState"] != "On":
             reset(lab, tray, "On")
     assert lab.oob_metric(f"{tray}-bmc", "idrac_system_power_on") == 1
+    # A node boot resets its GPUs (applying any pending NVLink partition change).
+    assert lab.sh(tray, "systemctl is-active fakegpu-boot-reset").strip() == "active"
     # Taken out before the test, so back in that state: the node agent
     # (slurmd, kubelet) re-registered.
     held = SCHED[lab.scheduler]["held"]

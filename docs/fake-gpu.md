@@ -32,7 +32,9 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 
 **Occupancy.** Every CUDA process registers in a shared table (`state_path`, on the tray's telemetry volume): its PID and memory per GPU, each GPU's busy time and NVLink bytes. Processes in containers (Kubernetes pods) use the same table: each slot records its owner's PID namespace and is held by a file lock the kernel drops when the process exits, so liveness is judged correctly from any namespace, and NVML lists each process under the PID the caller can see. NVML derives utilisation from busy time, power from utilisation (140 W idle to ~1 kW), energy, temperature (32 °C idle towards ~75 °C with a 20 s thermal lag), clocks and P-state, and lists processes. The tray's BMC reads the same table and applies the same model, so its sensors agree with NVML ([BMCs](bmc-redfish.md#how-it-works)). GPU memory is accounted against the 186 GB capacity (allocations beyond it fail with out-of-memory) but is lazily backed, so large GPU buffers cost no host RAM.
 
-**Management inputs.** NVML reads the tray's sideband (written by the BMCs and the partition controller): NVLinks disabled by the tray BMC or switch BMC report inactive (`nvidia-smi topo -m` shows e.g. `NV16`), and each GPU reports the clique of its NVLink partition.
+**Management inputs.** NVML reads the tray's sideband (written by the BMCs and the partition controller): NVLinks disabled by the tray BMC or switch BMC report inactive (`nvidia-smi topo -m` shows e.g. `NV16`), and each GPU reports the clique of its NVLink partition as of its last reset.
+
+**GPU reset.** `nvidia-smi --gpu-reset` (`-r`, optionally `-i`) needs root and refuses a GPU any process still uses, like the real one. A reset returns the GPU to idle (utilisation, temperature) and applies a pending NVLink partition change: as on GB200, a GPU takes its new partition's clique only at a reset or a node reboot, and until then `nvidia-smi -q` shows `GPU Recovery Action : GPU_RESET` (NVML field `NVML_FI_DEV_GET_GPU_RECOVERY_ACTION`). Each tray resets its GPUs at boot (`fakegpu-boot-reset.service`), and in Slurm mode the epilog resets a job's GPUs when it ends ([Slurm](slurm.md#how-it-works)). There is no memory to scrub: "GPU memory" is the allocating process's own memory, which the kernel zeroes for every new allocation and reclaims at exit; on real hardware the reset is what clears GPU memory between tenants (GB200 NVL Partition User's Guide, §4.1).
 
 **Visible GPUs.** As with the real driver, a process sees only the GPUs whose device node `/dev/nvidia<n>` exists in its mount namespace: all of them on the tray, only the allocated ones in a Kubernetes pod (CDI injects one node per GPU). On top of that, CUDA honours `CUDA_VISIBLE_DEVICES` (indices and UUIDs), so a Slurm job's CUDA programs see exactly the GPUs Slurm gave it. NVML, and therefore `nvidia-smi`, ignores `CUDA_VISIBLE_DEVICES`, as the real one does: inside a Slurm job it lists all four GPUs of the tray. Real clusters hide the others from `nvidia-smi` with device cgroups (`ConstrainDevices=yes`), which unprivileged containers cannot use; in a Kubernetes pod only the allocated device nodes exist, so `nvidia-smi` lists only those. GPU identities (UUID, serial, PCI address) derive from the tray name in `/etc/fakegpu.conf` (`host`), so a container, whose hostname differs, sees the tray's GPUs.
 
@@ -43,7 +45,8 @@ On a tray (`bin/ssh sched-worker1`), inside a Slurm job or inside a GPU pod (the
 ```
 nvidia-smi                       # table with processes
 nvidia-smi topo -m               # NV18 between every GPU pair
-nvidia-smi -q                    # includes Fabric: State, CliqueId, ClusterUUID
+nvidia-smi -q                    # includes GPU Recovery Action and Fabric: State, CliqueId, ClusterUUID
+nvidia-smi --gpu-reset -i 0      # root, GPU without processes
 nvidia-smi dmon                  # per second: power, temperature, utilisation, clocks
 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,power.draw,temperature.gpu,fabric.cliqueId --format=csv -l 1
 nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv

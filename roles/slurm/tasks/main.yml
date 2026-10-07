@@ -39,6 +39,31 @@
     mode: "0755"
   when: inventory_hostname in groups['workers']
 
+# Hands the job's GPUs to the next job, as between tenants on GB200: a GPU
+# reset clears the GPU's memory and state and applies a pending NVLink
+# partition change; afterwards the GPUs must be free and need no recovery.
+- name: Install the epilog (GPU handover)
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # Slurm Epilog (root, on the job's nodes). A non-zero exit drains the node.
+      [ -n "$SLURM_JOB_GPUS" ] || exit 0
+      log() { logger -t slurm-epilog "job $SLURM_JOB_ID: $*"; }
+      if ! out=$(nvidia-smi --gpu-reset -i "$SLURM_JOB_GPUS" 2>&1); then
+          log "GPU reset of $SLURM_JOB_GPUS failed: $out"
+          exit 1
+      fi
+      busy=$(nvidia-smi -i "$SLURM_JOB_GPUS" --query-compute-apps=pid --format=csv,noheader | wc -l)
+      pending=$(nvidia-smi -i "$SLURM_JOB_GPUS" -q | grep "GPU Recovery Action" | grep -vc ": None$")
+      if [ "$busy" -ne 0 ] || [ "$pending" -ne 0 ]; then
+          log "GPUs $SLURM_JOB_GPUS not clean after reset: $busy processes, $pending recovery actions"
+          exit 1
+      fi
+      log "GPUs $SLURM_JOB_GPUS reset"
+    dest: /etc/slurm/epilog.sh
+    mode: "0755"
+  when: inventory_hostname in groups['workers']
+
 - name: Create Slurm state and log directories
   ansible.builtin.file:
     path: "{{ item }}"

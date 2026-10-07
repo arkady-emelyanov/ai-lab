@@ -102,8 +102,9 @@ func (c *controller) save() error {
 	return os.Rename(c.path+".tmp", c.path)
 }
 
-// cliqueOf is what NVML reports: the partition id, the configured default
-// clique for the default partition, 0 for GPUs in no partition.
+// cliqueOf is the clique of the GPU's partition: the partition id, the
+// configured default clique for the default partition, 0 for GPUs in no
+// partition. The GPU reports it through NVML after its next reset.
 func (c *controller) cliqueOf(uid uint64) (partitionID, clique uint32) {
 	for id, p := range c.Partitions {
 		for _, g := range p.GPUs {
@@ -166,13 +167,20 @@ func (c *controller) location(g gpu) *pb.Location {
 
 func (c *controller) gpuInfo(g gpu) *pb.GpuInfo {
 	pid, clique := c.cliqueOf(g.uid)
+	reported := clique // what NVML on the tray reports: the clique taken at the GPU's last reset
+	if path := c.cfg.Trays[g.tray].TelemetryPath; path != "" {
+		if taken, ok := readResetClique(path, g.idx); ok {
+			reported = taken
+		}
+	}
 	active := c.cfg.NVLinks - len(c.disabledLinks(g))
 	health := pb.GpuHealth_NMX_GPU_HEALTH_HEALTHY
 	if active < c.cfg.NVLinks {
 		health = pb.GpuHealth_NMX_GPU_HEALTH_DEGRADED_BANDWIDTH
 	}
 	return &pb.GpuInfo{GpuUid: g.uid, Uuid: g.uuid, Location: c.location(g), Hostname: c.cfg.Trays[g.tray].Name,
-		PartitionId: pid, CliqueId: clique, ActiveNvlinks: uint32(active), Health: health}
+		PartitionId: pid, CliqueId: reported, ActiveNvlinks: uint32(active), Health: health,
+		ResetPending: reported != clique}
 }
 
 func (c *controller) partitionInfo(id uint32) *pb.PartitionInfo {

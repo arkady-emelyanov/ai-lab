@@ -192,9 +192,10 @@ static inline int fg_link_disabled(int gpu, unsigned link)
     return fg_sideband_pair("nvlink-disabled-switch", gpu, &l) == 1;
 }
 
-/* NVLink partition (clique) of a GPU: from NMX-C when it publishes one, else
- * the configured default. 0 means the GPU is in no partition. */
-static inline unsigned fg_gpu_clique(int gpu)
+/* NVLink partition (clique) the partition controller assigns a GPU: from
+ * NMX-C when it publishes one, else the configured default. 0 means the GPU
+ * is in no partition. The GPU takes it at its next reset (nvml_stub.c). */
+static inline unsigned fg_partition_clique(int gpu)
 {
     long clique = -1;
     if (fg_sideband_pair("fabric-clique", gpu, &clique) == 1) return (unsigned)clique;

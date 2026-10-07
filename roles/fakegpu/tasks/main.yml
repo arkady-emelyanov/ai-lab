@@ -70,6 +70,32 @@
     dest: /etc/ld.so.preload
     mode: "0644"
 
+# A node reboot resets its GPUs, and with that applies pending NVLink
+# partition changes (the GPU takes its partition's clique at a reset).
+# Enabled for the next boot only: a reset now would hit running jobs.
+- name: Reset the GPUs at boot
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Reset the GPUs at boot (pending NVLink partition changes take effect)
+      Before=slurmd.service k3s-agent.service fakedp.service nvidia_gpu_exporter.service
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ fakegpu_prefix }}/bin/nvidia-smi --gpu-reset
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /etc/systemd/system/fakegpu-boot-reset.service
+    mode: "0644"
+
+- name: Enable the boot reset
+  ansible.builtin.systemd_service:
+    name: fakegpu-boot-reset
+    enabled: true
+    daemon_reload: true
+
 - name: Check the fake GPUs are visible
   ansible.builtin.command: nvidia-smi -L
   register: smi
