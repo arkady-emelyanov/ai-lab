@@ -118,6 +118,11 @@ class Gpu:
         self.fabric_state = {0: "N/A", 1: "Not Started", 2: "In Progress", 3: "Completed"}.get(fab.state, "Unknown")
         self.links = nvlink_states(h)
         self.minor = uint("nvmlDeviceGetMinorNumber", h)
+        node = ctypes.c_uint()
+        self.gpu_numa = str(node.value) if nvml.nvmlDeviceGetNumaNodeId(h, ctypes.byref(node)) == 0 else "N/A"
+        mask = (ctypes.c_ulong * 4)()
+        check(nvml.nvmlDeviceGetMemoryAffinity(h, 4, mask, 0))
+        self.numa_affinity = ",".join(str(i * 64 + b) for i, m in enumerate(mask) for b in range(64) if m >> b & 1)
         fv = FieldValue(fieldId=FI_GPU_RECOVERY_ACTION)
         check(nvml.nvmlDeviceGetFieldValues(h, 1, ctypes.byref(fv)))
         self.recovery = RECOVERY_ACTIONS.get(fv.value & 0xFFFFFFFF, "Unknown") if fv.nvmlReturn == 0 else "N/A"
@@ -197,7 +202,7 @@ def topo(devs):
     for g in devs:
         # Through NVSwitch, a pair is bonded by the links both ends still have up.
         row = ["X" if o.index == g.index else f"NV{min(sum(g.links), sum(o.links))}" for o in devs]
-        print(f"GPU{g.index}\t" + "\t".join(row) + "\t0-{}\t0\t\tN/A".format(__import__("os").cpu_count() - 1))
+        print(f"GPU{g.index}\t" + "\t".join(row) + f"\t0-{os.cpu_count() - 1}\t{g.numa_affinity}\t\t{g.gpu_numa}")
     print("""
 Legend:
 
@@ -387,6 +392,9 @@ def run(ids, fields, apps, fmt, rest, argv):
             print(f"GPU {g.index}: {g.name} (UUID: {g.uuid})")
     elif rest[:2] == ["topo", "-m"]:
         topo(devs)
+    elif rest[:2] == ["topo", "-gnid"]:  # the GPU's own NUMA node, N/A where its memory is not one
+        for g in devs:
+            print(g.gpu_numa)
     elif rest[:1] == ["nvlink"]:
         nvlink_status(devs)
     elif rest[:1] in (["-q"], ["--query"]):

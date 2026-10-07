@@ -26,6 +26,7 @@ fp32_tflops = {{ fakegpu_fp32_tflops }}
 fp64_tflops = {{ fakegpu_fp64_tflops }}
 host_link_gbs = {{ fakegpu_host_link_gbs }}
 hbm_gbs = {{ fakegpu_hbm_gbs }}
+coherent_gpu_memory = {{ fakegpu_coherent_gpu_memory }}
 # NCCL communicators exchange each rank's NVLink partition here (every Slurm
 # job and pod mounts {{ shared_mount }}).
 nccl_dir = {{ fakegpu_nccl_dir }}

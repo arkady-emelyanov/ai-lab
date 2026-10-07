@@ -618,13 +618,29 @@ API nvmlReturn_t nvmlDeviceGetCpuAffinityWithinScope(nvmlDevice_t d, unsigned si
     return all_cpus(d, size, set);
 }
 
+/* The nearest memory is the GPU's own Grace CPU's node (GB200: GPUs 0-1 on
+ * node 0, 2-3 on node 1). */
 API nvmlReturn_t nvmlDeviceGetMemoryAffinity(nvmlDevice_t d, unsigned size, unsigned long *set, unsigned scope)
 {
     CHECK_DEV(d);
     (void)scope;
     if (!set || !size) return NVML_ERROR_INVALID_ARGUMENT;
     memset(set, 0, size * sizeof *set);
-    set[0] = 1; /* NUMA node 0 */
+    int node = fg_grace_of(idx);
+    const int bits = (int)(8 * sizeof *set);
+    if (node / bits < (int)size) set[node / bits] = 1UL << (node % bits);
+    return NVML_SUCCESS;
+}
+
+/* The GPU's own NUMA node: only where its memory is one (coherent memory
+ * onlined by the OS, the default without CDMM). */
+API nvmlReturn_t nvmlDeviceGetNumaNodeId(nvmlDevice_t d, unsigned *node)
+{
+    CHECK_DEV(d);
+    if (!node) return NVML_ERROR_INVALID_ARGUMENT;
+    int n = fg_gpu_numa_node(idx);
+    if (n < 0) return NVML_ERROR_NOT_SUPPORTED;
+    *node = (unsigned)n;
     return NVML_SUCCESS;
 }
 

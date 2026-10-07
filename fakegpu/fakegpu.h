@@ -38,6 +38,11 @@
  *   tensor_tflops, fp32_tflops, fp64_tflops  dense throughput (1200, 60, 40)
  *   host_link_gbs host <-> GPU copies, GB/s (400, NVLink-C2C)
  *   hbm_gbs       device-to-device copies, GB/s (4000)
+ *   coherent_gpu_memory  os (default) or driver, like the driver option
+ *                 NVreg_CoherentGPUMemoryMode: with os, each GPU's memory is
+ *                 a NUMA node (GB200: GPUs on nodes 2, 10, 18, 26, after the
+ *                 two Grace CPUs' nodes 0 and 1, each followed by 7 MIG
+ *                 nodes); with driver (CDMM) it is not
  *   host          tray name GPU identities derive from (default: hostname;
  *                 set it so containers, whose hostname differs, see the
  *                 tray's GPUs)
@@ -85,6 +90,7 @@ static struct {
     int nvlinks, sm_count;
     double nvlink_link_gbs, power_limit_w, idle_power_w, max_power_w;
     double tensor_tflops, fp32_tflops, fp64_tflops, host_link_gbs, hbm_gbs;
+    char coherent_gpu_memory[16];
 } fg_cfg;
 static pthread_once_t fg_cfg_once = PTHREAD_ONCE_INIT;
 
@@ -127,6 +133,7 @@ static void fg_set(const char *key, const char *val)
     else if (!strcmp(key, "fp64_tflops")) fg_cfg.fp64_tflops = strtod(val, NULL);
     else if (!strcmp(key, "host_link_gbs")) fg_cfg.host_link_gbs = strtod(val, NULL);
     else if (!strcmp(key, "hbm_gbs")) fg_cfg.hbm_gbs = strtod(val, NULL);
+    else if (!strcmp(key, "coherent_gpu_memory")) snprintf(fg_cfg.coherent_gpu_memory, sizeof fg_cfg.coherent_gpu_memory, "%s", val);
 }
 
 static void fg_load(void)
@@ -135,7 +142,7 @@ static void fg_load(void)
                                  "latency_scale", "copy_max_mb", "state_path", "host", "dev_dir", "nccl_dir",
                                  "nccl_timeout_s", "ib_gbps", "driver_version", "cuda_version", "vbios_version", "nvlinks", "sm_count",
                                  "nvlink_link_gbs", "power_limit_w", "idle_power_w", "max_power_w", "tensor_tflops",
-                                 "fp32_tflops", "fp64_tflops", "host_link_gbs", "hbm_gbs"};
+                                 "fp32_tflops", "fp64_tflops", "host_link_gbs", "hbm_gbs", "coherent_gpu_memory"};
     fg_cfg.count = 4;
     snprintf(fg_cfg.name, sizeof fg_cfg.name, "NVIDIA GB200");
     fg_cfg.mem_mb = 189471;
@@ -161,6 +168,7 @@ static void fg_load(void)
     fg_cfg.fp64_tflops = 40;
     fg_cfg.host_link_gbs = 400;     /* NVLink-C2C */
     fg_cfg.hbm_gbs = 4000;          /* device-to-device: 8 TB/s read + write */
+    snprintf(fg_cfg.coherent_gpu_memory, sizeof fg_cfg.coherent_gpu_memory, "os");
 
     const char *path = getenv("FAKEGPU_CONF");
     FILE *f = fopen(path ? path : "/etc/fakegpu.conf", "r");
@@ -238,6 +246,19 @@ static inline double fg_fp64_flop_per_ns(void) { fg_init(); return fg_cfg.fp64_t
 static inline double fg_host_link_bytes_per_ns(void) { fg_init(); return fg_cfg.host_link_gbs; }
 static inline double fg_hbm_bytes_per_ns(void) { fg_init(); return fg_cfg.hbm_gbs; }
 #define FG_NVLINKS ((unsigned)fg_nvlinks())
+
+/* NUMA layout of a GB200 tray (NVIDIA Grace Performance Tuning Guide): one
+ * Grace CPU per two GPUs, its node first (0, 1, ...); then per GPU its own
+ * memory node followed by 7 MIG instance nodes (2, 10, 18, 26). */
+#define FG_MIG_NUMA_NODES 7
+static inline int fg_grace_of(int phys) { return phys / 2; }
+static inline int fg_gpu_numa_node(int phys)
+{
+    fg_init();
+    if (strcmp(fg_cfg.coherent_gpu_memory, "os")) return -1; /* CDMM: not a NUMA node */
+    int graces = (fg_cfg.count + 1) / 2;
+    return graces + phys * (1 + FG_MIG_NUMA_NODES);
+}
 #define FG_SM_COUNT (fg_sm_count())
 
 static inline const char *fg_driver_version(void) { fg_init(); return fg_cfg.driver_version; }

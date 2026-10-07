@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""numactl for the emulated GB200 tray, following numactl(8) 2.0.18 and its
+output formats, on the NUMA layout a GB200 tray's kernel reports.
+
+Layout (NVIDIA Grace Performance Tuning Guide, two GB200 superchips): one
+node per Grace CPU (0, 1); with coherent GPU memory onlined by the OS (the
+driver's default, coherent_gpu_memory = os), one node per GPU (2, 10, 18,
+26) holding its memory, each followed by 7 empty MIG instance nodes.
+Distances: 10 local, 11 GPU to its MIG nodes, 40 between Grace CPUs and
+between GPUs, 80 from a Grace CPU to its own GPUs, 120 to the other's. GPU
+nodes come from the fake NVML, so they agree with `nvidia-smi topo -m`.
+
+The tray's kernel has only the host's NUMA nodes, so the Grace nodes split
+the tray's own CPUs and memory evenly between them, and:
+- --hardware and --show report the GB200 layout.
+- --cpunodebind and --physcpubind set the real CPU affinity (the CPUs of
+  those Grace nodes) and run the command.
+- Memory policies (--membind, --preferred, --interleave, ...) are checked
+  against the layout and passed to the command (and a nested --show), but
+  not applied: every allocation comes from the tray's memory.
+- Shared memory policy (--shm, --file, ...) and device node specifiers
+  (netdev:, pci:, ...) are not emulated: they fail with a message."""
+import ctypes
+import getopt
+import json
+import os
+import signal
+import sys
+
+VERSION = "2.0.18"
+MIG_NODES = 7
+POLICY_ENV = "FAKEGPU_NUMA_POLICY"  # memory policy handed to the command
+
+USAGE = """usage: numactl [--all | -a] [--balancing | -b]
+               [--interleave= | -i <nodes>] [--weighted-interleave= | -w <nodes>]
+               [--preferred= | -p <node>] [--preferred-many= | -P <nodes>]
+               [--physcpubind= | -C <cpus>] [--cpunodebind= | -N <nodes>]
+               [--membind= | -m <nodes>] [--localalloc | -l] command args ...
+               [--localalloc | -l] command args ...
+       numactl [--show | -s]
+       numactl [--hardware | -H] [--cpu-compress]
+       numactl [--version]
+       numactl [--length | -L <length>] [--offset | -o <offset>] [--shmmode | -M <shmmode>]
+               [--strict | -t]
+               [--shmid | -I <id>] --shm | -S <shmkeyfile>
+               [--shmid | -I <id>] --file | -f <tmpfsfile>
+               [--huge | -u] [--touch | -T]
+               memory policy [--dump | -d] [--dump-nodes | -D]
+
+memory policy is --preferred | -p, --membind | -m, --localalloc | -l,
+                 --interleave | -i, --weighted-interleave | -w
+<nodes> is a comma delimited list of node numbers or A-B ranges or all.
+Instead of a number a node can also be:
+  netdev:DEV the node connected to network device DEV
+  file:PATH  the node the block device of path is connected to
+  ip:HOST    the node of the network device host routes through
+  block:PATH the node of block device path
+  pci:[seg:]bus:dev[:func] The node of a PCI device
+<cpus> is a comma delimited list of cpu numbers or A-B ranges or all
+all ranges can be inverted with !
+all numbers and ranges can be made cpuset-relative with +
+the old --cpubind argument is deprecated.
+use --cpunodebind or --physcpubind instead
+use --balancing | -b to enable Linux kernel NUMA balancing
+for the process if it is supported by kernel
+<length> can have g (GB), m (MB) or k (KB) suffixes
+"""
+
+SHORT = "ai:w:p:P:c:N:C:m:slbHS:f:o:L:tM:dDI:uTV"
+LONG = ["all", "interleave=", "weighted-interleave=", "preferred=", "preferred-many=", "cpubind=",
+        "cpunodebind=", "physcpubind=", "membind=", "show", "localalloc", "balancing", "hardware",
+        "shm=", "file=", "offset=", "length=", "strict", "shmmode=", "dump", "dump-nodes", "shmid=",
+        "huge", "touch", "cpu-compress", "verify", "version"]
+SHM_OPTS = {"-S": "--shm", "-f": "--file", "-o": "--offset", "-L": "--length", "-t": "--strict",
+            "-M": "--shmmode", "-d": "--dump", "-D": "--dump-nodes", "-I": "--shmid", "-u": "--huge",
+            "-T": "--touch", "-V": "--verify"}
+ALIASES = {"--all": "-a", "--interleave": "-i", "--weighted-interleave": "-w", "--preferred": "-p",
+           "--preferred-many": "-P", "--cpubind": "-c", "--cpunodebind": "-N", "--physcpubind": "-C",
+           "--membind": "-m", "--show": "-s", "--localalloc": "-l", "--balancing": "-b", "--hardware": "-H",
+           **{v: k for k, v in SHM_OPTS.items()}}
+
+
+def usage(msg=None):
+    sys.stdout.flush()  # an "<arg> is invalid" line comes first, as from numactl
+    if msg:
+        sys.stderr.write(f"numactl: {msg}\n")
+    sys.stderr.write(USAGE)
+    sys.exit(1)
+
+
+def not_emulated(what):
+    sys.exit(f"numactl: {what} is not emulated on this tray (fakegpu: no GB200 NUMA nodes in its kernel)")
+
+
+def cpulist(text):
+    out = []
+    for part in text.strip().split(","):
+        if part:
+            a, _, b = part.partition("-")
+            out += range(int(a), int(b or a) + 1)
+    return out
+
+
+def tray_cpus():
+    """The tray's CPUs (the container's, as lxcfs shows them), not the caller's affinity."""
+    try:
+        with open("/sys/devices/system/cpu/online") as f:
+            return cpulist(f.read())
+    except OSError:
+        return sorted(os.sched_getaffinity(0))
+
+
+def meminfo():
+    kb = {}
+    with open("/proc/meminfo") as f:
+        for line in f:
+            k, v = line.split(":", 1)
+            kb[k] = int(v.split()[0])
+    return kb["MemTotal"] >> 10, kb.get("MemAvailable", kb["MemFree"]) >> 10
+
+
+def gpus():
+    """[(numa node or None, memory MiB, used MiB)] per GPU, from NVML."""
+    try:
+        nvml = ctypes.CDLL("libnvidia-ml.so.1")
+    except OSError:
+        return []
+    if nvml.nvmlInit_v2():
+        return []
+    n = ctypes.c_uint()
+    nvml.nvmlDeviceGetCount_v2(ctypes.byref(n))
+    out = []
+    for i in range(n.value):
+        h, node = ctypes.c_void_p(), ctypes.c_uint()
+        nvml.nvmlDeviceGetHandleByIndex_v2(i, ctypes.byref(h))
+        mem = (ctypes.c_ulonglong * 3)()  # total, free, used
+        nvml.nvmlDeviceGetMemoryInfo(h, mem)
+        has = nvml.nvmlDeviceGetNumaNodeId(h, ctypes.byref(node)) == 0
+        out.append((node.value if has else None, mem[0] >> 20, mem[2] >> 20))
+    return out
+
+
+class Node:
+    def __init__(self, kind, cpus, size, free, grace, gpu=None):
+        self.kind, self.cpus, self.size, self.free, self.grace, self.gpu = kind, cpus, size, free, grace, gpu
+
+
+def layout():
+    """{node: Node} as on a GB200 tray."""
+    devs = gpus()
+    graces = max(1, (len(devs) + 1) // 2)
+    cpus = tray_cpus()
+    total, free = meminfo()
+    per = -(-len(cpus) // graces)
+    nodes = {g: Node("cpu", cpus[g * per:(g + 1) * per], total // graces, free // graces, g) for g in range(graces)}
+    for i, (node, mem, used) in enumerate(devs):
+        if node is None:
+            continue
+        # The node holds the GPU's memory less the driver's reservation, in whole GiB (GB200: 188416 MB).
+        size = (mem // 1024 - 1) * 1024
+        nodes[node] = Node("gpu", [], size, max(size - used - 1, 0), i // 2, node)
+        for m in range(1, MIG_NODES + 1):
+            nodes[node + m] = Node("mig", [], 0, 0, i // 2, node)
+    return nodes
+
+
+def distance(nodes, a, b):
+    if a == b:
+        return 10
+    x, y = nodes[a], nodes[b]
+    if x.kind == y.kind == "cpu":
+        return 40
+    if "cpu" in (x.kind, y.kind):
+        return 80 if x.grace == y.grace else 120
+    return 11 if x.gpu == y.gpu else 40
+
+
+def ranges(ids):
+    """[0, 1, 2, 5] -> ['0-2', '5']"""
+    out, ids = [], sorted(ids)
+    for i in ids:
+        if out and out[-1][1] == i - 1:
+            out[-1][1] = i
+        else:
+            out.append([i, i])
+    return [f"{a}" if a == b else f"{a}-{b}" for a, b in out]
+
+
+def hardware(nodes, compress):
+    ids = sorted(nodes)
+    print(f"available: {len(ids)} nodes ({','.join(ranges(ids))})")
+    for n in ids:
+        c = nodes[n].cpus
+        cpus = (" " + ", ".join(ranges(c)) + f" ({len(c)})") if compress else "".join(f" {x}" for x in c)
+        print(f"node {n} cpus:{cpus}")
+        print(f"node {n} size: {nodes[n].size} MB")
+        print(f"node {n} free: {nodes[n].free} MB")
+    print("node distances:")
+    print("node  " + "".join(f"{n:4d} " for n in ids))
+    for a in ids:
+        print(f"{a:4d}: " + "".join(f"{distance(nodes, a, b):4d} " for b in ids))
+
+
+def parse_list(spec, allowed, cpus):
+    """A numactl node or cpu list: N, A-B, comma lists, all, !inverse, +relative (to the allowed set)."""
+    if spec == "all":
+        return set(allowed)
+    invert = spec.startswith("!")
+    spec = spec.lstrip("!")
+    relative = spec.startswith("+")
+    spec = spec.lstrip("+")
+    if not cpus and any(spec.startswith(p) for p in ("netdev:", "file:", "ip:", "block:", "pci:")):
+        not_emulated(f"node specifier {spec.split(':')[0]}:")
+    try:
+        picked = set(cpulist(spec)) if spec else None
+    except ValueError:
+        picked = None
+    if not picked:
+        return None
+    if relative:
+        if max(picked) >= len(allowed):
+            return None
+        picked = {sorted(allowed)[i] for i in picked}
+    if not picked <= set(allowed):
+        what = "cpu" if cpus else "node"
+        sys.stderr.write(f"libnuma: Warning: {what} argument {spec} is out of range\n")
+        return None
+    return set(allowed) - picked if invert else picked
+
+
+def show(nodes, policy):
+    mem_nodes = [n for n in sorted(nodes) if nodes[n].size]
+    affinity = os.sched_getaffinity(0)
+    run = [n for n in sorted(nodes) if affinity & set(nodes[n].cpus)]
+    name, mask = policy.get("policy", "default"), policy.get("nodes", [])
+    print(f"policy: {name}")
+    preferred = {"default": "current", "local": "current", "preferred": f"{mask[0] if mask else 0}",
+                 "bind": f"{mask[0] if mask else 0}", "interleave": f"{mask[0] if mask else 0} (interleave next)",
+                 "weighted-interleave": f"{mask[0] if mask else 0} (interleave next)",
+                 "preferred-many": f"{mask[0] if mask else 0} (preferred-many)"}[name]
+    print(f"preferred node: {preferred}")
+    if name in ("interleave", "weighted-interleave"):
+        print("interleavemask: " + "".join(f"{n} " for n in mask))
+        if name == "weighted-interleave":
+            print("interleaveweights:" + "".join(" 1" for _ in mask))
+        print(f"interleavenode: {mask[0]}")
+    print("physcpubind: " + "".join(f"{c} " for c in sorted(affinity)))
+    print("cpubind: " + "".join(f"{n} " for n in run))
+    print("nodebind: " + "".join(f"{n} " for n in run))
+    print("membind: " + "".join(f"{n} " for n in (mask if name == "bind" else mem_nodes)))
+    print("preferred: " + "".join(f"{n} " for n in (mask if name in ("preferred", "preferred-many") else [])))
+
+
+def main(argv):
+    try:
+        opts, cmd = getopt.getopt(argv, SHORT, LONG)
+    except getopt.GetoptError as e:
+        sys.stderr.write(f"numactl: {e}\n")
+        usage()
+    nodes = layout()
+    mem_nodes = [n for n in sorted(nodes) if nodes[n].size]  # what "all" and +N refer to, as libnuma
+    cpus = [c for n in sorted(nodes) for c in nodes[n].cpus]
+    policy = json.loads(os.environ.get(POLICY_ENV) or "{}")
+    hw = compress = strict = False
+    last = None
+    affinity = None
+    for opt, arg in opts:
+        opt = ALIASES.get(opt, opt)
+        if opt in SHM_OPTS:
+            not_emulated(f"shared memory policy ({SHM_OPTS[opt]})")
+        if opt == "-s":
+            show(nodes, policy)
+            sys.exit(0)
+        if opt == "-H":
+            hw = True
+        elif opt == "--cpu-compress":
+            compress = True
+        elif opt == "--version":
+            print(VERSION)
+            sys.exit(0)
+        elif opt in ("-a", "-b"):
+            pass  # cpuset awareness and NUMA balancing: nothing to change here
+        elif opt == "-t":
+            strict = True
+        elif opt == "-C":
+            picked = parse_list(arg, cpus, cpus=True)
+            if picked is None:
+                print(f"<{arg}> is invalid")
+                usage()
+            affinity = picked
+        elif opt == "-l":
+            policy = {"policy": "local"}
+        else:  # node lists: -N -c -m -i -w -p -P
+            if arg == "same":
+                if last is None:
+                    usage("same needs previous node specification")
+                arg = last
+            last = arg
+            picked = parse_list(arg, mem_nodes, cpus=False)
+            if picked is None:
+                print(f"<{arg}> is invalid")
+                usage()
+            picked = sorted(picked)
+            if opt in ("-N", "-c"):
+                affinity = {c for n in picked for c in nodes[n].cpus}
+                if not affinity:
+                    sys.exit("sched_setaffinity: Invalid argument")
+            elif opt == "-p" and len(picked) != 1:
+                usage()
+            else:
+                policy = {"policy": {"-m": "bind", "-i": "interleave", "-w": "weighted-interleave",
+                                     "-p": "preferred", "-P": "preferred-many"}[opt], "nodes": picked}
+    if hw:
+        hardware(nodes, compress)
+        sys.exit(0)
+    if strict:
+        sys.stderr.write("numactl: warning. Strict flag for process ignored.\n")
+    if not cmd:
+        usage()
+    if affinity is not None:
+        os.sched_setaffinity(0, affinity)
+    if policy:
+        os.environ[POLICY_ENV] = json.dumps(policy)
+    try:
+        os.execvp(cmd[0], cmd)
+    except OSError as e:
+        sys.exit(f"numactl: execution of `{cmd[0]}': {e.strerror}")
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    main(sys.argv[1:])

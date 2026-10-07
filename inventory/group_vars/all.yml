@@ -139,6 +139,12 @@ fakegpu_fp32_tflops: 60
 fakegpu_fp64_tflops: 40
 fakegpu_host_link_gbs: 400
 fakegpu_hbm_gbs: 4000
+# GPU memory as NUMA nodes, like the driver option NVreg_CoherentGPUMemoryMode:
+# os (the driver's default) onlines each GPU's coherent memory as a NUMA node
+# (GB200: GPUs on nodes 2, 10, 18, 26, next to the Grace CPUs' 0 and 1), so
+# nvidia-smi topo -m shows a GPU NUMA ID; driver (CDMM, which NVIDIA
+# recommends for Kubernetes) keeps it out of the OS: GPU NUMA ID N/A.
+fakegpu_coherent_gpu_memory: os
 # Versions the emulated driver reports: nvidia-smi ("Driver Version", "CUDA
 # Version", "VBIOS Version"), NVML, cuDriverGetVersion, GPU Feature Discovery's
 # nvidia.com/cuda.driver-version.* and cuda.runtime-version.* labels, and the

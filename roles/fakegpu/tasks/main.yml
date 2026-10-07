@@ -20,7 +20,8 @@
   loop: >-
     {{ query('fileglob', repo_root ~ '/fakegpu/*.[ch]')
        + query('fileglob', repo_root ~ '/fakegpu/symbols/*.syms')
-       + [repo_root ~ '/fakegpu/Makefile', repo_root ~ '/fakegpu/nvidia-smi'] }}
+       + [repo_root ~ '/fakegpu/Makefile', repo_root ~ '/fakegpu/nvidia-smi',
+          repo_root ~ '/fakegpu/numactl'] }}
   loop_control:
     label: "{{ item | relpath(repo_root ~ '/fakegpu') }}"
   register: fakegpu_src

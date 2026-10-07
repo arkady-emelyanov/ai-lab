@@ -63,6 +63,7 @@ install: $(LIBS)
 	install -m 0755 $(PRELOAD_LIBS) $(DESTDIR)$(LIBDIR)/preload/
 	for l in $(PRELOAD_LIBS); do echo $(LIBDIR)/preload/$$l; done > $(DESTDIR)$(LIBDIR)/preload.list
 	install -D -m 0755 nvidia-smi $(DESTDIR)$(PREFIX)/bin/nvidia-smi
+	install -D -m 0755 numactl $(DESTDIR)$(PREFIX)/bin/numactl
 
 clean:
 	rm -rf build $(LIBS)

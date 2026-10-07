@@ -29,9 +29,10 @@
       - fakegpu_tensor_tflops | float > 0 and fakegpu_fp32_tflops | float > 0 and fakegpu_fp64_tflops | float > 0
       - fakegpu_sm_count | int > 0
       - fakegpu_cuda_version is match('^[0-9]+\.[0-9]+$')
+      - fakegpu_coherent_gpu_memory in ['os', 'driver']
     fail_msg: >-
       GPU profile: memory, rates and SM count must be positive, idle power below max power, max power
-      not above the power limit, fakegpu_cuda_version MAJOR.MINOR
+      not above the power limit, fakegpu_cuda_version MAJOR.MINOR, fakegpu_coherent_gpu_memory os or driver
     quiet: true
 
 - name: The NVLink domain and InfiniBand settings are valid
