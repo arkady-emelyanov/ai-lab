@@ -37,6 +37,8 @@ bin/nvlink delete tray2                           # its GPUs end up in no partit
 bin/nvlink add default sched-worker2              # back to the default partition
 ```
 
+Partitions can take single GPUs (`sched-worker2:1`), but keep each tray's GPUs in one partition: topograph needs one partition per node and stops updating the scheduler's topology when a tray is split ([Topology](topology.md#limitations)); `bin/nvlink` warns when a change leaves a tray split.
+
 The underlying RPCs, for clients of your own (`bin/grpcurl`, [grpcurl](https://github.com/fullstorydev/grpcurl) built with Go into `.cache/tools` on first use, calls them directly):
 
 | RPC | Purpose |

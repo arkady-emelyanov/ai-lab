@@ -228,9 +228,24 @@ def cmd_partitions(c, a):
 
 def result(c, out):
     if c.raw:
-        return print(json.dumps(out, indent=2))
-    p = out.get("partition", {})
-    print(out.get("message", "done") + (f": {p.get('partitionId')} {p.get('partitionName', '')}".rstrip() if p else ""))
+        print(json.dumps(out, indent=2))
+    else:
+        p = out.get("partition", {})
+        print(out.get("message", "done") + (f": {p.get('partitionId')} {p.get('partitionName', '')}".rstrip() if p else ""), flush=True)
+    warn_split_trays(c)
+
+
+def warn_split_trays(c):
+    """topograph needs all GPUs of a node in one partition (clique); a split
+    tray makes its runs fail and leaves the scheduler's topology stale."""
+    per = {}
+    for g in c.gpus():
+        per.setdefault(g.get("hostname"), set()).add(g.get("partitionId", 0))  # 0: in no partition
+    for tray, parts in sorted(per.items()):
+        if len(parts) > 1:
+            names = ", ".join("none" if p == 0 else str(p) for p in sorted(parts))
+            print(f"warning: {tray} is split across partitions ({names}); topograph will stop updating "
+                  f"the scheduler's topology until each tray is in one partition", file=sys.stderr)
 
 
 def cmd_create(c, a):
