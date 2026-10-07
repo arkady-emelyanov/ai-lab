@@ -1,6 +1,6 @@
 ---
 name: ai-lab
-description: Operate a running ai-lab, the emulated NVIDIA GB200 GPU cluster (an 8-GPU slice of an NVL72-style NVLink domain the lab calls NVL8; Slurm or Kubernetes, emulated GPUs, Redfish BMCs, NVLink partitions, Prometheus and Grafana). Use when the user wants to run GPU jobs on the lab, check its GPUs, nodes or queues, change NVLink partitions, reset GPUs, power-cycle a tray through its BMC, query metrics, or test the lab.
+description: Operate a running ai-lab, the emulated GPU cluster modelled on NVIDIA GB200 NVL72, scaled down to two compute trays (NVL8; Slurm or Kubernetes, emulated GPUs, Redfish BMCs, NVLink partitions, Prometheus and Grafana). Use when the user wants to run GPU jobs on the lab, check its GPUs, nodes or queues, change NVLink partitions, reset GPUs, power-cycle a tray through its BMC, query metrics, or test the lab.
 ---
 
 # Operating ai-lab

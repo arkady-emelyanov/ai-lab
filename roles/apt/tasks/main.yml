@@ -3,7 +3,7 @@
 # before any other role installs a package.
 - name: Pick the fastest Ubuntu mirror
   ansible.builtin.command: >-
-    {{ playbook_dir }}/files/fastest-mirror {{ ansible_distribution_release }}
+    {{ playbook_dir }}/files/fastest-mirror {{ ansible_facts['distribution_release'] }}
     {{ repo_root }}/.cache/apt-mirror {{ apt_mirror_candidates | join(' ') }}
   register: fastest
   check_mode: false
@@ -19,7 +19,7 @@
       # Managed by ai-lab (apt_mirror: {{ apt_mirror }}).
       Types: deb
       URIs: {{ fastest.stdout if apt_mirror == 'auto' else apt_mirror }}
-      Suites: {{ ansible_distribution_release }} {{ ansible_distribution_release }}-updates {{ ansible_distribution_release }}-backports {{ ansible_distribution_release }}-security
+      Suites: {{ ansible_facts['distribution_release'] }} {{ ansible_facts['distribution_release'] }}-updates {{ ansible_facts['distribution_release'] }}-backports {{ ansible_facts['distribution_release'] }}-security
       Components: main universe restricted multiverse
       Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
     mode: "0644"

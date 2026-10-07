@@ -1,4 +1,5 @@
-# Local NVL8 Slurm cluster on Incus.
+# AI lab: a GPU cluster modelled on GB200 NVL72, scaled down to two compute
+# trays (NVL8), on Incus, with Slurm or Kubernetes.
 #
 #   make init        prepare the host: venv, Ansible collections, secrets, checks;
 #                    creates local.yml (local settings, not in git)

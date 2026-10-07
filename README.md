@@ -1,14 +1,14 @@
-# AI lab: an emulated NVIDIA GB200 NVL8 GPU cluster
+# AI lab: a GPU cluster modelled on GB200 NVL72, scaled down to two compute trays (NVL8)
 
 ![AI lab overview: the platform instances (login, control, storage) and the NVL8 NVLink domain: an NVLink switch tray with two NVSwitches, two GPU trays with four GB200 each, a Redfish BMC per tray, an InfiniBand leaf and spine](/docs/assets/overview.png)
 
 > **Independent research project, not affiliated with or endorsed by NVIDIA.** It emulates NVIDIA hardware and software interfaces in software, for personal research and education. See [Disclaimer](#disclaimer).
 
-A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates an 8-GPU slice of a GB200 NVL72-style NVLink domain, which the lab calls **NVL8** (its own name, not an NVIDIA product): two GPU trays with four GPUs each, an NVLink switch tray, BMCs and an InfiniBand fabric and runs the real software stack around it: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
+A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It is modelled on NVIDIA GB200 NVL72, scaled down to two compute trays: one NVLink domain the lab calls **NVL8** (its own name, not an NVIDIA product), with two GPU trays of four GPUs each, an NVLink switch tray, BMCs and an InfiniBand fabric. Around it runs the real software stack: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
 
 It is software-in-the-loop: the scheduler, frameworks and tools are the real software, unmodified, running against a behavioural model of the hardware. Applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes modelled time, and the GPUs report modelled load, memory, power and temperature; the BMCs and the NVLink partition controller change what the GPUs report and where the scheduler places jobs. Nothing is computed: see [What is real and what is modelled](#what-is-real-and-what-is-modelled).
 
-A blog series walks through the lab, starting with [AI lab, part 1: GB200 NVL8 on your laptop (emulated)](https://blog.emelianov.cloud/ai-lab/01-intro/).
+A blog series walks through the lab, starting with [AI lab, part 1: a GB200 NVL72-style cluster, scaled down to your laptop](https://blog.emelianov.cloud/ai-lab/01-intro/).
 
 What you get:
 

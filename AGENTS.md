@@ -2,7 +2,7 @@
 
 This file is for AI coding agents (Claude Code, Codex, Cursor, ...) working with this repository on a user's machine. People should start with the [README](README.md). Operating a running lab (jobs, GPUs, NVLink partitions, BMCs, metrics, tests) is covered by the agent skill [skills/ai-lab/SKILL.md](skills/ai-lab/SKILL.md) (Claude Code loads it in this repository through the `.claude/skills/ai-lab` link); keep it in step with the tools and docs.
 
-The repository builds an emulated NVIDIA GB200 GPU cluster on one Linux machine, an 8-GPU slice of a GB200 NVL72-style NVLink domain ("NVL8" is the lab's own name, not an NVIDIA product): Incus system containers configured by Ansible, driven by a `Makefile`. Nothing is installed on the host outside the repository and Incus itself.
+The repository builds, on one Linux machine, an emulated GPU cluster modelled on NVIDIA GB200 NVL72, scaled down to two compute trays (NVL8: the lab's own name, not an NVIDIA product): Incus system containers configured by Ansible, driven by a `Makefile`. Nothing is installed on the host outside the repository and Incus itself.
 
 ## Deploying the lab for the user
 

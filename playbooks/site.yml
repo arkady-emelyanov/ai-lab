@@ -32,7 +32,7 @@
   hosts: login
   roles: [login]
 
-- name: Emulated NVL8 GPU trays
+- name: Emulated GPU trays (NVL8 domain)
   hosts: workers
   roles: [fakegpu]
 

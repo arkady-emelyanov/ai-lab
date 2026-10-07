@@ -142,7 +142,7 @@ login_packages:
   - python3-venv
   - python3-dev
 
-# ---- Fake GPUs: one NVL8 domain = 2 trays x 4 GPUs ------------------------------
+# ---- Emulated GPUs: one NVL8 domain = 2 trays x 4 GPUs --------------------------
 fakegpu_count: 4
 fakegpu_type: gb200
 fakegpu_name: NVIDIA GB200
