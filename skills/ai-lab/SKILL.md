@@ -47,7 +47,7 @@ cd examples/kubernetes && ./submit --wait nvl8-hello.yaml     # prints the run n
 kubectl get jobsets,workloads
 ```
 
-Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but nothing is computed.
+Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but GPU kernels never actually execute (no real GPU math).
 
 ## GPUs
 
