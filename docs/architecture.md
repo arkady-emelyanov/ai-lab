@@ -99,7 +99,7 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
 | `sched-control` | 10.107.111.10 | slurmctld, slurmdbd + MariaDB, Slurm exporter (or k3s server and add-ons, kube-state-metrics), OpenLDAP, Prometheus, Redfish exporter, Grafana, topograph | default | shared | [Slurm](slurm.md), [Kubernetes](kubernetes.md), [Identity](identity-and-access.md), [Monitoring](monitoring.md), [Topology](topology.md) |
 | `sched-login` | 10.107.111.11 | login node: Slurm client or kubectl, tools, user shells | default | shared | [Identity & access](identity-and-access.md) |
 | `sched-storage` | 10.107.111.12 | RustFS (S3), Redis (JuiceFS metadata) | default | shared | [Storage](storage.md) |
-| `sched-worker1`, `sched-worker2` | .21, .22 | GPU trays: slurmd (or k3s agent and device plugin), 4 fake GB200 each, GPU exporter | `trays` | own, per tray | [Fake GPUs](fake-gpu.md), [Slurm](slurm.md), [Kubernetes](kubernetes.md) |
+| `sched-worker1`, `sched-worker2` | .21, .22 | GPU trays: slurmd (or k3s agent and device plugin), 4 emulated GB200 each, GPU exporter | `trays` | own, per tray | [Emulated GPUs](fake-gpu.md), [Slurm](slurm.md), [Kubernetes](kubernetes.md) |
 | `sched-worker1-bmc`, `sched-worker2-bmc` | .31, .32 | Redfish BMC per GPU tray | default | shared | [BMCs](bmc-redfish.md) |
 | `sched-nvswitch-bmc` | .33 | Redfish BMC of the NVLink switch tray | default | shared | [BMCs](bmc-redfish.md) |
 | `sched-nvswitch` | .34 | switch tray host: NVLink partition controller and fabric telemetry | default | shared | [NVLink partitions](nvlink-partitions.md) |
@@ -140,7 +140,7 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 ## Limitations
 
-- GPU kernels do not compute; tensors computed on the GPU hold zeros or garbage. Copies above `fakegpu_copy_max_mb` (64 MiB) are timed but not performed, so large GPU buffers cost no host RAM. See [Fake GPUs](fake-gpu.md#limitations).
+- GPU kernels do not compute; tensors computed on the GPU hold zeros or garbage. Copies above `fakegpu_copy_max_mb` (64 MiB) are timed but not performed, so large GPU buffers cost no host RAM. See [Emulated GPUs](fake-gpu.md#limitations).
 - Containers share the host kernel: Slurm tracks jobs by process (`proctrack/linuxproc`) without cgroup confinement or CPU binding.
 - Fake NCCL ranks exchange only their NVLink partitions (for the cost of collectives): a failed link or rank does not fail its peers' collectives.
 - k3s mode: GPUs come from the lab's own device plugin and CDI specification, not NVIDIA's container toolkit or device plugin; users may mount host paths in their pods ([Kubernetes](kubernetes.md#limitations)).

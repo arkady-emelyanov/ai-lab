@@ -1,6 +1,6 @@
 ---
 name: ai-lab
-description: Operate a running ai-lab, the emulated NVIDIA GB200 NVL8 GPU cluster (Slurm or Kubernetes, fake GPUs, Redfish BMCs, NVLink partitions, Prometheus and Grafana). Use when the user wants to run GPU jobs on the lab, check its GPUs, nodes or queues, change NVLink partitions, reset GPUs, power-cycle a tray through its BMC, query metrics, or test the lab.
+description: Operate a running ai-lab, the emulated NVIDIA GB200 NVL8 GPU cluster (Slurm or Kubernetes, emulated GPUs, Redfish BMCs, NVLink partitions, Prometheus and Grafana). Use when the user wants to run GPU jobs on the lab, check its GPUs, nodes or queues, change NVLink partitions, reset GPUs, power-cycle a tray through its BMC, query metrics, or test the lab.
 ---
 
 # Operating ai-lab
@@ -47,7 +47,7 @@ cd examples/kubernetes && ./submit --wait nvl8-hello.yaml     # prints the run n
 kubectl get jobsets,workloads
 ```
 
-Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`. The GPUs are emulated: frameworks initialise and every call succeeds with realistic timing and telemetry, but nothing is computed.
+Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but nothing is computed.
 
 ## GPUs
 

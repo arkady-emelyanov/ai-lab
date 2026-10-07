@@ -4,7 +4,7 @@
 
 ## Overview
 
-`make frameworks` installs a Python venv on the shared volume (`/shared/venv`) with PyTorch (CUDA 13 build), Ray, NumPy and boto3, activated automatically in login shells. Because the fake GPU stack implements the CUDA runtime, cuBLAS, cuDNN and NCCL paths these frameworks use, they run unmodified on the emulated GPUs with simulated timing ([Fake GPUs](fake-gpu.md)).
+`make frameworks` installs a Python venv on the shared volume (`/shared/venv`) with PyTorch (CUDA 13 build), Ray, NumPy and boto3, activated automatically in login shells. Because the fake GPU stack implements the CUDA runtime, cuBLAS, cuDNN and NCCL paths these frameworks use, they run unmodified on the emulated GPUs with simulated timing ([Emulated GPUs](fake-gpu.md)).
 
 ## Usage
 

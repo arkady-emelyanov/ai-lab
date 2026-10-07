@@ -4,7 +4,7 @@
 
 ## Overview
 
-With `scheduler: slurm` in `local.yml` (the default) the lab runs Slurm 23.11 (Ubuntu 24.04 packages) on the emulated hardware: the fake GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Kubernetes (k3s)](kubernetes.md) mode. It is one or the other: in Slurm mode no Kubernetes component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
+With `scheduler: slurm` in `local.yml` (the default) the lab runs Slurm 23.11 (Ubuntu 24.04 packages) on the emulated hardware: the GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Kubernetes (k3s)](kubernetes.md) mode. It is one or the other: in Slurm mode no Kubernetes component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
 
 | Component | Where | Role |
 |---|---|---|
@@ -29,7 +29,7 @@ With `scheduler: slurm` in `local.yml` (the default) the lab runs Slurm 23.11 (U
 | Jobs in containers | `proctrack/linuxproc`, `task/none`, `CgroupPlugin=autodetect` | no cgroup confinement or CPU binding in unprivileged containers |
 | Scratch | `TmpFS=/scratch`; `TaskProlog` sets `SCRATCH` | `--tmp` requests node-local space |
 
-- **GPUs in jobs.** The trays have all four `/dev/nvidia<n>` nodes; Slurm allocates GPUs as GRES and sets `CUDA_VISIBLE_DEVICES`, which the fake CUDA driver honours, so a job's CUDA programs see exactly the GPUs it was given. `nvidia-smi` in a job still lists all four GPUs of the tray: NVML ignores `CUDA_VISIBLE_DEVICES`, and the device cgroups real clusters use to hide the other GPUs (`ConstrainDevices=yes`) are not available in unprivileged containers ([Fake GPUs](fake-gpu.md#how-it-works)).
+- **GPUs in jobs.** The trays have all four `/dev/nvidia<n>` nodes; Slurm allocates GPUs as GRES and sets `CUDA_VISIBLE_DEVICES`, which the fake CUDA driver honours, so a job's CUDA programs see exactly the GPUs it was given. `nvidia-smi` in a job still lists all four GPUs of the tray: NVML ignores `CUDA_VISIBLE_DEVICES`, and the device cgroups real clusters use to hide the other GPUs (`ConstrainDevices=yes`) are not available in unprivileged containers ([Emulated GPUs](fake-gpu.md#how-it-works)).
 - **Topology.** topograph turns the InfiniBand switch tree and the NVLink domain and clique of every tray into `topology/block` blocks; a partition change through the partition controller reaches `topology.conf` within a minute of the GPUs' reset (the epilog after their next job, or a manual reset), and Slurm keeps jobs that fit one block inside it.
 - **GPU handover.** After every job an `Epilog` (`/etc/slurm/epilog.sh`, root, on the job's trays) resets the job's GPUs (`SLURM_JOB_GPUS`) with `nvidia-smi --gpu-reset`, as GPUs are reset between tenants on GB200: that clears their state and applies a pending NVLink partition change. It then checks that no process uses them and none needs recovery; if the reset or the check fails, the epilog exits non-zero and Slurm drains the node. It logs to the journal (`journalctl -t slurm-epilog` on the tray). `gpu_handover_reset: false` turns it off.
 - **Users.** Directory users (LDAP) get an association with their account from `slurm_accounts`; jobs on the trays run as the user, with homes on `/shared`.
@@ -70,7 +70,7 @@ bin/ssh sched-control scontrol show config | grep -E 'TRES|Topology|DefMem'
 
 ## Limitations
 
-- Slurm 23.11: `--segment` and `BlockSizes` (newer block-topology features) are not available. Slurm packs a job into as few blocks as possible but does not require one block: when the domain is split into partitions, an 8-GPU job runs across two blocks, with ranks in different cliques, without an error. Its collectives then cross InfiniBand between the partitions, as on real hardware, so it runs slower ([Fake GPUs](fake-gpu.md#how-it-works)).
+- Slurm 23.11: `--segment` and `BlockSizes` (newer block-topology features) are not available. Slurm packs a job into as few blocks as possible but does not require one block: when the domain is split into partitions, an 8-GPU job runs across two blocks, with ranks in different cliques, without an error. Its collectives then cross InfiniBand between the partitions, as on real hardware, so it runs slower ([Emulated GPUs](fake-gpu.md#how-it-works)).
 - No cgroup confinement: a job can use more CPU or memory than it asked for inside its container, and `nvidia-smi` in a job lists all of the tray's GPUs.
 - After a tray is powered off (e.g. through its BMC), Slurm keeps showing it `idle` until `SlurmdTimeout` (300 s) passes, and jobs scheduled on it in the meantime fail. topograph drops the unreachable tray from `topology.conf` within a minute; both recover once the tray is powered on.
 - After the host is suspended, the controller marks the trays down for not responding; they come back with `scontrol update nodename=sched-worker[1-2] state=resume` (slurmd registers only when it starts).

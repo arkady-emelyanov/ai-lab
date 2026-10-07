@@ -1,6 +1,6 @@
-[← README](../README.md) · **Fake GPUs**
+[← README](../README.md) · **Emulated GPUs**
 
-# Fake GPUs (`fakegpu/`)
+# Emulated GPUs (`fakegpu/`)
 
 ## Overview
 
@@ -15,7 +15,7 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 | `numactl` | `numactl` (on the trays) | Python, numactl 2.0.18's options and output on the GB200 NUMA layout: `-H` and `-s` show it, `--cpunodebind` and `--physcpubind` pin the command to the tray CPUs of those Grace nodes, memory policies (`--membind`, `--preferred`, `--interleave`, ...) are checked and shown by a nested `numactl -s` but not applied; shared memory policies (`--shm`, `--file`) and device node specifiers (`netdev:`, `pci:`, ...) fail with a message |
 | `/dev/nvidia0-3`, `/dev/nvidiactl` | device nodes | character devices (major 195) created by Incus |
 
-**The emulation boundary:** an application launched through Slurm or as a Kubernetes pod starts, initialises its framework (PyTorch, Ray, NCCL, ...), every call succeeds and takes realistic time, and the GPUs report realistic load; nothing is computed. An application that does not check numerical results believes everything worked.
+**The emulation boundary:** an application launched through Slurm or as a Kubernetes pod starts, initialises its framework (PyTorch, Ray, NCCL, ...), every call succeeds and takes modelled time, and the GPUs report modelled load; nothing is computed. An application that does not check numerical results believes everything worked.
 
 ## How it works
 

@@ -6,7 +6,7 @@
 
 A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates one NVIDIA GB200-class **NVL8** NVLink domain (two GPU trays with four GPUs each, an NVLink switch tray, BMCs, an InfiniBand fabric) and runs the real software stack around it: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
 
-The GPUs are fake but behave like real ones to everything above them: applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes realistic simulated time, and the GPUs report realistic load, memory, power and temperature. Nothing is computed. Management interfaces (Redfish BMCs, an NVLink partition controller, fabric telemetry) change what the GPUs report and what the scheduler places jobs on.
+It is software-in-the-loop: the scheduler, frameworks and tools are the real software, unmodified, running against a behavioural model of the hardware. Applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes modelled time, and the GPUs report modelled load, memory, power and temperature; the BMCs and the NVLink partition controller change what the GPUs report and where the scheduler places jobs. Nothing is computed: see [What is real and what is modelled](#what-is-real-and-what-is-modelled).
 
 A blog series walks through the lab, starting with [AI lab, part 1: a GB200 GPU cluster on your laptop (minus the GPUs)](https://blog.emelianov.cloud/ai-lab/01-intro/).
 
@@ -20,10 +20,32 @@ What you get:
 ## Use cases
 
 - **Cluster software and self-service:** develop job portals, scheduler plugins, quota and accounting tools, or user-facing CLIs against a real Slurm or Kubernetes, LDAP and S3 stack with GPU nodes.
-- **Monitoring and operations:** build dashboards, alerts and runbooks on realistic GPU, scheduler and NVLink fabric metrics; rehearse node power cycles, NVLink failures and partition changes through Redfish and the partition controller.
+- **Monitoring and operations:** build dashboards, alerts and runbooks on live GPU, scheduler and NVLink fabric metrics; rehearse node power cycles, NVLink failures and partition changes through Redfish and the partition controller.
 - **Hardware management tooling:** test Redfish clients, BMC automation and topology-aware scheduling (topograph with Slurm `topology/block` or Kueue node labels) without a rack.
-- **AI pipelines:** run PyTorch DDP and Ray jobs end to end on 8 GPUs with realistic timing and memory accounting, to test orchestration, data movement and failure handling rather than numerics.
+- **AI pipelines:** run PyTorch DDP and Ray jobs end to end on 8 GPUs with modelled timing and memory accounting, to test orchestration, data movement and failure handling rather than numerics.
 - **CI for infrastructure code:** `make up && make test` builds and verifies the whole cluster from scratch on one machine.
+
+**Not for:** benchmarking or capacity planning from the lab's timings, checking numerical results or model accuracy, developing or tuning CUDA kernels, or rehearsing hardware failures the lab does not model ([What is real and what is modelled](#what-is-real-and-what-is-modelled)).
+
+## What is real and what is modelled
+
+AI lab models what the hardware shows to software (APIs, topology, telemetry, timing, failures), not the silicon. Everything above that boundary is real software, unmodified.
+
+| Component | Real or modelled | Faithful | Not modelled |
+|---|---|---|---|
+| Slurm, k3s, Kueue, JobSet, topograph, GPU Feature Discovery | real | configuration, scheduling, accounting, topology-aware placement | Slurm jobs are not confined by cgroups (containers share the host kernel); Slurm is 23.11, without `--segment` and `BlockSizes`; k3s gets its GPUs from the lab's own device plugin, not NVIDIA's, and users may mount host paths in their pods |
+| PyTorch, Ray, your applications | real, unmodified | initialisation, process groups, control flow, the errors the APIs below return | numerical results |
+| CUDA driver and runtime, cuBLAS, cuDNN | modelled ([`fakegpu`](docs/fake-gpu.md)) | device properties, contexts, streams, events, allocations up to the GPU's memory (out-of-memory beyond it), timing | kernels do not run; copies over 64 MiB are timed, not performed |
+| NVML, `nvidia-smi` | modelled ([`fakegpu`](docs/fake-gpu.md)) | identity, PCIe, NVLink state, fabric clique, NUMA layout, processes, GPU reset; utilisation, power and temperature from the load | power and thermals follow a model of load, not measured curves |
+| NCCL | modelled ([`fakegpu`](docs/fake-gpu.md)) | communicators and splits, collectives timed over NVLink inside a partition and InfiniBand across partitions | data is not exchanged; a failed peer or link does not fail collectives |
+| NVLink and NVSwitch | modelled ([partition controller](docs/nvlink-partitions.md), BMCs) | 18 links per GPU to two 72-port switches, partitions and cliques applied at GPU reset, disabled links, fabric telemetry | NMX-C's wire protocol; one NVL8 domain only |
+| BMCs | modelled ([Redfish](docs/bmc-redfish.md)) | GB200 resource layout, power actions that stop and start the tray, GPU sensors, firmware inventory | IPMI, BlueField DPUs |
+| InfiniBand | modelled ([topology](docs/topology.md)) | `ibnetdiscover` topology for topograph, NIC byte counters, 400 Gb/s in NCCL timing | packets, subnet manager; one leaf switch |
+| Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | LDAP without TLS |
+
+**Timing is a behavioural model, not a prediction.** Durations come from documented GB200 figures (FLOP rates, memory, NVLink and InfiniBand bandwidth) applied to each operation's size: jobs take plausible time and put plausible load on the GPUs and links, but the figures are not calibrated against hardware and do not predict real GB200 performance.
+
+Details are in each component page and in [Architecture](docs/architecture.md#limitations).
 
 ## Quickstart
 
@@ -103,7 +125,7 @@ Each page covers: overview, usage, verification, references (plus configuration 
 |---|---|---|
 | Infrastructure | Incus containers, volumes, Ansible, `make` targets, secrets, host troubleshooting | [Platform](docs/platform.md) |
 | | Instances, addresses, wiring between layers | [Architecture](docs/architecture.md) |
-| Emulated hardware | Fake NVIDIA stack: CUDA, NVML, cuBLAS, NCCL, cuDNN, `nvidia-smi`; simulated timing and GPU occupancy | [Fake GPUs](docs/fake-gpu.md) |
+| Emulated hardware | NVIDIA software stack, modelled: CUDA, NVML, cuBLAS, NCCL, cuDNN, `nvidia-smi`; simulated timing and GPU occupancy | [Emulated GPUs](docs/fake-gpu.md) |
 | | Redfish BMCs for the GPU trays and the NVLink switch tray | [BMCs](docs/bmc-redfish.md) |
 | | NVLink partition controller (NMX-C-like, gRPC) and fabric telemetry | [NVLink partitions](docs/nvlink-partitions.md) |
 | | Emulated InfiniBand fabric and topograph-generated scheduler topology | [Topology discovery](docs/topology.md) |
@@ -173,19 +195,6 @@ docs/                    component documentation
 | NVIDIA GPU Feature Discovery (k8s-device-plugin image) | 0.20.1 | Apache-2.0 | GPU node labels (k3s mode) |
 | PyTorch, Ray | latest at install | BSD-3, Apache-2.0 | frameworks |
 | ZLUDA (layouts ported into `fakegpu/dark_api.c`) | | Apache-2.0 | `libcudart` export tables |
-
-## Limitations
-
-- The emulation stops at computation: GPU kernels do not run, so results are not numerically meaningful.
-- Copies larger than 64 MiB are timed but not performed.
-- Fake NCCL ranks exchange only their NVLink partitions (for the cost of collectives): a failed link or rank does not fail its peers' collectives.
-- Containers share the host kernel, so Slurm jobs are not confined by cgroups.
-- In k3s mode users may mount host paths in their pods, and GPUs come from the lab's own device plugin rather than NVIDIA's.
-- The partition controller is not wire-compatible with NVIDIA's NMX-C (its `.proto` is proprietary).
-- Slurm is 23.11 and LDAP has no TLS.
-- The fabric is a single NVLink domain with one InfiniBand leaf.
-
-Details are in each component page and in [Architecture](docs/architecture.md#limitations).
 
 ## Disclaimer
 

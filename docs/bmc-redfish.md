@@ -66,7 +66,7 @@ bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 - **Power** goes through the Incus API: the tray BMCs hold a client certificate restricted to the `trays` project, so a BMC can start, stop and restart the GPU trays but cannot reach any other instance. Resets apply pending NVLink settings first.
 - **Link state** goes through the tray's sideband volume: the tray BMC writes `nvlink-disabled`, the switch BMC `nvlink-disabled-switch` (one file per tray), and the tray's NVML reports those links inactive. The partition controller and the fabric metrics see the same state ([NVLink partitions](nvlink-partitions.md)).
 - State (pending settings, sticky flags, switch settings, uploaded config) is persisted under `/var/lib/fakebmc`.
-- **Sensors** read the tray's GPU state (the fake GPU stack's occupancy file, on a volume mounted read-only in the BMC: the emulated I2C/SMBus path to the GPUs) and apply the fake NVML's own model to it, the same formulas and clock, so temperature and power match `nvidia-smi` and the GPU exporter at the same moment ([Fake GPUs](fake-gpu.md#how-it-works)).
+- **Sensors** read the tray's GPU state (the fake GPU stack's occupancy file, on a volume mounted read-only in the BMC: the emulated I2C/SMBus path to the GPUs) and apply the fake NVML's own model to it, the same formulas and clock, so temperature and power match `nvidia-smi` and the GPU exporter at the same moment ([Emulated GPUs](fake-gpu.md#how-it-works)).
 - **Polled out of band**: Prometheus scrapes the tray BMCs through a generic Redfish exporter on the controller, so a tray powered off through Redfish shows as `idrac_system_power_on 0` while its BMC stays up, and GPU temperatures arrive both in band and out of band ([Monitoring](monitoring.md#overview)).
 
 ## Configuration
@@ -76,10 +76,10 @@ bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 | `bmc_username`, `bmc_password` | `root`, `0penBmc` | credentials of every BMC |
 | `bmc_firmware_version` | `fakebmc-1.0.0` | host BMC firmware: `FW_BMC_0` (switch tray: `MGX_FW_BMC_0`) and manager `BMC_0`'s `FirmwareVersion` |
 | `hmc_firmware_version` | `fakebmc-hmc-1.0.0` | HGX Management Controller firmware: `HGX_FW_BMC_0` and manager `HGX_BMC_0` |
-| `fakegpu_vbios_version` | `97.00.82.00.0F` | GPU VBIOS: `HGX_FW_GPU_<n>`, the same as `nvidia-smi` on the tray ([Fake GPUs](fake-gpu.md#configuration)) |
+| `fakegpu_vbios_version` | `97.00.82.00.0F` | GPU VBIOS: `HGX_FW_GPU_<n>`, the same as `nvidia-smi` on the tray ([Emulated GPUs](fake-gpu.md#configuration)) |
 | `nvswitch_firmware_version`, `nvswitch_cpld_firmware_version` | `fakebmc-nvswitch-1`, `fakebmc-cpld-1` | switch tray: `MGX_FW_NVSwitch_<n>`, `MGX_FW_CPLD_0` |
 
-Port speeds (`CurrentSpeedGbps` of 2 lanes) follow `fakegpu_nvlink_link_gbs`, the GPU sensors and `PowerLimitWatts` the GPU profile's power figures, so they match `nvidia-smi` whatever the profile ([Fake GPUs](fake-gpu.md#configuration)).
+Port speeds (`CurrentSpeedGbps` of 2 lanes) follow `fakegpu_nvlink_link_gbs`, the GPU sensors and `PowerLimitWatts` the GPU profile's power figures, so they match `nvidia-smi` whatever the profile ([Emulated GPUs](fake-gpu.md#configuration)).
 
 **Per tray.** A tray BMC takes the VBIOS and its firmware versions from the tray's own variables, so one tray can drift from the others (for inventory or compliance tests). Set them under the tray in `inventory/hosts.yml`, then `make configure`; the tray's `nvidia-smi` reports the same VBIOS:
 

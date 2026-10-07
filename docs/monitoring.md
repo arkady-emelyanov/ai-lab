@@ -44,7 +44,7 @@ Prometheus on `sched-control` scrapes every layer; Grafana on the same host pres
 | `idrac_system_machine_info` | `hostname`, `manufacturer`, `model` | tray identity from the BMC |
 | `idrac_sensors_temperature` | `name` (`GPU_<n>`) | GPU temperature read by the BMC; equals `nvidia_smi_temperature_gpu` of the same GPU |
 
-GPU metrics reflect the simulated load ([Fake GPUs](fake-gpu.md#how-it-works)): they move with real jobs.
+GPU metrics reflect the simulated load ([Emulated GPUs](fake-gpu.md#how-it-works)): they move with real jobs.
 
 ## Usage
 

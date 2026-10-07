@@ -4,7 +4,7 @@
 
 ## Overview
 
-With `scheduler: k3s` in `local.yml` the lab runs Kubernetes (k3s 1.36) on the emulated hardware: the fake GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Slurm](slurm.md) mode. It is one or the other: in k3s mode no Slurm component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
+With `scheduler: k3s` in `local.yml` the lab runs Kubernetes (k3s 1.36) on the emulated hardware: the GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Slurm](slurm.md) mode. It is one or the other: in k3s mode no Slurm component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
 
 | Component | Where | Role |
 |---|---|---|
@@ -83,7 +83,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 - Users can create pods with `hostPath` volumes in their namespace (the examples need `/shared`), which in a real cluster would be denied by Pod Security; there is no admission policy forcing pods to run as the user's uid.
 - No NVIDIA DRA driver or ComputeDomains (IMEX); NVLink placement is through Kueue topology-aware scheduling only.
 - Kubernetes users authenticate with client certificates, not LDAP.
-- Fake NCCL ranks exchange only their NVLink partitions, so a pod failing does not fail its peers' collectives ([Fake GPUs](fake-gpu.md)).
+- Fake NCCL ranks exchange only their NVLink partitions, so a pod failing does not fail its peers' collectives ([Emulated GPUs](fake-gpu.md)).
 - No GPU handover between pods: Kubernetes has no node-side hook after a pod ends that could reset its GPUs (Slurm mode uses an epilog). GPUs are reset at tray boot; after an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) for the new clique to reach GFD's and topograph's labels.
 
 ## References
