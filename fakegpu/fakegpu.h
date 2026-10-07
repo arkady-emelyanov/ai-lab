@@ -29,6 +29,15 @@
  *   cuda_version  highest CUDA version the driver supports, MAJOR.MINOR
  *                 (13.0): cuDriverGetVersion, NVML, nvidia-smi
  *   vbios_version GPU VBIOS version (97.00.82.00.0F)
+ *   GPU profile (defaults: GB200):
+ *   nvlinks       NVLinks per GPU (18, at most 64)
+ *   nvlink_link_gbs  bandwidth per NVLink and direction, GB/s (50: 900 per GPU)
+ *   power_limit_w power limit (1200); idle_power_w, max_power_w: draw idle
+ *                 and at full utilisation (140, 1000)
+ *   sm_count      streaming multiprocessors (148)
+ *   tensor_tflops, fp32_tflops, fp64_tflops  dense throughput (1200, 60, 40)
+ *   host_link_gbs host <-> GPU copies, GB/s (400, NVLink-C2C)
+ *   hbm_gbs       device-to-device copies, GB/s (4000)
  *   host          tray name GPU identities derive from (default: hostname;
  *                 set it so containers, whose hostname differs, see the
  *                 tray's GPUs)
@@ -48,10 +57,8 @@
 #include <unistd.h>
 
 #define FG_MAX_GPUS 8
-#define FG_NVLINKS 18           /* NVLink5 links per Blackwell GPU, all to NVSwitch */
 #define FG_CC_MAJOR 10
 #define FG_CC_MINOR 0
-#define FG_SM_COUNT 148
 #define FG_PCI_DEVICE_ID 0x294110DE
 
 static const unsigned fg_pci_bus[FG_MAX_GPUS] = {0x18, 0x2A, 0x3A, 0x5D, 0x9A, 0xAB, 0xBA, 0xDB};
@@ -75,6 +82,9 @@ static struct {
     char driver_version[32];
     char cuda_version[16];
     char vbios_version[32];
+    int nvlinks, sm_count;
+    double nvlink_link_gbs, power_limit_w, idle_power_w, max_power_w;
+    double tensor_tflops, fp32_tflops, fp64_tflops, host_link_gbs, hbm_gbs;
 } fg_cfg;
 static pthread_once_t fg_cfg_once = PTHREAD_ONCE_INIT;
 
@@ -106,13 +116,26 @@ static void fg_set(const char *key, const char *val)
     else if (!strcmp(key, "driver_version")) snprintf(fg_cfg.driver_version, sizeof fg_cfg.driver_version, "%s", val);
     else if (!strcmp(key, "cuda_version")) snprintf(fg_cfg.cuda_version, sizeof fg_cfg.cuda_version, "%s", val);
     else if (!strcmp(key, "vbios_version")) snprintf(fg_cfg.vbios_version, sizeof fg_cfg.vbios_version, "%s", val);
+    else if (!strcmp(key, "nvlinks")) fg_cfg.nvlinks = atoi(val);
+    else if (!strcmp(key, "sm_count")) fg_cfg.sm_count = atoi(val);
+    else if (!strcmp(key, "nvlink_link_gbs")) fg_cfg.nvlink_link_gbs = strtod(val, NULL);
+    else if (!strcmp(key, "power_limit_w")) fg_cfg.power_limit_w = strtod(val, NULL);
+    else if (!strcmp(key, "idle_power_w")) fg_cfg.idle_power_w = strtod(val, NULL);
+    else if (!strcmp(key, "max_power_w")) fg_cfg.max_power_w = strtod(val, NULL);
+    else if (!strcmp(key, "tensor_tflops")) fg_cfg.tensor_tflops = strtod(val, NULL);
+    else if (!strcmp(key, "fp32_tflops")) fg_cfg.fp32_tflops = strtod(val, NULL);
+    else if (!strcmp(key, "fp64_tflops")) fg_cfg.fp64_tflops = strtod(val, NULL);
+    else if (!strcmp(key, "host_link_gbs")) fg_cfg.host_link_gbs = strtod(val, NULL);
+    else if (!strcmp(key, "hbm_gbs")) fg_cfg.hbm_gbs = strtod(val, NULL);
 }
 
 static void fg_load(void)
 {
     static const char *keys[] = {"count", "name", "mem_mb", "cluster_uuid", "clique_id", "sideband_dir",
                                  "latency_scale", "copy_max_mb", "state_path", "host", "dev_dir", "nccl_dir",
-                                 "nccl_timeout_s", "ib_gbps", "driver_version", "cuda_version", "vbios_version"};
+                                 "nccl_timeout_s", "ib_gbps", "driver_version", "cuda_version", "vbios_version", "nvlinks", "sm_count",
+                                 "nvlink_link_gbs", "power_limit_w", "idle_power_w", "max_power_w", "tensor_tflops",
+                                 "fp32_tflops", "fp64_tflops", "host_link_gbs", "hbm_gbs"};
     fg_cfg.count = 4;
     snprintf(fg_cfg.name, sizeof fg_cfg.name, "NVIDIA GB200");
     fg_cfg.mem_mb = 189471;
@@ -127,6 +150,17 @@ static void fg_load(void)
     snprintf(fg_cfg.driver_version, sizeof fg_cfg.driver_version, "580.95.05");
     snprintf(fg_cfg.cuda_version, sizeof fg_cfg.cuda_version, "13.0");
     snprintf(fg_cfg.vbios_version, sizeof fg_cfg.vbios_version, "97.00.82.00.0F");
+    fg_cfg.nvlinks = 18;            /* NVLink5 links per Blackwell GPU, all to NVSwitch */
+    fg_cfg.sm_count = 148;
+    fg_cfg.nvlink_link_gbs = 50;    /* 18 x 50 = 900 GB/s per direction */
+    fg_cfg.power_limit_w = 1200;
+    fg_cfg.idle_power_w = 140;
+    fg_cfg.max_power_w = 1000;
+    fg_cfg.tensor_tflops = 1200;    /* dense, tensor cores */
+    fg_cfg.fp32_tflops = 60;
+    fg_cfg.fp64_tflops = 40;
+    fg_cfg.host_link_gbs = 400;     /* NVLink-C2C */
+    fg_cfg.hbm_gbs = 4000;          /* device-to-device: 8 TB/s read + write */
 
     const char *path = getenv("FAKEGPU_CONF");
     FILE *f = fopen(path ? path : "/etc/fakegpu.conf", "r");
@@ -149,6 +183,9 @@ static void fg_load(void)
         if (v) fg_set(keys[i], v);
     }
 
+    if (fg_cfg.nvlinks < 0) fg_cfg.nvlinks = 0;
+    if (fg_cfg.nvlinks > 64) fg_cfg.nvlinks = 64;
+    if (fg_cfg.sm_count < 1) fg_cfg.sm_count = 1;
     if (fg_cfg.count < 0) fg_cfg.count = 0;
     if (fg_cfg.count > FG_MAX_GPUS) fg_cfg.count = FG_MAX_GPUS;
     const char *p = fg_cfg.cluster_uuid_str;
@@ -188,6 +225,21 @@ static inline const char *fg_name(void) { fg_init(); return fg_cfg.name; }
 static inline unsigned long long fg_mem_bytes(void) { fg_init(); return fg_cfg.mem_mb << 20; }
 static inline const unsigned char *fg_cluster_uuid(void) { fg_init(); return fg_cfg.cluster_uuid; }
 static inline unsigned fg_clique_id(void) { fg_init(); return fg_cfg.clique_id; }
+/* GPU profile; rates in bytes or FLOP per nanosecond (GB/s, GFLOP/s). */
+static inline int fg_nvlinks(void) { fg_init(); return fg_cfg.nvlinks; }
+static inline int fg_sm_count(void) { fg_init(); return fg_cfg.sm_count; }
+static inline double fg_nvlink_bytes_per_ns(void) { fg_init(); return fg_cfg.nvlinks * fg_cfg.nvlink_link_gbs; }
+static inline double fg_power_limit_mw(void) { fg_init(); return fg_cfg.power_limit_w * 1000; }
+static inline double fg_idle_power_mw(void) { fg_init(); return fg_cfg.idle_power_w * 1000; }
+static inline double fg_max_power_mw(void) { fg_init(); return fg_cfg.max_power_w * 1000; }
+static inline double fg_tensor_flop_per_ns(void) { fg_init(); return fg_cfg.tensor_tflops * 1000; }
+static inline double fg_fp32_flop_per_ns(void) { fg_init(); return fg_cfg.fp32_tflops * 1000; }
+static inline double fg_fp64_flop_per_ns(void) { fg_init(); return fg_cfg.fp64_tflops * 1000; }
+static inline double fg_host_link_bytes_per_ns(void) { fg_init(); return fg_cfg.host_link_gbs; }
+static inline double fg_hbm_bytes_per_ns(void) { fg_init(); return fg_cfg.hbm_gbs; }
+#define FG_NVLINKS ((unsigned)fg_nvlinks())
+#define FG_SM_COUNT (fg_sm_count())
+
 static inline const char *fg_driver_version(void) { fg_init(); return fg_cfg.driver_version; }
 static inline const char *fg_vbios_version(void) { fg_init(); return fg_cfg.vbios_version; }
 /* CUDA version as the driver API encodes it: 1000 x major + 10 x minor. */

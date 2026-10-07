@@ -1,0 +1,46 @@
+# Settings that must be consistent before anything is built or configured
+# (included by provision.yml and site.yml).
+- name: Scheduler is slurm or k3s
+  ansible.builtin.assert:
+    that: scheduler in ['slurm', 'k3s']
+    fail_msg: "scheduler must be slurm or k3s, not {{ scheduler }}"
+    quiet: true
+
+- name: The NVLink switch tray can cable every GPU link
+  ansible.builtin.assert:
+    that:
+      - fakegpu_nvlinks | int >= 1 and fakegpu_nvlinks | int <= 64
+      - fakegpu_nvlinks | int % nvswitch_count | int == 0
+      - groups['workers'] | length * fakegpu_count | int * fakegpu_nvlinks | int <= nvswitch_count | int * nvswitch_ports | int
+    fail_msg: >-
+      fakegpu_nvlinks ({{ fakegpu_nvlinks }}) must be 1-64 and a multiple of nvswitch_count ({{ nvswitch_count }}),
+      and trays x GPUs x links ({{ groups['workers'] | length }} x {{ fakegpu_count }} x {{ fakegpu_nvlinks }})
+      must fit nvswitch_count x nvswitch_ports ({{ nvswitch_count }} x {{ nvswitch_ports }})
+    quiet: true
+
+- name: The GPU profile is plausible
+  ansible.builtin.assert:
+    that:
+      - fakegpu_mem_mb | int > 0
+      - fakegpu_idle_power_w | float > 0
+      - fakegpu_idle_power_w | float < fakegpu_max_power_w | float
+      - fakegpu_max_power_w | float <= fakegpu_power_limit_w | float
+      - fakegpu_nvlink_link_gbs | float > 0 and fakegpu_host_link_gbs | float > 0 and fakegpu_hbm_gbs | float > 0
+      - fakegpu_tensor_tflops | float > 0 and fakegpu_fp32_tflops | float > 0 and fakegpu_fp64_tflops | float > 0
+      - fakegpu_sm_count | int > 0
+      - fakegpu_cuda_version is match('^[0-9]+\.[0-9]+$')
+    fail_msg: >-
+      GPU profile: memory, rates and SM count must be positive, idle power below max power, max power
+      not above the power limit, fakegpu_cuda_version MAJOR.MINOR
+    quiet: true
+
+- name: The NVLink domain and InfiniBand settings are valid
+  ansible.builtin.assert:
+    that:
+      - nvl_cluster_uuid is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+      - nvl_clique_id | int >= 1 and nvl_clique_id | int <= 32765
+      - ib_link_rate in ib_link_gbps
+    fail_msg: >-
+      nvl_cluster_uuid must be a lower-case UUID, nvl_clique_id 1-32765, ib_link_rate one of
+      {{ ib_link_gbps.keys() | join(', ') }}
+    quiet: true

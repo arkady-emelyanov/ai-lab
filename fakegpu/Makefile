@@ -35,22 +35,22 @@ libcuda.so.1: cuda_stub.c dark_api.c timing.c build/cuda_weak.c fakegpu.h occupa
 libnvidia-ml.so.1: nvml_stub.c build/nvml_weak.c fakegpu.h occupancy.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ nvml_stub.c build/nvml_weak.c -lpthread -lm
 
-libcublas.so.13: cublas_stub.c build/cublas_weak.c stub_common.h
+libcublas.so.13: cublas_stub.c build/cublas_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ cublas_stub.c build/cublas_weak.c
 
-libcublasLt.so.13: cublas_stub.c build/cublasLt_weak.c stub_common.h
+libcublasLt.so.13: cublas_stub.c build/cublasLt_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) -DSTUB_CUBLASLT $(LDFLAGS) -Wl,-soname,$@ -o $@ cublas_stub.c build/cublasLt_weak.c
 
-libcublas.so.12: cublas_stub.c build/cublas_weak.c stub_common.h
+libcublas.so.12: cublas_stub.c build/cublas_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(CU12) $(LDFLAGS) -Wl,-soname,$@ -o $@ cublas_stub.c build/cublas_weak.c
 
-libcublasLt.so.12: cublas_stub.c build/cublasLt_weak.c stub_common.h
+libcublasLt.so.12: cublas_stub.c build/cublasLt_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(CU12) -DSTUB_CUBLASLT $(LDFLAGS) -Wl,-soname,$@ -o $@ cublas_stub.c build/cublasLt_weak.c
 
 libnccl.so.2: nccl_stub.c build/nccl_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ nccl_stub.c build/nccl_weak.c -ldl -lpthread
 
-libcudnn.so.9: cudnn_stub.c build/cudnn_weak.c stub_common.h
+libcudnn.so.9: cudnn_stub.c build/cudnn_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ cudnn_stub.c build/cudnn_weak.c
 
 # Driver libs go on the normal linker path (via an ld.so.conf.d entry);

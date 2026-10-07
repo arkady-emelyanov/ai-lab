@@ -115,10 +115,12 @@ def test_readings_follow_load(lab):
     if lab.sh(tray, f"nvidia-smi -i {gpu} --query-compute-apps=pid --format=csv,noheader").strip():
         pytest.skip(f"{tray} GPU {gpu} is in use")
     idle_temp = bmc_readings(lab.tray_bmc(tray), lab.gpus)[gpu][0]
+    conf = dict(line.split(" = ", 1) for line in lab.sh(tray, "cat /etc/fakegpu.conf").splitlines() if " = " in line)
+    busy_w = 0.85 * float(conf.get("max_power_w", 1000))  # the GPU profile's draw at full load, nearly
     with gpu_load(lab, tray, gpu):
         def hot():
             temp, power = assert_follows_nvml(lab, tray)[gpu]
-            return (power < 900 or temp < idle_temp + 5) and f"GPU {gpu}: {temp} °C, {power} W"
+            return (power < busy_w or temp < idle_temp + 5) and f"GPU {gpu}: {temp} °C, {power} W"
         eventually(hot, timeout=45, interval=2)
 
 

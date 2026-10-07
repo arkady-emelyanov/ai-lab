@@ -5,10 +5,11 @@ Prints the whole fabric in ibnetdiscover's text format (switch blocks with
 their port connections, then HCA blocks), as seen from any node. The fabric
 is described in /etc/fakeib.json:
 
-    {"spine": "LAB-IBSPINE-01", "leaf": "LAB-IBLEAF-01",
+    {"spine": "LAB-IBSPINE-01", "leaf": "LAB-IBLEAF-01", "rate": "NDR",
      "nodes": [{"name": "sched-worker1", "hcas": 4}, ...]}
 
-Every node's HCAs (mlx5_0..N-1, 4xNDR) connect to the leaf switch; the leaf
+Every node's HCAs (mlx5_0..N-1, 4x links at the fabric's rate, NDR by
+default) connect to the leaf switch; the leaf
 has uplinks to the spine. GUIDs and LIDs are derived from names, so output
 is stable.
 """
@@ -41,6 +42,7 @@ def main():
     with open(CONFIG) as f:
         cfg = json.load(f)
     spine, leaf = cfg["spine"], cfg["leaf"]
+    link = "4x" + cfg.get("rate", "NDR")
     hcas = [(n["name"], i) for n in cfg["nodes"] for i in range(n.get("hcas", 4))]
     if len(hcas) + UPLINKS > SWITCH_PORTS:
         sys.exit("ibnetdiscover: too many HCAs for one leaf switch")
@@ -64,22 +66,22 @@ def main():
     # Spine: its first ports go down to the leaf.
     switch_header(spine, spine_g)
     for p in range(1, UPLINKS + 1):
-        out.append(f'[{p}]\t"S-{leaf_g}"[{len(hcas) + p}]\t\t# "{switch_desc(leaf)}" lid {lids[leaf]} 4xNDR')
+        out.append(f'[{p}]\t"S-{leaf_g}"[{len(hcas) + p}]\t\t# "{switch_desc(leaf)}" lid {lids[leaf]} {link}')
     out.append("")
 
     # Leaf: HCAs first, then the uplinks.
     switch_header(leaf, leaf_g)
     for p, (node, i) in enumerate(hcas, start=1):
         g = guid(f"{node} mlx5_{i}")
-        out.append(f'[{p}]\t"H-{g}"[1]({g}) \t\t# "{node} mlx5_{i}" lid {lids[(node, i)]} 4xNDR')
+        out.append(f'[{p}]\t"H-{g}"[1]({g}) \t\t# "{node} mlx5_{i}" lid {lids[(node, i)]} {link}')
     for p in range(1, UPLINKS + 1):
-        out.append(f'[{len(hcas) + p}]\t"S-{spine_g}"[{p}]\t\t# "{switch_desc(spine)}" lid {lids[spine]} 4xNDR')
+        out.append(f'[{len(hcas) + p}]\t"S-{spine_g}"[{p}]\t\t# "{switch_desc(spine)}" lid {lids[spine]} {link}')
     out.append("")
 
     for p, (node, i) in enumerate(hcas, start=1):
         g = guid(f"{node} mlx5_{i}")
         out.append(f'Ca\t1 "H-{g}"\t\t# "{node} mlx5_{i}"')
-        out.append(f'[1]({g}) \t"S-{leaf_g}"[{p}]\t\t# lid {lids[(node, i)]} lmc 0 "{switch_desc(leaf)}" lid {lids[leaf]} 4xNDR')
+        out.append(f'[1]({g}) \t"S-{leaf_g}"[{p}]\t\t# lid {lids[(node, i)]} lmc 0 "{switch_desc(leaf)}" lid {lids[leaf]} {link}')
         out.append("")
     print("\n".join(out))
 

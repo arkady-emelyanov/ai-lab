@@ -14,6 +14,18 @@ host = {{ inventory_hostname }}
 driver_version = {{ fakegpu_driver_version }}
 cuda_version = {{ fakegpu_cuda_version }}
 vbios_version = {{ fakegpu_vbios_version }}
+# GPU profile.
+nvlinks = {{ fakegpu_nvlinks }}
+nvlink_link_gbs = {{ fakegpu_nvlink_link_gbs }}
+power_limit_w = {{ fakegpu_power_limit_w }}
+idle_power_w = {{ fakegpu_idle_power_w }}
+max_power_w = {{ fakegpu_max_power_w }}
+sm_count = {{ fakegpu_sm_count }}
+tensor_tflops = {{ fakegpu_tensor_tflops }}
+fp32_tflops = {{ fakegpu_fp32_tflops }}
+fp64_tflops = {{ fakegpu_fp64_tflops }}
+host_link_gbs = {{ fakegpu_host_link_gbs }}
+hbm_gbs = {{ fakegpu_hbm_gbs }}
 # NCCL communicators exchange each rank's NVLink partition here (every Slurm
 # job and pod mounts {{ shared_mount }}).
 nccl_dir = {{ fakegpu_nccl_dir }}

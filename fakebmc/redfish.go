@@ -523,8 +523,8 @@ func (s *Server) port(w http.ResponseWriter, r *http.Request) {
 		"LinkState":         linkState(disabled),
 		"LinkStatus":        status,
 		"Width":             2,
-		"CurrentSpeedGbps":  200,
-		"MaxSpeedGbps":      200,
+		"CurrentSpeedGbps":  s.laneGbps(),
+		"MaxSpeedGbps":      s.laneGbps(),
 		"Status":            obj{"State": map[bool]string{true: "Disabled", false: "Enabled"}[disabled], "Health": health},
 		"@Redfish.Settings": obj{"SettingsObject": link(path + "/Settings")},
 		"Oem": obj{"Nvidia": obj{

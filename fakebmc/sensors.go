@@ -18,13 +18,18 @@ import (
 // values at the same moment. Keep the constants and formulas in sync.
 
 const (
-	idleMW       = 140000.0
-	maxMW        = 1000000.0
 	idleMC       = 32000.0 // milli-degrees C
 	fullMC       = 75000.0
 	tempTauNs    = 20e9 // thermal time constant
 	utilWindowNs = 1000000000
-	powerLimitW  = 1200 // nvmlDeviceGetPowerManagementLimit
+)
+
+// The GPU profile's power figures, as the tray's fakegpu.conf has them
+// (idle_power_w, max_power_w, power_limit_w); set from the BMC's config.
+var (
+	idleMW      = 140000.0
+	maxMW       = 1000000.0
+	powerLimitW = 1200.0 // nvmlDeviceGetPowerManagementLimit
 )
 
 // gpuState mirrors struct fg_gpu_state in fakegpu/occupancy.h.

@@ -438,16 +438,23 @@ func (c *controller) CreatePartition(_ context.Context, r *pb.CreatePartitionReq
 			return fail(pb.ReturnCode_NMX_ST_GPU_IN_USE, "GPU %d is in partition %d; remove it there first", u, id), nil
 		}
 	}
+	// A user partition's GPUs report its id as their clique, so the default
+	// partition's clique (nvl_clique_id) is not available as an id: both
+	// partitions would look like one to the schedulers.
 	id := r.PartitionId
 	if id == 0 {
 		for id = 1; id <= maxPartitionID; id++ {
-			if _, used := c.Partitions[id]; !used {
+			if _, used := c.Partitions[id]; !used && id != c.cfg.DefaultClique {
 				break
 			}
 		}
 	}
 	if id > maxPartitionID {
 		return fail(pb.ReturnCode_NMX_ST_INVALID_ARGUMENT, "partition ids are 1..%d", maxPartitionID), nil
+	}
+	if id == c.cfg.DefaultClique {
+		return fail(pb.ReturnCode_NMX_ST_INVALID_ARGUMENT,
+			"partition id %d is the default partition's clique; choose another id", id), nil
 	}
 	if _, used := c.Partitions[id]; used {
 		return fail(pb.ReturnCode_NMX_ST_ALREADY_EXISTS, "partition %d exists", id), nil

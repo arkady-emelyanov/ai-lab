@@ -1,16 +1,13 @@
 # Configures the cluster and the BMCs on the instances created by
 # provision.yml. The workload layer is Slurm or k3s (scheduler in
 # inventory/group_vars/all.yml); everything else is shared.
-- name: Check the scheduler setting
+- name: Check the settings
   hosts: localhost
   connection: local
   gather_facts: false
   tasks:
-    - name: Scheduler is slurm or k3s
-      ansible.builtin.assert:
-        that: scheduler in ['slurm', 'k3s']
-        fail_msg: "scheduler must be slurm or k3s, not {{ scheduler }}"
-        quiet: true
+    - name: Check the settings
+      ansible.builtin.include_tasks: tasks/check-settings.yml
 
 - name: Base system
   hosts: cluster

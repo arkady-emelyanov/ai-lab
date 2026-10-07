@@ -34,6 +34,11 @@ const (
 	switchSysChass  = "BMC_eeprom"
 )
 
+// laneGbps is the signalling rate of each of an NVLink port's 2 lanes:
+// the link's bandwidth per direction (nvlink_link_gbs, GB/s) in Gb/s over
+// its lanes (NVLink5: 50 GB/s = 2 x 200 Gb/s).
+func (s *Server) laneGbps() float64 { return s.cfg.NVLinkLinkGbs * 8 / 2 }
+
 func gpuChassisID(g int) string { return fmt.Sprintf("HGX_GPU_%d", g) }
 
 func gpuPath(g int) string {
@@ -279,7 +284,7 @@ func (s *Server) manager(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case id == managerID:
 		body["Name"] = "OpenBMC Manager"
-		body["FirmwareVersion"] = "fakebmc-" + version
+		body["FirmwareVersion"] = s.cfg.BMCFirmware
 		chassis := switchSysChass
 		if !s.isSwitch() {
 			chassis = chassisID
@@ -294,7 +299,7 @@ func (s *Server) manager(w http.ResponseWriter, r *http.Request) {
 		}}
 	case id == hmcID && !s.isSwitch():
 		body["Name"] = "HGX Management Controller"
-		body["FirmwareVersion"] = "fakebmc-hmc-" + version
+		body["FirmwareVersion"] = s.cfg.HMCFirmware
 		body["Links"] = obj{
 			"ManagerForChassis": []obj{link(root + "/Chassis/" + hgxChassisID)},
 			"ManagerForServers": []obj{link(root + "/Systems/" + hgxSystemID)},
@@ -321,15 +326,15 @@ func (s *Server) managerReset(w http.ResponseWriter, r *http.Request) {
 // ---- firmware inventory ------------------------------------------------------------
 
 func (s *Server) firmware() [][2]string {
-	bmc := "fakebmc-" + version
+	bmc := s.cfg.BMCFirmware
 	if s.isSwitch() {
-		fw := [][2]string{{"MGX_FW_BMC_0", bmc}, {"MGX_FW_CPLD_0", "fakebmc-cpld-1"}}
+		fw := [][2]string{{"MGX_FW_BMC_0", bmc}, {"MGX_FW_CPLD_0", s.cfg.CPLDFirmware}}
 		for n := 0; n < s.cfg.Switches; n++ {
-			fw = append(fw, [2]string{fmt.Sprintf("MGX_FW_NVSwitch_%d", n), "fakebmc-nvswitch-1"})
+			fw = append(fw, [2]string{fmt.Sprintf("MGX_FW_NVSwitch_%d", n), s.cfg.NVSwitchFirmware})
 		}
 		return fw
 	}
-	fw := [][2]string{{"FW_BMC_0", bmc}, {"HGX_FW_BMC_0", "fakebmc-hmc-" + version}}
+	fw := [][2]string{{"FW_BMC_0", bmc}, {"HGX_FW_BMC_0", s.cfg.HMCFirmware}}
 	for g := 0; g < s.cfg.GPUCount; g++ {
 		fw = append(fw, [2]string{fmt.Sprintf("HGX_FW_GPU_%d", g), s.cfg.VBIOSVersion}) // as nvidia-smi reports it
 	}

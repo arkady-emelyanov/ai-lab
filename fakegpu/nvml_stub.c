@@ -261,8 +261,9 @@ API nvmlReturn_t nvmlDeviceGetPciInfo(nvmlDevice_t d, nvmlPciInfo_t *p) { return
 
 /* ---- telemetry model ---------------------------------------------------- */
 
-#define IDLE_MW 140000.0
-#define MAX_MW 1000000.0
+/* Power: the GPU profile (fakegpu.h). */
+#define IDLE_MW (fg_idle_power_mw())
+#define MAX_MW (fg_max_power_mw())
 #define IDLE_MC 32000.0     /* milli-degrees C */
 #define FULL_MC 75000.0
 #define TEMP_TAU_NS 20e9    /* thermal time constant */
@@ -439,9 +440,9 @@ API nvmlReturn_t nvmlDeviceGetCurrentClocksThrottleReasons(nvmlDevice_t d, unsig
 {
     return nvmlDeviceGetCurrentClocksEventReasons(d, r);
 }
-API nvmlReturn_t nvmlDeviceGetPowerManagementLimit(nvmlDevice_t d, unsigned *mw) { return set_uint(d, mw, 1200000); }
-API nvmlReturn_t nvmlDeviceGetEnforcedPowerLimit(nvmlDevice_t d, unsigned *mw) { return set_uint(d, mw, 1200000); }
-API nvmlReturn_t nvmlDeviceGetPowerManagementDefaultLimit(nvmlDevice_t d, unsigned *mw) { return set_uint(d, mw, 1200000); }
+API nvmlReturn_t nvmlDeviceGetPowerManagementLimit(nvmlDevice_t d, unsigned *mw) { return set_uint(d, mw, (unsigned)fg_power_limit_mw()); }
+API nvmlReturn_t nvmlDeviceGetEnforcedPowerLimit(nvmlDevice_t d, unsigned *mw) { return set_uint(d, mw, (unsigned)fg_power_limit_mw()); }
+API nvmlReturn_t nvmlDeviceGetPowerManagementDefaultLimit(nvmlDevice_t d, unsigned *mw) { return set_uint(d, mw, (unsigned)fg_power_limit_mw()); }
 API nvmlReturn_t nvmlDeviceGetFanSpeed(nvmlDevice_t d, unsigned *s) { (void)s; CHECK_DEV(d); return NVML_ERROR_NOT_SUPPORTED; } /* liquid cooled */
 API nvmlReturn_t nvmlDeviceGetPerformanceState(nvmlDevice_t d, unsigned *p)
 {
@@ -765,11 +766,13 @@ typedef struct {
     nvmlValue_t value;
 } nvmlFieldValue_t;
 
+#define NVML_FI_DEV_NVLINK_SPEED_MBPS_COMMON 90
 #define NVML_FI_DEV_GET_GPU_RECOVERY_ACTION 230
 #define NVML_VALUE_TYPE_UNSIGNED_INT 1
 
-/* Only the recovery action is answered; other fields are left as the caller
- * set them, as before this was implemented. */
+/* Answered: the recovery action and the NVLink speed (MB/s per link and
+ * direction, from the GPU profile); other fields are left as the caller set
+ * them, as before this was implemented. */
 API nvmlReturn_t nvmlDeviceGetFieldValues(nvmlDevice_t d, int count, nvmlFieldValue_t *values)
 {
     CHECK_DEV(d);
@@ -778,6 +781,12 @@ API nvmlReturn_t nvmlDeviceGetFieldValues(nvmlDevice_t d, int count, nvmlFieldVa
         if (values[i].fieldId == NVML_FI_DEV_GET_GPU_RECOVERY_ACTION) {
             values[i].valueType = NVML_VALUE_TYPE_UNSIGNED_INT;
             values[i].value.ui = recovery_action(idx);
+            values[i].nvmlReturn = NVML_SUCCESS;
+            values[i].timestamp = (long long)time(NULL) * 1000000;
+            values[i].latencyUsec = 0;
+        } else if (values[i].fieldId == NVML_FI_DEV_NVLINK_SPEED_MBPS_COMMON) {
+            values[i].valueType = NVML_VALUE_TYPE_UNSIGNED_INT;
+            values[i].value.ui = (unsigned)(fg_nvlink_bytes_per_ns() / fg_nvlinks() * 1000);
             values[i].nvmlReturn = NVML_SUCCESS;
             values[i].timestamp = (long long)time(NULL) * 1000000;
             values[i].latencyUsec = 0;

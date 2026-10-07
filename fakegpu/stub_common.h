@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "fakegpu.h"
+
 #define API __attribute__((visibility("default")))
 
 /* Opaque handles: distinct, non-NULL, big enough that callers peeking at a
@@ -60,9 +62,10 @@ static inline void stub_ib_traffic(void *stream, double tx, double rx)
 }
 
 #define STUB_LAUNCH_NS 5000.0          /* library call overhead */
-#define STUB_TENSOR_FLOP_PER_NS 1.2e6  /* ~1.2 PFLOP/s dense, tensor cores */
-#define STUB_FP32_FLOP_PER_NS 6.0e4    /* ~60 TFLOP/s */
-#define STUB_FP64_FLOP_PER_NS 4.0e4    /* ~40 TFLOP/s */
-#define STUB_NVLINK_B_PER_NS 900.0     /* NVLink5, ~900 GB/s per direction */
+/* GPU profile from /etc/fakegpu.conf (fakegpu.h). */
+#define STUB_TENSOR_FLOP_PER_NS (fg_tensor_flop_per_ns())
+#define STUB_FP32_FLOP_PER_NS (fg_fp32_flop_per_ns())
+#define STUB_FP64_FLOP_PER_NS (fg_fp64_flop_per_ns())
+#define STUB_NVLINK_B_PER_NS (fg_nvlink_bytes_per_ns()) /* all of a GPU's NVLinks, per direction */
 
 #endif

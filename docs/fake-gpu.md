@@ -62,20 +62,30 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 
 `inventory/group_vars/all.yml`, applied with `make configure` (written to `/etc/fakegpu.conf` on the trays; every key can be overridden per process with `FAKEGPU_<KEY>`):
 
-| Variable | Default | Meaning |
+| Variable | Default | Read by |
 |---|---|---|
-| `fakegpu_count`, `fakegpu_name`, `fakegpu_mem_mb`, `fakegpu_type` | 4, `NVIDIA GB200`, 189471, `gb200` | GPUs per tray, name, memory, Slurm GRES type |
-| `fakegpu_nvlinks` | 18 | NVLinks per GPU (Blackwell: 18 × NVLink5) |
-| `fakegpu_driver_version` | `580.95.05` | driver version: `nvidia-smi` "Driver Version", NVML (`nvmlSystemGetDriverVersion`, `nvmlSystemGetNVMLVersion`), GPU Feature Discovery's `nvidia.com/cuda.driver-version.*` labels |
+| `fakegpu_count`, `fakegpu_type` | 4, `gb200` | GPUs per tray (fixed size of the lab), Slurm GRES type |
+| `fakegpu_name` | `NVIDIA GB200` | NVML name: `nvidia-smi`, GFD's `nvidia.com/gpu.product`, the BMCs' GPU processors, chassis and `HGX_GPU_<n>` model |
+| `fakegpu_mem_mb` | 189471 | GPU memory: NVML, `nvidia-smi`, GFD's `nvidia.com/gpu.memory`, the BMCs' `MemorySummary` |
+| `fakegpu_nvlinks` | 18 | NVLinks per GPU (GB200: 18; leave as is unless you approximate another GPU generation): NVML and `nvidia-smi` (`nvlink -s`, `topo -m` shows `NV<links>`), the tray BMCs' ports, the partition controller and switch cabling ([NVLink partitions](nvlink-partitions.md#configuration)) |
+| `fakegpu_nvlink_link_gbs` | 50 | GB/s per NVLink and direction: NVML (`NVML_FI_DEV_NVLINK_SPEED_MBPS_COMMON`, `nvlink -s`), the BMCs' port speeds (2 lanes), GPU-to-GPU copies and NCCL (links × rate = 900 GB/s per GPU) |
+| `fakegpu_power_limit_w` | 1200 | NVML power limit (`nvidia-smi`, GPU exporter), the BMCs' `PowerLimitWatts` |
+| `fakegpu_idle_power_w`, `fakegpu_max_power_w` | 140, 1000 | power draw idle and at full utilisation (NVML, `nvidia-smi`, the BMCs' sensors, which use the same model) |
+| `fakegpu_sm_count` | 148 | multiprocessor count (CUDA device attribute), kernel duration (waves of blocks) |
+| `fakegpu_tensor_tflops`, `fakegpu_fp32_tflops`, `fakegpu_fp64_tflops` | 1200, 60, 40 | dense throughput of GEMMs and convolutions (cuBLAS, cuBLASLt, cuDNN) |
+| `fakegpu_host_link_gbs`, `fakegpu_hbm_gbs` | 400, 4000 | host-to-GPU copies (NVLink-C2C) and device-to-device copies |
+| `fakegpu_driver_version` | `580.95.05` | `nvidia-smi` "Driver Version", NVML (`nvmlSystemGetDriverVersion`, `nvmlSystemGetNVMLVersion`), GFD's `nvidia.com/cuda.driver-version.*` labels |
 | `fakegpu_cuda_version` | `13.0` | highest CUDA version the driver supports (`MAJOR.MINOR`): `nvidia-smi` "CUDA Version", `cuDriverGetVersion`, `nvmlSystemGetCudaDriverVersion`, GFD's `nvidia.com/cuda.runtime-version.*` labels |
-| `fakegpu_vbios_version` | `97.00.82.00.0F` | GPU VBIOS: `nvidia-smi` "VBIOS Version", NVML, the tray BMCs' firmware inventory (`HGX_FW_GPU_<n>`) |
-| `nvl_cluster_uuid`, `nvl_clique_id` | | NVLink domain UUID, clique of the default partition |
+| `fakegpu_vbios_version` | `97.00.82.00.0F` | GPU VBIOS: `nvidia-smi` "VBIOS Version", NVML, the tray BMC's firmware inventory (`HGX_FW_GPU_<n>`); can be set per tray ([BMCs](bmc-redfish.md#configuration)) |
+| `nvl_cluster_uuid`, `nvl_clique_id` | `7f3c2a10-…`, 1 | NVLink domain UUID and the default partition's clique: NVML fabric info, GFD's `nvidia.com/gpu.clique`, topograph's blocks and labels, the BMCs' `FabricClique`, the partition controller |
+| `ib_link_rate` | `NDR` | InfiniBand link rate (`ib_link_gbps`: NDR 400 Gb/s, XDR 800, HDR 200, ...): `ibnetdiscover` (`4xNDR`) and `ib_gbps_per_gpu`, NCCL's bandwidth between NVLink partitions |
 | `fakegpu_latency_scale` | 1.0 | multiplier for all simulated times; 0 disables delays |
 | `fakegpu_copy_max_mb` | 64 | copies above this are timed but not performed |
 | `fakegpu_nccl_dir` | `/shared/.fakegpu/nccl` | where NCCL ranks exchange their NVLink partitions (empty: no exchange, one partition assumed) |
-| `ib_gbps_per_gpu` | 400 | InfiniBand bandwidth per GPU (one NIC each) for NCCL between partitions |
 
-Changing a version needs only `make configure`: it rewrites `/etc/fakegpu.conf` and the BMCs' configuration and restarts the GPU exporter and, in k3s mode, GPU Feature Discovery; processes read the file when they start, so running jobs keep the versions they started with. The cuBLAS and cuDNN stubs keep reporting the CUDA 13 runtime they mimic.
+**Changing them** needs only `make configure`: it rewrites `/etc/fakegpu.conf`, the BMCs' and the partition controller's configuration and `/etc/fakeib.json`, restarts the BMCs, the partition controller, the GPU exporter and, in k3s mode, GPU Feature Discovery. Processes read `/etc/fakegpu.conf` when they start, so running jobs keep the values they started with. The cuBLAS and cuDNN stubs keep reporting the CUDA 13 runtime they mimic.
+
+**Validation.** `make up` and `make configure` first check the settings (`playbooks/tasks/check-settings.yml`) and stop with a message if they are inconsistent: `fakegpu_nvlinks` must be 1–64 and a multiple of `nvswitch_count`, and trays × GPUs × links must fit `nvswitch_count` × `nvswitch_ports` (every GPU link is cabled to a switch port); idle power below maximum power, maximum power not above the limit; rates and counts positive; `fakegpu_cuda_version` `MAJOR.MINOR`; `nvl_cluster_uuid` a lower-case UUID, `nvl_clique_id` 1–32765; `ib_link_rate` one of `ib_link_gbps`. The lab's size (trays, GPUs per tray, switch trays, InfiniBand switches) is fixed.
 
 `/etc/fakegpu.conf` also gets `host`, the tray's name, which GPU identities derive from. Debugging: `FAKEGPU_DEBUG=1` logs CUDA entry points resolved to no-ops and unknown export tables.
 

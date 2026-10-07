@@ -70,6 +70,18 @@ The underlying RPCs, for clients of your own (`bin/grpcurl`, [grpcurl](https://g
 | `nvswitch_ports`, `nvswitch_ports_up` | `switch`, `host` | ports per switch, ports up |
 | `nvswitch_tx_bytes_total`, `nvswitch_rx_bytes_total` | `switch`, `host` | traffic carried by each switch: each scrape adds the GPUs' new bytes, split over the links up at that moment, so a link going down or up changes how new traffic is split and never decreases the counter (they start at 0 when the controller starts) |
 
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `nvl_domain_name`, `nvl_cluster_uuid` | `nvl8`, `7f3c2a10-5b4e-4d6a-9c1e-2b8f0e6d4a91` | the NVLink domain: its name and the cluster UUID every GPU reports (NVML fabric info, GFD's `nvidia.com/gpu.clique`, topograph's blocks and labels) |
+| `nvl_clique_id` | 1 | the clique the default partition's GPUs report. A partition you create reports its own id as its clique, so its id must differ from this number, or schedulers would see both partitions as one group; the controller skips it when it picks an id and rejects it when asked for it |
+| `fakegpu_nvlinks` | 18 | NVLinks per GPU (GB200: 18; leave as is unless you approximate another GPU generation). Each link is cabled to a switch port: the links must split evenly between the switch chips and fit their ports (8 GPUs × 18 = 144 = 2 chips × 72 ports) |
+| `nvswitch_count`, `nvswitch_ports` | 2, 72 | NVSwitch chips of the switch tray and ports per chip; links must divide evenly over the chips and all GPU links fit the ports ([Fake GPUs](fake-gpu.md#configuration), validation) |
+| `nmxc_port`, `nmxc_metrics_port` | 9370, 9372 | gRPC API and fabric metrics |
+
+A change applies with `make configure` (the controller restarts; partitions persist in `/var/lib/fakenmxc/partitions.json`).
+
 ## Verification
 
 ```

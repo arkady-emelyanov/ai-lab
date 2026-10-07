@@ -17,16 +17,28 @@ type Config struct {
 	ProductName string `json:"product_name"` // the tray's model, e.g. "GB200 NVL"
 	// GPU VBIOS version, as the tray's NVML reports it (firmware inventory).
 	VBIOSVersion string `json:"vbios_version"`
-	GPUCount     int    `json:"gpu_count"`
-	GPUName      string `json:"gpu_name"`
-	GPUMemMB     int    `json:"gpu_mem_mb"`
-	NVLinks      int    `json:"nvlinks"`
-	ClusterUUID  string `json:"cluster_uuid"`
-	CliqueID     int    `json:"clique_id"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	StateDir     string `json:"state_dir"`
-	SidebandDir  string `json:"sideband_dir"`
+	// GPU profile shared with the tray's fakegpu.conf: power (sensors) and
+	// NVLink bandwidth per link and direction (port speeds).
+	PowerLimitW   float64 `json:"power_limit_w"`
+	IdlePowerW    float64 `json:"idle_power_w"`
+	MaxPowerW     float64 `json:"max_power_w"`
+	NVLinkLinkGbs float64 `json:"nvlink_link_gbs"`
+	// Firmware versions in the inventory and the managers (empty: fakebmc's
+	// own release); the switch tray's NVSwitch and CPLD firmware.
+	BMCFirmware      string `json:"bmc_firmware"`
+	HMCFirmware      string `json:"hmc_firmware"`
+	NVSwitchFirmware string `json:"nvswitch_firmware"`
+	CPLDFirmware     string `json:"cpld_firmware"`
+	GPUCount         int    `json:"gpu_count"`
+	GPUName          string `json:"gpu_name"`
+	GPUMemMB         int    `json:"gpu_mem_mb"`
+	NVLinks          int    `json:"nvlinks"`
+	ClusterUUID      string `json:"cluster_uuid"`
+	CliqueID         int    `json:"clique_id"`
+	Username         string `json:"username"`
+	Password         string `json:"password"`
+	StateDir         string `json:"state_dir"`
+	SidebandDir      string `json:"sideband_dir"`
 	// The tray's GPU occupancy file (fake GPU stack's shared state), read
 	// only: source of the GPU sensors.
 	TelemetryPath string `json:"telemetry_path"`
@@ -61,7 +73,9 @@ func loadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := &Config{Role: "tray", Listen: ":443", ProductName: "GB200 NVL", VBIOSVersion: "97.00.82.00.0F", GPUCount: 4, NVLinks: 18, Username: "root", StateDir: "/var/lib/fakebmc",
+	cfg := &Config{Role: "tray", Listen: ":443", ProductName: "GB200 NVL", VBIOSVersion: "97.00.82.00.0F", GPUCount: 4,
+		PowerLimitW: 1200, IdlePowerW: 140, MaxPowerW: 1000, NVLinkLinkGbs: 50,
+		NVSwitchFirmware: "fakebmc-nvswitch-1", CPLDFirmware: "fakebmc-cpld-1", NVLinks: 18, Username: "root", StateDir: "/var/lib/fakebmc",
 		Switches: 2, SwitchPorts: 72}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -85,5 +99,12 @@ func loadConfig(path string) (*Config, error) {
 	if cfg.SidebandDir == "" {
 		cfg.SidebandDir = cfg.StateDir + "/sideband"
 	}
+	if cfg.BMCFirmware == "" {
+		cfg.BMCFirmware = "fakebmc-" + version
+	}
+	if cfg.HMCFirmware == "" {
+		cfg.HMCFirmware = "fakebmc-hmc-" + version
+	}
+	idleMW, maxMW, powerLimitW = cfg.IdlePowerW*1000, cfg.MaxPowerW*1000, cfg.PowerLimitW
 	return cfg, nil
 }

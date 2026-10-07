@@ -123,6 +123,22 @@ fakegpu_type: gb200
 fakegpu_name: NVIDIA GB200
 fakegpu_mem_mb: 189471
 fakegpu_nvlinks: 18
+# GPU profile (defaults: GB200). Read by the fake driver (nvidia-smi, NVML,
+# GPU Feature Discovery's labels, the timing model), the tray BMCs (sensors,
+# power limit, port speeds) and the partition controller (links per GPU).
+# NVLink bandwidth is per link and direction (18 x 50 GB/s = 900 GB/s per
+# GPU); power draw goes from idle to max_power at full utilisation;
+# throughput figures are dense FLOP/s and copy rates.
+fakegpu_nvlink_link_gbs: 50
+fakegpu_power_limit_w: 1200
+fakegpu_idle_power_w: 140
+fakegpu_max_power_w: 1000
+fakegpu_sm_count: 148
+fakegpu_tensor_tflops: 1200
+fakegpu_fp32_tflops: 60
+fakegpu_fp64_tflops: 40
+fakegpu_host_link_gbs: 400
+fakegpu_hbm_gbs: 4000
 # Versions the emulated driver reports: nvidia-smi ("Driver Version", "CUDA
 # Version", "VBIOS Version"), NVML, cuDriverGetVersion, GPU Feature Discovery's
 # nvidia.com/cuda.driver-version.* and cuda.runtime-version.* labels, and the
@@ -131,6 +147,15 @@ fakegpu_nvlinks: 18
 fakegpu_driver_version: "580.95.05"
 fakegpu_cuda_version: "13.0"
 fakegpu_vbios_version: "97.00.82.00.0F"
+# BMC firmware in the BMCs' Redfish FirmwareInventory and managers: the host
+# BMC (FW_BMC_0, BMC_0), the HGX Management Controller (HGX_FW_BMC_0,
+# HGX_BMC_0), the switch tray's NVSwitch and CPLD firmware. VBIOS and BMC
+# firmware can be set per tray in inventory/hosts.yml (under the tray, e.g.
+# sched-worker2) to make one tray drift from the others.
+bmc_firmware_version: fakebmc-1.0.0
+hmc_firmware_version: fakebmc-hmc-1.0.0
+nvswitch_firmware_version: fakebmc-nvswitch-1
+nvswitch_cpld_firmware_version: fakebmc-cpld-1
 # DMI product name of a tray, as GPU Feature Discovery reports it
 # (nvidia.com/gpu.machine); a container would otherwise show the host's board.
 tray_product_name: GB200 NVL
@@ -156,7 +181,7 @@ telemetry_bmc_path: /var/lib/fakebmc/telemetry
 # (on the shared volume, reachable from every job and pod); collectives
 # between partitions cross InfiniBand at this rate per GPU (one NIC each).
 fakegpu_nccl_dir: "{{ shared_mount }}/.fakegpu/nccl"
-ib_gbps_per_gpu: 400
+ib_gbps_per_gpu: "{{ ib_link_gbps[ib_link_rate] }}"
 
 # NVLink switch tray: switch chips and ports per chip (8 GPUs x 18 links fill
 # 2 x 72 ports), and the partition controller's gRPC port.
@@ -170,6 +195,10 @@ nmxc_metrics_port: 9372
 ib_spine: LAB-IBSPINE-01
 ib_leaf: LAB-IBLEAF-01
 ib_hcas_per_node: 4
+# InfiniBand link rate of the HCAs (4x links): what ibnetdiscover reports and
+# the per-GPU bandwidth NCCL gets between NVLink partitions.
+ib_link_rate: NDR
+ib_link_gbps: { SDR: 10, DDR: 20, QDR: 40, FDR: 56, EDR: 100, HDR: 200, NDR: 400, XDR: 800 }
 topograph_port: 49021
 # Commit of dsx-ai-factory/topograph built by `make init`.
 topograph_ref: 258d446

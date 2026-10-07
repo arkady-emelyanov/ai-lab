@@ -8,7 +8,7 @@
 
 - name: Describe the fabric
   ansible.builtin.copy:
-    content: "{{ {'spine': ib_spine, 'leaf': ib_leaf, 'nodes': groups['workers'] | map('community.general.dict_kv', 'name') | map('combine', {'hcas': ib_hcas_per_node}) | list} | to_nice_json }}\n"
+    content: "{{ {'spine': ib_spine, 'leaf': ib_leaf, 'rate': ib_link_rate, 'nodes': groups['workers'] | map('community.general.dict_kv', 'name') | map('combine', {'hcas': ib_hcas_per_node}) | list} | to_nice_json }}\n"
     dest: /etc/fakeib.json
     mode: "0644"
 

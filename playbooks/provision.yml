@@ -13,11 +13,8 @@
     # Fixed address of an instance on the bridge (needs `api`, read below).
     address: "{{ api.results[0].stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[item].ip_host }}"
   tasks:
-    - name: Check the scheduler setting
-      ansible.builtin.assert:
-        that: scheduler in ['slurm', 'k3s']
-        fail_msg: "scheduler must be slurm or k3s, not {{ scheduler }}"
-        quiet: true
+    - name: Check the settings
+      ansible.builtin.include_tasks: tasks/check-settings.yml
 
     # ---- GPU trays project and Incus API for BMC power control ------------------
 

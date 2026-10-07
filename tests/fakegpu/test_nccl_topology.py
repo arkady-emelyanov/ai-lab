@@ -39,7 +39,7 @@ def lab(tmp_path):
     shared = tmp_path / "nccl"
     shared.mkdir()
 
-    def run(cliques, op="allreduce", nbytes=B, args=None, ranks=None, exchange=True, timeout=10):
+    def run(cliques, op="allreduce", nbytes=B, args=None, ranks=None, exchange=True, timeout=10, profile=None):
         idfile = tmp_path / f"id-{op}-{len(list(tmp_path.iterdir()))}"
         procs = []
         for rank in (range(len(cliques)) if ranks is None else ranks):
@@ -53,7 +53,8 @@ def lab(tmp_path):
                        FAKEGPU_COUNT="1", FAKEGPU_HOST=f"tray{rank}", FAKEGPU_CLUSTER_UUID=UUID,
                        FAKEGPU_DEV_DIR=str(tray / "dev"), FAKEGPU_SIDEBAND_DIR=str(tray / "sb"),
                        FAKEGPU_STATE_PATH=str(tray / "occ"), FAKEGPU_NCCL_TIMEOUT_S=str(timeout),
-                       FAKEGPU_NCCL_DIR=str(shared) if exchange else "")
+                       FAKEGPU_NCCL_DIR=str(shared) if exchange else "",
+                       **{f"FAKEGPU_{k.upper()}": str(v) for k, v in (profile or {}).items()})
             cmd = [sys.executable, str(RANK), str(FAKEGPU), str(len(cliques)), str(rank), str(idfile), op, str(nbytes)]
             if args is not None:
                 cmd.append(str(args[rank]))
@@ -152,3 +153,11 @@ def test_nic_counters_reach_node_exporter_names(lab, tmp_path):
     rx = samples['node_infiniband_port_data_received_bytes_total{device="mlx5_0",port="1"}']
     assert int(tx) == r["ib_tx"] > 0 and int(rx) == r["ib_rx"] > 0
     assert samples['node_infiniband_port_data_transmitted_bytes_total{device="mlx5_1",port="1"}'] == "0"
+
+
+def test_cost_follows_the_gpu_profile(lab):
+    """fakegpu_nvlink_link_gbs and ib_link_rate set the rates the model uses."""
+    for r in lab([1, 1, 1, 1], profile=dict(nvlink_link_gbs=25)):
+        assert near(r["busy_ns"], 10_000 + B * allreduce_bus(4) / (18 * 25))
+    for r in lab([1, 1, 2, 2], profile=dict(ib_gbps=200)):
+        assert near(r["busy_ns"], 20_000 + B * allreduce_bus(2) / NVLINK + B * allreduce_bus(2) / 2 / 25)

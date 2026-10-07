@@ -190,6 +190,27 @@ def tray_partition(lab):
     gpu_reset(lab, tray)
 
 
+def test_default_clique_is_not_a_partition_id(lab):
+    """A user partition's GPUs report its id as their clique: the default
+    partition's clique (nvl_clique_id) cannot be an id, or both partitions
+    would look like one to the schedulers (lab rule)."""
+    _grpc(lab, "Hello")
+    if [p["partitionId"] for p in _grpc(lab, "GetPartitionInfoList").get("partitions", [])] != [32766]:
+        pytest.skip("partitions other than the default exist")
+    tray = lab.trays[-1]
+    uids = [g["gpuUid"] for g in _grpc(lab, "GetGpuInfoList")["gpus"] if g["hostname"] == tray]
+    clique = int(lab.vars["nvl_clique_id"])
+    _grpc(lab, "RemoveGpusFromPartition", partition_id=32766, gpu_uids=uids)
+    try:
+        refused = _grpc(lab, "CreatePartition", partition_name="clique-test", partition_id=clique, gpu_uids=uids)
+        assert refused.get("returnCode") == "NMX_ST_INVALID_ARGUMENT", refused
+        made = _grpc(lab, "CreatePartition", partition_name="clique-test", gpu_uids=uids)
+        assert made["partition"]["partitionId"] != clique
+        _grpc(lab, "DeletePartition", partition_id=made["partition"]["partitionId"])
+    finally:
+        _grpc(lab, "AddGpusToPartition", partition_id=32766, gpu_uids=uids)
+
+
 def test_partition_change_waits_for_gpu_reset(lab, tray_partition):
     """[mc]: "We need to reset the GPUs (or reboot the nodes) in order for the
     Clique ID to update"; [part] 4.1: reset a GPU added to a partition (clears

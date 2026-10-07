@@ -30,9 +30,10 @@ int fg_current_phys(void); /* cuda_stub.c */
 #define LAUNCH_NS 3000.0          /* kernel launch + minimal execution */
 #define WAVE_NS 2500.0            /* one wave of blocks across all SMs */
 #define COPY_NS 2000.0            /* copy setup */
-#define HOST_LINK_B_PER_NS 400.0  /* NVLink-C2C host <-> GPU, ~400 GB/s */
-#define HBM_B_PER_NS 4000.0       /* device-to-device, 8 TB/s read + write */
-#define NVLINK_B_PER_NS 900.0     /* GPU <-> GPU over NVLink5 */
+/* Link and memory rates: the GPU profile (fakegpu.h). */
+#define HOST_LINK_B_PER_NS (fg_host_link_bytes_per_ns())
+#define HBM_B_PER_NS (fg_hbm_bytes_per_ns())
+#define NVLINK_B_PER_NS (fg_nvlink_bytes_per_ns())
 
 uint64_t fg_kernel_ns(unsigned gx, unsigned gy, unsigned gz, unsigned bx, unsigned by, unsigned bz)
 {
