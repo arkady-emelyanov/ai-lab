@@ -14,13 +14,17 @@ import (
 	"time"
 )
 
-// Resource names follow NVIDIA's GB200 BMC (NVIDIA/bmcweb): System_0 is the
-// host, GPUs are Processors GPU_<n> with NVLink ports NVLink_<n>.
+// Resource names follow NVIDIA's GB200 BMCs (layout.go): System_0 is the
+// host, the GPUs are Processors GPU_<n> of HGX_Baseboard_0 with NVLink ports
+// NVLink_<n>.
 const (
-	systemID  = "System_0"
-	chassisID = "Chassis_0"
-	managerID = "BMC_0"
-	root      = "/redfish/v1"
+	systemID     = "System_0"
+	hgxSystemID  = "HGX_Baseboard_0"
+	chassisID    = "Chassis_0"
+	hgxChassisID = "HGX_Chassis_0"
+	managerID    = "BMC_0"
+	hmcID        = "HGX_BMC_0"
+	root         = "/redfish/v1"
 )
 
 type obj = map[string]any
@@ -47,13 +51,6 @@ func newServer(cfg *Config, state *State, power *Power, sw *switchState) *Server
 
 func (s *Server) isSwitch() bool { return s.cfg.Role == "nvswitch" }
 
-func (s *Server) chassisID() string {
-	if s.isSwitch() {
-		return "NVSwitchTray_0"
-	}
-	return chassisID
-}
-
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	// Unauthenticated, as required by the Redfish specification.
@@ -67,12 +64,12 @@ func (s *Server) routes() http.Handler {
 	auth("GET "+root+"/SessionService/Sessions/{id}", s.sessionGet)
 	auth("DELETE "+root+"/SessionService/Sessions/{id}", s.sessionDelete)
 
+	auth("GET "+root+"/Systems", s.systems)
+	auth("GET "+root+"/Systems/{sys}", s.system)
+	auth("POST "+root+"/Systems/{sys}/Actions/ComputerSystem.Reset", s.reset)
 	if s.isSwitch() {
 		s.nvswitchRoutes(auth)
 	} else {
-		auth("GET "+root+"/Systems", s.systems)
-		auth("GET "+root+"/Systems/{sys}", s.system)
-		auth("POST "+root+"/Systems/{sys}/Actions/ComputerSystem.Reset", s.reset)
 		auth("GET "+root+"/Systems/{sys}/Processors", s.processors)
 		auth("GET "+root+"/Systems/{sys}/Processors/{gpu}", s.processor)
 		auth("GET "+root+"/Systems/{sys}/Processors/{gpu}/EnvironmentMetrics", s.gpuEnvironment)
@@ -86,10 +83,14 @@ func (s *Server) routes() http.Handler {
 		auth("GET "+root+"/Chassis/{ch}/EnvironmentMetrics", s.chassisEnvironment)
 		auth("GET "+root+"/Chassis/{ch}/ThermalSubsystem", s.thermalSubsystem)
 		auth("GET "+root+"/Chassis/{ch}/ThermalSubsystem/ThermalMetrics", s.thermalMetrics)
+		auth("GET "+root+"/Chassis/{ch}/Assembly", s.assembly)
 	}
 
 	auth("GET "+root+"/Chassis", s.chassisList)
 	auth("GET "+root+"/Chassis/{ch}", s.chassis)
+	auth("GET "+root+"/UpdateService", s.updateService)
+	auth("GET "+root+"/UpdateService/FirmwareInventory", s.firmwareInventory)
+	auth("GET "+root+"/UpdateService/FirmwareInventory/{fw}", s.firmwareItem)
 	auth("GET "+root+"/Managers", s.managers)
 	auth("GET "+root+"/Managers/{mgr}", s.manager)
 	auth("POST "+root+"/Managers/{mgr}/Actions/Manager.Reset", s.managerReset)
@@ -226,6 +227,7 @@ func (s *Server) serviceRoot(w http.ResponseWriter, r *http.Request) {
 		"Managers":       link(root + "/Managers"),
 		"SessionService": link(root + "/SessionService"),
 		"Systems":        link(root + "/Systems"),
+		"UpdateService":  link(root + "/UpdateService"),
 		"Links":          obj{"Sessions": link(root + "/SessionService/Sessions")},
 	}
 	if s.isSwitch() {
@@ -322,16 +324,12 @@ func (s *Server) sessionDelete(w http.ResponseWriter, r *http.Request) {
 
 // ---- system and power ---------------------------------------------------------
 
-func (s *Server) checkSystem(w http.ResponseWriter, r *http.Request) bool {
-	if r.PathValue("sys") != systemID {
+func (s *Server) checkSystem(w http.ResponseWriter, r *http.Request, id string) bool {
+	if r.PathValue("sys") != id {
 		redfishError(w, http.StatusNotFound, "ResourceNotFound", "System "+r.PathValue("sys")+" was not found.")
 		return false
 	}
 	return true
-}
-
-func (s *Server) systems(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, collection(root+"/Systems", "ComputerSystemCollection", "Computer System Collection", []string{systemID}))
 }
 
 var resetTypes = []string{"On", "ForceOff", "GracefulShutdown", "GracefulRestart", "ForceRestart", "PowerCycle"}
@@ -348,38 +346,8 @@ func (s *Server) powerState() (string, obj) {
 	return state, obj{"State": "Enabled", "Health": "OK"}
 }
 
-func (s *Server) system(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSystem(w, r) {
-		return
-	}
-	power, status := s.powerState()
-	path := root + "/Systems/" + systemID
-	writeJSON(w, 200, obj{
-		"@odata.id":        path,
-		"@odata.type":      "#ComputerSystem.v1_20_0.ComputerSystem",
-		"Id":               systemID,
-		"Name":             "System",
-		"HostName":         s.cfg.Tray,
-		"SystemType":       "Physical",
-		"Manufacturer":     "NVIDIA",
-		"Model":            s.cfg.GPUName + " compute tray",
-		"PowerState":       power,
-		"Status":           status,
-		"ProcessorSummary": obj{"Count": s.cfg.GPUCount},
-		"Processors":       link(path + "/Processors"),
-		"Links": obj{
-			"Chassis":   []obj{link(root + "/Chassis/" + chassisID)},
-			"ManagedBy": []obj{link(root + "/Managers/" + managerID)},
-		},
-		"Actions": obj{"#ComputerSystem.Reset": obj{
-			"target":                            path + "/Actions/ComputerSystem.Reset",
-			"ResetType@Redfish.AllowableValues": resetTypes,
-		}},
-	})
-}
-
 func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSystem(w, r) {
+	if !s.checkSystem(w, r, systemID) {
 		return
 	}
 	var req struct{ ResetType string }
@@ -388,6 +356,19 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ResetType == "" {
 		req.ResetType = "GracefulRestart"
+	}
+	if s.isSwitch() {
+		// The switch tray's CPU: accepted, but the lab has no power control
+		// over the switch tray host (the partition controller keeps running).
+		for _, t := range resetTypes {
+			if t == req.ResetType {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		redfishError(w, http.StatusBadRequest, "ActionParameterValueNotInList",
+			fmt.Sprintf("The value %q for ResetType is not in the list of acceptable values %v.", req.ResetType, resetTypes))
+		return
 	}
 	// Pending NVLink changes take effect whenever the tray (re)starts.
 	powersOn := map[string]bool{"On": true, "GracefulRestart": true, "ForceRestart": true, "PowerCycle": true}
@@ -430,7 +411,7 @@ func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
 // ---- GPUs and NVLink ports ------------------------------------------------------
 
 func (s *Server) gpuIndex(w http.ResponseWriter, r *http.Request) (int, bool) {
-	if !s.checkSystem(w, r) {
+	if !s.checkSystem(w, r, hgxSystemID) {
 		return 0, false
 	}
 	id := r.PathValue("gpu")
@@ -457,14 +438,14 @@ func (s *Server) linkKey(w http.ResponseWriter, r *http.Request) (LinkKey, bool)
 }
 
 func (s *Server) processors(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSystem(w, r) {
+	if !s.checkSystem(w, r, hgxSystemID) {
 		return
 	}
 	ids := make([]string, s.cfg.GPUCount)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("GPU_%d", i)
 	}
-	writeJSON(w, 200, collection(root+"/Systems/"+systemID+"/Processors", "ProcessorCollection", "Processor Collection", ids))
+	writeJSON(w, 200, collection(root+"/Systems/"+hgxSystemID+"/Processors", "ProcessorCollection", "Processor Collection", ids))
 }
 
 func (s *Server) processor(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +453,7 @@ func (s *Server) processor(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	path := fmt.Sprintf("%s/Systems/%s/Processors/GPU_%d", root, systemID, g)
+	path := gpuPath(g)
 	writeJSON(w, 200, obj{
 		"@odata.id":          path,
 		"@odata.type":        "#Processor.v1_20_0.Processor",
@@ -488,11 +469,11 @@ func (s *Server) processor(w http.ResponseWriter, r *http.Request) {
 		"Location":           obj{"PartLocation": obj{"LocationType": "Slot", "LocationOrdinalValue": g}},
 		"Ports":              link(path + "/Ports"),
 		"EnvironmentMetrics": link(path + "/EnvironmentMetrics"),
-		"Links":              obj{"Chassis": link(root + "/Chassis/" + chassisID)},
+		"Links":              obj{"Chassis": link(root + "/Chassis/" + gpuChassisID(g))},
 		"Oem": obj{"Nvidia": obj{
 			"@odata.type":  "#NvidiaProcessor.v1_4_0.NvidiaGPU",
 			"PCIeBusId":    gpuPCIBusID(g),
-			"FabricClique": obj{"ClusterUUID": s.cfg.ClusterUUID, "CliqueId": s.cfg.CliqueID},
+			"FabricClique": obj{"ClusterUUID": s.cfg.ClusterUUID, "CliqueId": s.state.Clique(g, s.cfg.CliqueID)},
 		}},
 	})
 }
@@ -506,7 +487,7 @@ func (s *Server) ports(w http.ResponseWriter, r *http.Request) {
 	for i := range ids {
 		ids[i] = fmt.Sprintf("NVLink_%d", i)
 	}
-	writeJSON(w, 200, collection(fmt.Sprintf("%s/Systems/%s/Processors/GPU_%d/Ports", root, systemID, g), "PortCollection", "NVLink Port Collection", ids))
+	writeJSON(w, 200, collection(gpuPath(g)+"/Ports", "PortCollection", "NVLink Port Collection", ids))
 }
 
 func linkState(disabled bool) string {
@@ -522,15 +503,16 @@ func (s *Server) port(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	disabled, _ := s.state.LinkDisabled(k)
+	farEnd := s.state.SwitchPortDown(k) // the switch end, taken down on the switch tray
 	power, _ := s.powerState()
 	status, health := "LinkUp", "OK"
-	if disabled || power != "On" {
+	if disabled || farEnd || power != "On" {
 		status = "LinkDown"
 	}
-	if disabled {
+	if disabled || farEnd {
 		health = "Warning"
 	}
-	path := fmt.Sprintf("%s/Systems/%s/Processors/GPU_%d/Ports/NVLink_%d", root, systemID, k.GPU, k.Link)
+	path := fmt.Sprintf("%s/Ports/NVLink_%d", gpuPath(k.GPU), k.Link)
 	writeJSON(w, 200, obj{
 		"@odata.id":         path,
 		"@odata.type":       "#Port.v1_11_0.Port",
@@ -619,96 +601,5 @@ func (s *Server) patchPort(w http.ResponseWriter, r *http.Request) {
 		redfishError(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// ---- chassis and manager ---------------------------------------------------------
-
-func (s *Server) chassisList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, collection(root+"/Chassis", "ChassisCollection", "Chassis Collection", []string{s.chassisID()}))
-}
-
-func (s *Server) chassis(w http.ResponseWriter, r *http.Request) {
-	if r.PathValue("ch") != s.chassisID() {
-		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" was not found.")
-		return
-	}
-	if s.isSwitch() {
-		writeJSON(w, 200, obj{
-			"@odata.id":    root + "/Chassis/" + s.chassisID(),
-			"@odata.type":  "#Chassis.v1_23_0.Chassis",
-			"Id":           s.chassisID(),
-			"Name":         "NVLink switch tray",
-			"ChassisType":  "Sled",
-			"Manufacturer": "NVIDIA",
-			"Model":        "NVLink5 switch tray",
-			"PowerState":   "On",
-			"Status":       obj{"State": "Enabled", "Health": "OK"},
-			"Links": obj{
-				"ComputerSystems": []obj{link(root + "/Systems/" + systemID)},
-				"ManagedBy":       []obj{link(root + "/Managers/" + managerID)},
-			},
-		})
-		return
-	}
-	power, status := s.powerState()
-	writeJSON(w, 200, obj{
-		"@odata.id":          root + "/Chassis/" + chassisID,
-		"@odata.type":        "#Chassis.v1_23_0.Chassis",
-		"Id":                 chassisID,
-		"Name":               s.cfg.Tray,
-		"ChassisType":        "Sled",
-		"Manufacturer":       "NVIDIA",
-		"Model":              s.cfg.GPUName + " compute tray",
-		"PowerState":         power,
-		"Status":             status,
-		"Sensors":            link(root + "/Chassis/" + chassisID + "/Sensors"),
-		"EnvironmentMetrics": link(root + "/Chassis/" + chassisID + "/EnvironmentMetrics"),
-		"ThermalSubsystem":   link(root + "/Chassis/" + chassisID + "/ThermalSubsystem"),
-		"Links": obj{
-			"ComputerSystems": []obj{link(root + "/Systems/" + systemID)},
-			"ManagedBy":       []obj{link(root + "/Managers/" + managerID)},
-		},
-	})
-}
-
-func (s *Server) managers(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, collection(root+"/Managers", "ManagerCollection", "Manager Collection", []string{managerID}))
-}
-
-func (s *Server) manager(w http.ResponseWriter, r *http.Request) {
-	if r.PathValue("mgr") != managerID {
-		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Manager "+r.PathValue("mgr")+" was not found.")
-		return
-	}
-	path := root + "/Managers/" + managerID
-	writeJSON(w, 200, obj{
-		"@odata.id":       path,
-		"@odata.type":     "#Manager.v1_19_0.Manager",
-		"Id":              managerID,
-		"Name":            "OpenBMC Manager",
-		"ManagerType":     "BMC",
-		"FirmwareVersion": "fakebmc-" + version,
-		"Status":          obj{"State": "Enabled", "Health": "OK"},
-		"Links":           s.managerLinks(),
-		"Actions": obj{"#Manager.Reset": obj{
-			"target":                            path + "/Actions/Manager.Reset",
-			"ResetType@Redfish.AllowableValues": []string{"GracefulRestart", "ForceRestart"},
-		}},
-	})
-}
-
-func (s *Server) managerLinks() obj {
-	return obj{
-		"ManagerForChassis": []obj{link(root + "/Chassis/" + s.chassisID())},
-		"ManagerForServers": []obj{link(root + "/Systems/" + systemID)},
-	}
-}
-
-// A BMC reset drops all sessions; the tray keeps running.
-func (s *Server) managerReset(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	s.sessions = map[string]session{}
-	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }

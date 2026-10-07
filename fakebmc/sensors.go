@@ -128,19 +128,23 @@ func (s *Server) gpuReadings() ([]gpuReading, error) {
 }
 
 // ---- Redfish resources -------------------------------------------------------
+//
+// Each GPU's sensors live on its own chassis (HGX_GPU_<n>/Sensors, as on the
+// real tray); Chassis_0 carries the tray's total GPU power and the thermal
+// summary of all GPUs, pointing at the GPU sensors.
 
 func gpuSensorIDs(g int) (temp, power string) {
-	return fmt.Sprintf("GPU_%d_TEMP_0", g), fmt.Sprintf("GPU_%d_Power_0", g)
+	return fmt.Sprintf("HGX_GPU_%d_TEMP_0", g), fmt.Sprintf("HGX_GPU_%d_Power_0", g)
 }
 
 const totalPowerSensor = "Total_GPU_Power_0"
 
-func sensorsPath() string { return root + "/Chassis/" + chassisID + "/Sensors" }
+func sensorURI(chassis, sensor string) string {
+	return root + "/Chassis/" + chassis + "/Sensors/" + sensor
+}
 
 // excerpt is a SensorExcerpt: the reading inline, the sensor linked.
-func excerpt(sensor string, reading any) obj {
-	return obj{"Reading": reading, "DataSourceUri": sensorsPath() + "/" + sensor}
-}
+func excerpt(uri string, reading any) obj { return obj{"Reading": reading, "DataSourceUri": uri} }
 
 // readings returns the GPU readings for a handler, or writes the error.
 func (s *Server) readings(w http.ResponseWriter) ([]gpuReading, bool) {
@@ -178,39 +182,41 @@ func sensorStatus(rs []gpuReading) obj {
 	return obj{"State": "Enabled", "Health": "OK"}
 }
 
+// sensorChassis resolves the chassis of a sensor request: Chassis_0 (gpu -1)
+// or HGX_GPU_<n>; anything else is written as 404.
+func (s *Server) sensorChassis(w http.ResponseWriter, r *http.Request) (gpu int, ok bool) {
+	ch := r.PathValue("ch")
+	if ch == chassisID {
+		return -1, true
+	}
+	if g, isGPU := s.gpuChassisIndex(ch); isGPU {
+		return g, true
+	}
+	redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+ch+" has no sensors.")
+	return 0, false
+}
+
 func (s *Server) sensorList(w http.ResponseWriter, r *http.Request) {
-	if r.PathValue("ch") != chassisID {
-		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" was not found.")
+	gpu, ok := s.sensorChassis(w, r)
+	if !ok {
 		return
 	}
-	var ids []string
-	for g := 0; g < s.cfg.GPUCount; g++ {
-		t, p := gpuSensorIDs(g)
-		ids = append(ids, t, p)
+	ids := []string{totalPowerSensor}
+	if gpu >= 0 {
+		t, p := gpuSensorIDs(gpu)
+		ids = []string{t, p}
 	}
-	ids = append(ids, totalPowerSensor)
-	writeJSON(w, 200, collection(sensorsPath(), "SensorCollection", "Sensor Collection", ids))
+	writeJSON(w, 200, collection(root+"/Chassis/"+r.PathValue("ch")+"/Sensors", "SensorCollection", "Sensor Collection", ids))
 }
 
 func (s *Server) sensor(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("sensor")
-	if r.PathValue("ch") != chassisID {
-		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" was not found.")
+	gpu, ok := s.sensorChassis(w, r)
+	if !ok {
 		return
 	}
-	body := obj{
-		"@odata.id":   sensorsPath() + "/" + id,
-		"@odata.type": "#Sensor.v1_9_0.Sensor",
-		"Id":          id,
-	}
-	found := id == totalPowerSensor
-	gpu := -1
-	for g := 0; g < s.cfg.GPUCount && !found; g++ {
-		if t, p := gpuSensorIDs(g); id == t || id == p {
-			found, gpu = true, g
-		}
-	}
-	if !found {
+	id := r.PathValue("sensor")
+	tempID, powerID := gpuSensorIDs(gpu)
+	if (gpu < 0 && id != totalPowerSensor) || (gpu >= 0 && id != tempID && id != powerID) {
 		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Sensor "+id+" was not found.")
 		return
 	}
@@ -218,16 +224,20 @@ func (s *Server) sensor(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body["Status"] = sensorStatus(rs)
-	tempID, _ := gpuSensorIDs(gpu)
-	switch {
-	case gpu < 0:
+	body := obj{
+		"@odata.id":   sensorURI(r.PathValue("ch"), id),
+		"@odata.type": "#Sensor.v1_9_0.Sensor",
+		"Id":          id,
+		"Status":      sensorStatus(rs),
+	}
+	switch id {
+	case totalPowerSensor:
 		body["Name"] = "Total GPU Power"
 		body["ReadingType"], body["ReadingUnits"] = "Power", "W"
 		body["PhysicalContext"] = "GPUSubsystem"
 		body["Reading"] = totalPower(rs)
 		body["RelatedItem"] = []obj{link(root + "/Chassis/" + chassisID)}
-	case id == tempID:
+	case tempID:
 		body["Name"] = fmt.Sprintf("GPU %d Temperature", gpu)
 		body["ReadingType"], body["ReadingUnits"] = "Temperature", "Cel"
 		body["PhysicalContext"] = "GPU"
@@ -243,56 +253,62 @@ func (s *Server) sensor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, body)
 }
 
-func gpuPath(g int) string {
-	return fmt.Sprintf("%s/Systems/%s/Processors/GPU_%d", root, systemID, g)
+// gpuMetrics is a GPU's EnvironmentMetrics, served on its processor (where
+// nv-redfish looks) and on its HGX_GPU_<n> chassis.
+func (s *Server) gpuMetrics(path string, g int, rs []gpuReading) obj {
+	temp, power := gpuSensorIDs(g)
+	ch := gpuChassisID(g)
+	return obj{
+		"@odata.id":          path,
+		"@odata.type":        "#EnvironmentMetrics.v1_3_0.EnvironmentMetrics",
+		"Id":                 "EnvironmentMetrics",
+		"Name":               fmt.Sprintf("GPU %d Environment Metrics", g),
+		"TemperatureCelsius": excerpt(sensorURI(ch, temp), value(rs, g, func(r gpuReading) int { return r.TempC })),
+		"PowerWatts":         excerpt(sensorURI(ch, power), value(rs, g, func(r gpuReading) float64 { return r.PowerW })),
+		"PowerLimitWatts":    obj{"SetPoint": powerLimitW, "AllowableMax": powerLimitW, "ControlMode": "Automatic"},
+	}
 }
 
-// Per-GPU EnvironmentMetrics, linked from the processor (where NVIDIA's
-// BMCs and nv-redfish look for GPU power and temperature).
 func (s *Server) gpuEnvironment(w http.ResponseWriter, r *http.Request) {
 	g, ok := s.gpuIndex(w, r)
 	if !ok {
 		return
 	}
-	rs, ok := s.readings(w)
-	if !ok {
-		return
+	if rs, ok := s.readings(w); ok {
+		writeJSON(w, 200, s.gpuMetrics(gpuPath(g)+"/EnvironmentMetrics", g, rs))
 	}
-	temp, power := gpuSensorIDs(g)
-	writeJSON(w, 200, obj{
-		"@odata.id":          gpuPath(g) + "/EnvironmentMetrics",
-		"@odata.type":        "#EnvironmentMetrics.v1_3_0.EnvironmentMetrics",
-		"Id":                 "EnvironmentMetrics",
-		"Name":               fmt.Sprintf("GPU %d Environment Metrics", g),
-		"TemperatureCelsius": excerpt(temp, value(rs, g, func(r gpuReading) int { return r.TempC })),
-		"PowerWatts":         excerpt(power, value(rs, g, func(r gpuReading) float64 { return r.PowerW })),
-		"PowerLimitWatts":    obj{"SetPoint": powerLimitW, "AllowableMax": powerLimitW, "ControlMode": "Automatic"},
-	})
 }
 
-// Chassis EnvironmentMetrics: the tray's GPU power.
+// Chassis EnvironmentMetrics: the tray's GPU power on Chassis_0, the GPU's
+// metrics on HGX_GPU_<n>.
 func (s *Server) chassisEnvironment(w http.ResponseWriter, r *http.Request) {
-	if r.PathValue("ch") != chassisID {
-		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" was not found.")
+	gpu, ok := s.sensorChassis(w, r)
+	if !ok {
 		return
 	}
 	rs, ok := s.readings(w)
 	if !ok {
 		return
 	}
+	path := root + "/Chassis/" + r.PathValue("ch") + "/EnvironmentMetrics"
+	if gpu >= 0 {
+		writeJSON(w, 200, s.gpuMetrics(path, gpu, rs))
+		return
+	}
 	writeJSON(w, 200, obj{
-		"@odata.id":   root + "/Chassis/" + chassisID + "/EnvironmentMetrics",
+		"@odata.id":   path,
 		"@odata.type": "#EnvironmentMetrics.v1_3_0.EnvironmentMetrics",
 		"Id":          "EnvironmentMetrics",
 		"Name":        "Chassis Environment Metrics",
-		"PowerWatts":  excerpt(totalPowerSensor, totalPower(rs)),
+		"PowerWatts":  excerpt(sensorURI(chassisID, totalPowerSensor), totalPower(rs)),
 	})
 }
 
-// ThermalSubsystem: liquid-cooled tray, so temperatures only, no fans.
+// ThermalSubsystem of Chassis_0: liquid-cooled tray, so temperatures only, no
+// fans; one reading per GPU, from the GPU's own sensor.
 func (s *Server) thermalSubsystem(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("ch") != chassisID {
-		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" was not found.")
+		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" has no thermal subsystem.")
 		return
 	}
 	path := root + "/Chassis/" + chassisID + "/ThermalSubsystem"
@@ -308,7 +324,7 @@ func (s *Server) thermalSubsystem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) thermalMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("ch") != chassisID {
-		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" was not found.")
+		redfishError(w, http.StatusNotFound, "ResourceNotFound", "Chassis "+r.PathValue("ch")+" has no thermal subsystem.")
 		return
 	}
 	rs, ok := s.readings(w)
@@ -318,7 +334,7 @@ func (s *Server) thermalMetrics(w http.ResponseWriter, r *http.Request) {
 	temps := make([]obj, s.cfg.GPUCount)
 	for g := range temps {
 		id, _ := gpuSensorIDs(g)
-		temps[g] = excerpt(id, value(rs, g, func(r gpuReading) int { return r.TempC }))
+		temps[g] = excerpt(sensorURI(gpuChassisID(g), id), value(rs, g, func(r gpuReading) int { return r.TempC }))
 		temps[g]["DeviceName"] = fmt.Sprintf("GPU_%d", g)
 		temps[g]["PhysicalContext"] = "GPU"
 	}

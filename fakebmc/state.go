@@ -153,3 +153,44 @@ func (s *State) writeSideband() error {
 	}
 	return os.Rename(tmp, s.sideband)
 }
+
+// sidebandPairs reads a "<gpu> <value>" file the switch tray writes into this
+// tray's sideband (the same files the tray's fake NVML reads).
+func (s *State) sidebandPairs(name string) [][2]int {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(s.sideband), name))
+	if err != nil {
+		return nil
+	}
+	var out [][2]int
+	for _, line := range strings.Split(string(data), "\n") {
+		var a, b int
+		if !strings.HasPrefix(line, "#") {
+			if _, err := fmt.Sscanf(line, "%d %d", &a, &b); err == nil {
+				out = append(out, [2]int{a, b})
+			}
+		}
+	}
+	return out
+}
+
+// SwitchPortDown reports whether the switch BMC disabled the switch port this
+// GPU link is cabled to (nvlink-disabled-switch).
+func (s *State) SwitchPortDown(k LinkKey) bool {
+	for _, p := range s.sidebandPairs("nvlink-disabled-switch") {
+		if p == [2]int{k.GPU, k.Link} {
+			return true
+		}
+	}
+	return false
+}
+
+// Clique is the GPU's NVLink partition clique as the partition controller
+// published it (fabric-clique), as NVML reports it; def without one.
+func (s *State) Clique(gpu, def int) int {
+	for _, p := range s.sidebandPairs("fabric-clique") {
+		if p[0] == gpu {
+			return p[1]
+		}
+	}
+	return def
+}

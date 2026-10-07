@@ -3,6 +3,8 @@
   "role": "tray",
   "listen": ":443",
   "tray": "{{ bmc_tray }}",
+  "tray_index": {{ hostvars[bmc_tray].tray - 1 }},
+  "product_name": "{{ tray_product_name }}",
   "gpu_count": {{ fakegpu_count }},
   "gpu_name": "{{ fakegpu_name }}",
   "gpu_mem_mb": {{ fakegpu_mem_mb }},

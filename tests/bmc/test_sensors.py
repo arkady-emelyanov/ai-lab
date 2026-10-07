@@ -10,7 +10,12 @@ import pytest
 
 from conftest import ROOT, eventually, gpu_path, members
 
-SENSORS = f"{ROOT}/Chassis/Chassis_0/Sensors"
+TRAY = f"{ROOT}/Chassis/Chassis_0"
+
+
+def gpu_sensors(g):
+    """A GPU's sensors, on its own chassis (HGX_GPU_<n>), as on a real GB200 tray."""
+    return f"{ROOT}/Chassis/HGX_GPU_{g}/Sensors"
 POWER_TOL, TEMP_TOL = 0.05, 0  # W, whole degrees
 
 # Runs on the tray: NVML, BMC, NVML for each GPU.
@@ -25,7 +30,7 @@ def nv(g):
     nvml.nvmlDeviceGetTemperature(h, 0, ctypes.byref(t)); nvml.nvmlDeviceGetPowerUsage(h, ctypes.byref(p))
     return t.value, p.value / 1000
 def env(g):
-    req = urllib.request.Request(f"https://{bmc}/redfish/v1/Systems/System_0/Processors/GPU_{g}/EnvironmentMetrics",
+    req = urllib.request.Request(f"https://{bmc}/redfish/v1/Systems/HGX_Baseboard_0/Processors/GPU_{g}/EnvironmentMetrics",
                                  headers={"Authorization": "Basic " + auth})
     e = json.load(urllib.request.urlopen(req, context=tls, timeout=10))
     return e["TemperatureCelsius"]["Reading"], e["PowerWatts"]["Reading"]
@@ -77,26 +82,28 @@ def gpu_load(lab, tray, gpu, seconds=60):
 
 def test_sensor_resources(lab, tray):
     b = lab.tray_bmc(tray)
-    chassis = b.get(f"{ROOT}/Chassis/Chassis_0")
-    assert chassis["Sensors"]["@odata.id"] == SENSORS
-    ids = {m.rsplit("/", 1)[1] for m in members(b.get(SENSORS))}
-    want = {f"GPU_{g}_{k}_0" for g in range(lab.gpus) for k in ("TEMP", "Power")} | {"Total_GPU_Power_0"}
-    assert ids == want
     for g in range(lab.gpus):
-        t = b.get(f"{SENSORS}/GPU_{g}_TEMP_0")
+        sensors = gpu_sensors(g)
+        assert b.get(f"{ROOT}/Chassis/HGX_GPU_{g}")["Sensors"]["@odata.id"] == sensors
+        assert {m.rsplit("/", 1)[1] for m in members(b.get(sensors))} == {f"HGX_GPU_{g}_TEMP_0", f"HGX_GPU_{g}_Power_0"}
+        t = b.get(f"{sensors}/HGX_GPU_{g}_TEMP_0")
         assert (t["ReadingType"], t["ReadingUnits"], t["PhysicalContext"]) == ("Temperature", "Cel", "GPU")
         assert t["RelatedItem"] == [{"@odata.id": gpu_path(g)}]
-        p = b.get(f"{SENSORS}/GPU_{g}_Power_0")
+        p = b.get(f"{sensors}/HGX_GPU_{g}_Power_0")
         assert (p["ReadingType"], p["ReadingUnits"]) == ("Power", "W")
         assert 100 < p["Reading"] < 1100 and 25 <= t["Reading"] <= 80
+        env = b.get(f"{gpu_path(g)}/EnvironmentMetrics")
+        assert env["TemperatureCelsius"]["DataSourceUri"] == f"{sensors}/HGX_GPU_{g}_TEMP_0"
 
+    chassis = b.get(TRAY)
+    assert {m.rsplit("/", 1)[1] for m in members(b.get(chassis["Sensors"]["@odata.id"]))} == {"Total_GPU_Power_0"}
     thermal = b.get(chassis["ThermalSubsystem"]["@odata.id"])
     temps = b.get(thermal["ThermalMetrics"]["@odata.id"])["TemperatureReadingsCelsius"]
     assert [t["DeviceName"] for t in temps] == [f"GPU_{g}" for g in range(lab.gpus)]
+    assert [t["DataSourceUri"] for t in temps] == [f"{gpu_sensors(g)}/HGX_GPU_{g}_TEMP_0" for g in range(lab.gpus)]
     total = b.get(chassis["EnvironmentMetrics"]["@odata.id"])["PowerWatts"]
-    assert total["DataSourceUri"] == f"{SENSORS}/Total_GPU_Power_0"
+    assert total["DataSourceUri"] == f"{TRAY}/Sensors/Total_GPU_Power_0"
     assert lab.gpus * 100 < total["Reading"] < lab.gpus * 1100
-
 
 def test_readings_follow_nvml(lab, tray):
     assert_follows_nvml(lab, tray)

@@ -75,7 +75,7 @@
 
 - name: Check the Redfish service answers
   ansible.builtin.uri:
-    url: https://localhost/redfish/v1/{{ 'Systems/System_0' if inventory_hostname in groups['tray_bmc'] else 'Fabrics/NVLinkFabric_0' }}
+    url: https://localhost/redfish/v1/{{ 'Systems/System_0' if inventory_hostname in groups['tray_bmc'] else 'Fabrics/MGX_NVLinkFabric_0' }}
     user: "{{ bmc_username }}"
     password: "{{ bmc_password }}"
     force_basic_auth: true

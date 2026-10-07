@@ -1,6 +1,8 @@
-"""GB200 conformance (--conformance): how NVIDIA's real GB200 BMCs and NVLink
-fabric behave, from NVIDIA's own references. Failures here are the gaps
-between the emulation and the hardware, not regressions.
+"""GB200 conformance: how NVIDIA's real GB200 BMCs and NVLink fabric behave,
+from NVIDIA's own references, so tools written against the lab work on the
+hardware. Part of make test-bmc; behaviour the lab does not model yet is
+marked conformance and runs with --conformance (make test-bmc-conformance),
+where a failure is a known gap, not a regression.
 
 Sources, cited per test:
   [mock]   dsx-ai-factory/infra-controller crates/bmc-mock/src/hw/: NVIDIA's
@@ -20,9 +22,6 @@ import time
 import pytest
 
 from conftest import CONTROLLER, REPO, ROOT, at, eventually, gpu_path, gpu_port_path, members, switch_port_path
-
-pytestmark = pytest.mark.conformance
-
 
 # ---- compute tray BMC ----------------------------------------------------------------
 
@@ -175,6 +174,7 @@ def _squeue_state(lab, job):
     return out.strip().split("\n")[0].split()[0] if out.strip() else "UNKNOWN"
 
 
+@pytest.mark.conformance
 def test_access_link_down_fails_running_job(lab, downed_link):
     """[part] 6.2: "An access link failure causes the GPU in the partition to
     lose NVLink connectivity. This causes the workload in the partition to run

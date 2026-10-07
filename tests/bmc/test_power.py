@@ -52,6 +52,13 @@ def power_tray(lab):
         st = node_state(lab, tray)
         if st != SCHED[lab.scheduler]["idle"]:
             return f"{tray} is {st} in {lab.scheduler}"
+        if lab.scheduler == "slurm":
+            # topograph drops a tray it cannot reach from topology.conf; it is
+            # back within a minute of the tray, and 2-node jobs need it.
+            blocks = lab.sh(CONTROLLER, "for n in $(scontrol show topology | sed -n 's/.*Nodes=//p'); "
+                                        "do scontrol show hostnames $n; done", check=False) or ""
+            if tray not in blocks.split():
+                return f"{tray} is in no topology block yet"
         if lab.scheduler == "k3s":  # the device plugin registered again
             gpus = lab.sh(CONTROLLER, f"kubectl get node {tray} -o jsonpath='{{.status.allocatable.nvidia\\.com/gpu}}'",
                           check=False)
@@ -133,7 +140,7 @@ def test_force_off_and_on(lab, power_tray):
         # Out of band, as Prometheus sees it: the BMC answers, the tray is off.
         assert lab.oob_metric(f"{tray}-bmc", "idrac_system_power_on") == 0
         # GPUs without power have no readings.
-        t = b.get(f"{ROOT}/Chassis/Chassis_0/Sensors/GPU_0_TEMP_0")
+        t = b.get(f"{ROOT}/Chassis/HGX_GPU_0/Sensors/HGX_GPU_0_TEMP_0")
         assert t["Reading"] is None and t["Status"]["State"] == "UnavailableOffline"
     finally:
         if b.get(f"{ROOT}/Systems/System_0")["PowerState"] != "On":

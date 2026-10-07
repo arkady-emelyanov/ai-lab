@@ -34,3 +34,9 @@ func gpuSerial(host string, idx int) string {
 func gpuPCIBusID(idx int) string {
 	return fmt.Sprintf("%08X:%02X:00.0", 0, pciBus[idx])
 }
+
+// traySerial is the tray's (or switch tray's) serial number, stable per name.
+func traySerial(host string) string {
+	u := gpuUUIDBytes(host, 255)
+	return fmt.Sprintf("1821220%02d%02d%02d", u[3]%100, u[4]%100, u[5]%100)
+}

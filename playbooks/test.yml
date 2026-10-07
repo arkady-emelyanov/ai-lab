@@ -227,7 +227,7 @@
 
             - name: The tray lists every worker with its memory
               ansible.builtin.command: nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits
-              delegate_to: "{{ tray.stdout }}"
+              delegate_to: "{{ tray.stdout | default(inventory_hostname) }}"  # templated even when skipped
               register: tray_apps
               changed_when: false
               failed_when: tray_apps.stdout_lines | select('search', ', 1024$') | list | length != fakegpu_count
@@ -350,7 +350,7 @@
   tasks:
     - name: Redfish reports each tray powered on with its GPUs
       ansible.builtin.uri:
-        url: https://{{ item }}/redfish/v1/Systems/System_0
+        url: https://{{ item }}/redfish/v1/Systems/HGX_Baseboard_0
         user: "{{ bmc_username }}"
         password: "{{ bmc_password }}"
         force_basic_auth: true
@@ -361,7 +361,7 @@
 
     - name: The NVSwitch BMC exposes both switches with all ports
       ansible.builtin.uri:
-        url: https://{{ groups['nvswitch_bmc'][0] }}/redfish/v1/Fabrics/NVLinkFabric_0/Switches/NVSwitch_{{ item }}/Ports
+        url: https://{{ groups['nvswitch_bmc'][0] }}/redfish/v1/Fabrics/MGX_NVLinkFabric_0/Switches/NVSwitch_{{ item }}/Ports
         user: "{{ bmc_username }}"
         password: "{{ bmc_password }}"
         force_basic_auth: true

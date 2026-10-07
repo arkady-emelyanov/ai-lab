@@ -108,7 +108,7 @@ def redfish_message_id(r):
 
 
 def gpu_path(g):
-    return f"{ROOT}/Systems/System_0/Processors/GPU_{g}"
+    return f"{ROOT}/Systems/HGX_Baseboard_0/Processors/GPU_{g}"
 
 
 def gpu_port_path(g, link):
@@ -116,7 +116,7 @@ def gpu_port_path(g, link):
 
 
 def switch_path(sw):
-    return f"{ROOT}/Fabrics/NVLinkFabric_0/Switches/NVSwitch_{sw}"
+    return f"{ROOT}/Fabrics/MGX_NVLinkFabric_0/Switches/NVSwitch_{sw}"
 
 
 def switch_port_path(sw, port):

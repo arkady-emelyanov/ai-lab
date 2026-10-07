@@ -13,6 +13,8 @@ type Config struct {
 	Role        string `json:"role"`
 	Listen      string `json:"listen"`
 	Tray        string `json:"tray"`
+	TrayIndex   int    `json:"tray_index"`   // 0-based position in the NVLink domain (CBC chassis)
+	ProductName string `json:"product_name"` // the tray's model, e.g. "GB200 NVL"
 	GPUCount    int    `json:"gpu_count"`
 	GPUName     string `json:"gpu_name"`
 	GPUMemMB    int    `json:"gpu_mem_mb"`
@@ -57,7 +59,7 @@ func loadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := &Config{Role: "tray", Listen: ":443", GPUCount: 4, NVLinks: 18, Username: "root", StateDir: "/var/lib/fakebmc",
+	cfg := &Config{Role: "tray", Listen: ":443", ProductName: "GB200 NVL", GPUCount: 4, NVLinks: 18, Username: "root", StateDir: "/var/lib/fakebmc",
 		Switches: 2, SwitchPorts: 72}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

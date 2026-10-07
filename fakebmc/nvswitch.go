@@ -22,7 +22,7 @@ import (
 // Disabling a switch port takes the GPU link down at once; the BMC publishes
 // the affected links to that tray's sideband (nvlink-disabled-switch).
 
-const fabricID = "NVLinkFabric_0"
+const fabricID = "MGX_NVLinkFabric_0"
 
 type switchState struct {
 	mu   sync.Mutex
@@ -131,31 +131,6 @@ func (s *Server) nvswitchRoutes(auth func(string, http.HandlerFunc)) {
 	auth("POST "+f+"/{fab}/upload-switch-config", s.uploadSwitchConfig)
 	auth("DELETE "+f+"/{fab}/upload-switch-config", s.deleteSwitchConfig)
 
-	// The switch tray's own host (the CPU running NVOS and the partition
-	// controller), so generic Redfish clients find a system to discover.
-	auth("GET "+root+"/Systems", s.systems)
-	auth("GET "+root+"/Systems/{sys}", s.switchSystem)
-}
-
-func (s *Server) switchSystem(w http.ResponseWriter, r *http.Request) {
-	if !s.checkSystem(w, r) {
-		return
-	}
-	writeJSON(w, 200, obj{
-		"@odata.id":    root + "/Systems/" + systemID,
-		"@odata.type":  "#ComputerSystem.v1_20_0.ComputerSystem",
-		"Id":           systemID,
-		"Name":         "System",
-		"SystemType":   "Physical",
-		"Manufacturer": "NVIDIA",
-		"Model":        "NVLink5 switch tray",
-		"PowerState":   "On",
-		"Status":       obj{"State": "Enabled", "Health": "OK"},
-		"Links": obj{
-			"Chassis":   []obj{link(root + "/Chassis/" + s.chassisID())},
-			"ManagedBy": []obj{link(root + "/Managers/" + managerID)},
-		},
-	})
 }
 
 func (s *Server) checkFabric(w http.ResponseWriter, r *http.Request) bool {
@@ -264,6 +239,7 @@ func (s *Server) switchGet(w http.ResponseWriter, r *http.Request) {
 		"TotalSwitchWidth": s.cfg.SwitchPorts,
 		"Status":           obj{"State": "Enabled", "Health": health},
 		"Ports":            link(path + "/Ports"),
+		"Links":            obj{"Chassis": link(fmt.Sprintf("%s/Chassis/MGX_NVSwitch_%d", root, n))},
 		"Oem": obj{"Nvidia": obj{
 			"@odata.type":         "#NvidiaSwitch.v1_4_0.NvidiaNVSwitch",
 			"SwitchIsolationMode": iso,

@@ -9,10 +9,10 @@ from conftest import ROOT, at, gpu_path, gpu_port_path, members, redfish_message
 
 def test_inventory_matches_the_os(lab, tray):
     b = lab.tray_bmc(tray)
-    sys = b.get(f"{ROOT}/Systems/System_0")
-    assert sys["PowerState"] == "On"
-    assert sys["ProcessorSummary"]["Count"] == lab.gpus
-    assert len(members(b.get(f"{ROOT}/Systems/System_0/Processors"))) == lab.gpus
+    assert b.get(f"{ROOT}/Systems/System_0")["PowerState"] == "On"
+    hgx = b.get(f"{ROOT}/Systems/HGX_Baseboard_0")
+    assert hgx["ProcessorSummary"]["Count"] == lab.gpus
+    assert len(members(b.get(f"{ROOT}/Systems/HGX_Baseboard_0/Processors"))) == lab.gpus
 
     smi = lab.smi(tray)
     assert len(smi) == lab.gpus

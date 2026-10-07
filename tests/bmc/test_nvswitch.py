@@ -9,7 +9,7 @@ import pytest
 
 from conftest import ROOT, at, eventually, gpu_path, members, redfish_message_id, switch_path, switch_port_path
 
-FABRIC = f"{ROOT}/Fabrics/NVLinkFabric_0"
+FABRIC = f"{ROOT}/Fabrics/MGX_NVLinkFabric_0"
 
 
 def test_fabric_shape(lab):
@@ -122,7 +122,7 @@ def test_switch_config_upload(lab):
 
 
 def test_switch_ids_are_valid(lab):
-    for path in (f"{ROOT}/Fabrics/NVLinkFabric_0/Switches/NVSwitch_{lab.switches}",
+    for path in (f"{FABRIC}/Switches/NVSwitch_{lab.switches}",
                  switch_port_path(0, lab.switch_ports), f"{ROOT}/Fabrics/Other"):
         assert lab.bmc(lab.switch_bmc).request("GET", path).status_code == 404, path
     assert re.fullmatch(r"NVSwitch_\d+", lab.bmc(lab.switch_bmc).get(switch_path(0))["Id"])
