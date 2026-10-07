@@ -9,7 +9,7 @@
 #   make test-fakegpu  fake GPU library tests on this machine, no lab needed (NCCL
 #                    across NVLink partitions, InfiniBand counters)
 #   make test-bmc    BMC integration tests (pytest); -disruptive power-cycles a tray,
-#                    -conformance lists gaps to real GB200 behaviour
+#                    -conformance checks the known gaps to real GB200 behaviour
 #   make shell       login node as joe          make shell-root   login node as root
 #   make shell-NODE  root shell on any instance (e.g. make shell-sched-worker1)
 #   bin/ssh login    ssh as joe to the login node (root@login, sched-control, sched-worker1, ...)
@@ -159,7 +159,7 @@ test-bmc-disruptive: init $(PYTEST)
 	$(INCUS_SG) '$(PYTEST) tests/bmc --disruptive $(PYTEST_ARGS) </dev/null'
 
 test-bmc-conformance: init $(PYTEST)
-	$(INCUS_SG) '$(PYTEST) tests/bmc --conformance -m conformance -rf --tb=line $(PYTEST_ARGS) </dev/null'
+	$(INCUS_SG) '$(PYTEST) tests/bmc --conformance -m conformance -rfxX --tb=line $(PYTEST_ARGS) </dev/null'
 
 down: init
 	$(call RUN,playbooks/destroy.yml)

@@ -296,7 +296,10 @@ def _squeue_state(lab, job):
     return out.strip().split("\n")[0].split()[0] if out.strip() else "UNKNOWN"
 
 
+# A known gap, so expected to fail; strict: if it passes, the gap is closed
+# and the marker must go.
 @pytest.mark.conformance
+@pytest.mark.xfail(strict=True, reason="known gap: emulated NCCL never fails, so a job survives losing an NVLink")
 def test_access_link_down_fails_running_job(lab, downed_link):
     """[part] 6.2: "An access link failure causes the GPU in the partition to
     lose NVLink connectivity. This causes the workload in the partition to run
