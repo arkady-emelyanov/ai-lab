@@ -6,10 +6,30 @@ incus_image: images:ubuntu/24.04/cloud
 incus_profile: default
 incus_bridge: incusbr0
 # Ubuntu package mirror for every instance (archive and security pockets).
-# Canonical's own mirrors are sometimes slow or unreachable from some
-# networks; any Ubuntu mirror works, e.g. http://mirrors.edge.kernel.org/ubuntu
-# or one near you from https://launchpad.net/ubuntu/+archivemirrors.
-apt_mirror: http://archive.ubuntu.com/ubuntu
+# auto: the fastest from this machine among apt_mirror_candidates and the
+# mirrors Ubuntu suggests for its location (chosen once a day, cached in
+# .cache/apt-mirror). Or a fixed URL, e.g. http://mirrors.edge.kernel.org/ubuntu
+# or one from https://launchpad.net/ubuntu/+archivemirrors.
+apt_mirror: auto
+# Well-connected mirrors on every continent, so auto finds a fast one
+# anywhere; add one near you in local.yml if none is.
+apt_mirror_candidates:
+  - http://archive.ubuntu.com/ubuntu
+  - http://mirrors.edge.kernel.org/ubuntu
+  - http://mirrors.ocf.berkeley.edu/ubuntu
+  - http://mirror.math.princeton.edu/pub/ubuntu
+  - http://mirrors.mit.edu/ubuntu
+  - http://mirror.it.ubc.ca/ubuntu
+  - http://ftp.halifax.rwth-aachen.de/ubuntu
+  - http://mirror.init7.net/ubuntu
+  - http://mirrors.dotsrc.org/ubuntu
+  - http://ftp.uni-stuttgart.de/ubuntu
+  - http://ftp.jaist.ac.jp/pub/Linux/ubuntu
+  - http://mirror.kakao.com/ubuntu
+  - http://mirrors.tuna.tsinghua.edu.cn/ubuntu
+  - http://mirror.aarnet.edu.au/pub/ubuntu/archive
+  - http://ubuntu.c3sl.ufpr.br/ubuntu
+  - http://ubuntu.mirror.ac.za/ubuntu
 instance_limits:
   controller: { cpu: 2, memory: 2GiB }
   login: { cpu: 2, memory: 4GiB }

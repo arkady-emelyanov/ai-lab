@@ -11,6 +11,6 @@
 scheduler: slurm
 
 # More examples (any variable from inventory/group_vars/all.yml):
-# apt_mirror: http://mirrors.edge.kernel.org/ubuntu   # when archive.ubuntu.com is slow
+# apt_mirror: http://mirrors.edge.kernel.org/ubuntu   # a fixed mirror instead of the fastest (auto)
 # fakegpu_coherent_gpu_memory: driver
 # cluster_users: [...]

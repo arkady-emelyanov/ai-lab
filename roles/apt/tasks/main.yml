@@ -1,13 +1,24 @@
 # Ubuntu packages come from apt_mirror (archive and security pockets alike:
 # every Ubuntu mirror carries noble-security). Runs first on every instance,
 # before any other role installs a package.
+- name: Pick the fastest Ubuntu mirror
+  ansible.builtin.command: >-
+    {{ playbook_dir }}/files/fastest-mirror {{ ansible_distribution_release }}
+    {{ repo_root }}/.cache/apt-mirror {{ apt_mirror_candidates | join(' ') }}
+  register: fastest
+  check_mode: false
+  changed_when: false
+  delegate_to: localhost
+  run_once: true
+  when: apt_mirror == 'auto'
+
 - name: Use the configured Ubuntu mirror
   ansible.builtin.copy:
     dest: /etc/apt/sources.list.d/ubuntu.sources
     content: |
-      # Managed by ai-lab (apt_mirror).
+      # Managed by ai-lab (apt_mirror: {{ apt_mirror }}).
       Types: deb
-      URIs: {{ apt_mirror }}
+      URIs: {{ fastest.stdout if apt_mirror == 'auto' else apt_mirror }}
       Suites: {{ ansible_distribution_release }} {{ ansible_distribution_release }}-updates {{ ansible_distribution_release }}-backports {{ ansible_distribution_release }}-security
       Components: main universe restricted multiverse
       Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
