@@ -159,7 +159,9 @@ fakegpu_power_limit_w: 1200
 fakegpu_idle_power_w: 140
 fakegpu_max_power_w: 1000
 fakegpu_sm_count: 148
-fakegpu_tensor_tflops: 1200
+fakegpu_tensor_tflops: 2500
+fakegpu_tf32_tflops: 1250
+fakegpu_fp8_tflops: 5000
 fakegpu_fp32_tflops: 60
 fakegpu_fp64_tflops: 40
 fakegpu_host_link_gbs: 400

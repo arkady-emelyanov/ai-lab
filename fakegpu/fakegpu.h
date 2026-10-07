@@ -35,7 +35,8 @@
  *   power_limit_w power limit (1200); idle_power_w, max_power_w: draw idle
  *                 and at full utilisation (140, 1000)
  *   sm_count      streaming multiprocessors (148)
- *   tensor_tflops, fp32_tflops, fp64_tflops  dense throughput (1200, 60, 40)
+ *   tensor_tflops, tf32_tflops, fp8_tflops  dense tensor-core throughput: BF16/FP16, TF32, FP8 (2500, 1250, 5000)
+ *   fp32_tflops, fp64_tflops  dense FP32 without tensor cores, FP64 (60, 40)
  *   host_link_gbs host <-> GPU copies, GB/s (400, NVLink-C2C)
  *   hbm_gbs       device-to-device copies, GB/s (4000)
  *   coherent_gpu_memory  os (default) or driver, like the driver option
@@ -89,7 +90,7 @@ static struct {
     char vbios_version[32];
     int nvlinks, sm_count;
     double nvlink_link_gbs, power_limit_w, idle_power_w, max_power_w;
-    double tensor_tflops, fp32_tflops, fp64_tflops, host_link_gbs, hbm_gbs;
+    double tensor_tflops, tf32_tflops, fp8_tflops, fp32_tflops, fp64_tflops, host_link_gbs, hbm_gbs;
     char coherent_gpu_memory[16];
 } fg_cfg;
 static pthread_once_t fg_cfg_once = PTHREAD_ONCE_INIT;
@@ -129,6 +130,8 @@ static void fg_set(const char *key, const char *val)
     else if (!strcmp(key, "idle_power_w")) fg_cfg.idle_power_w = strtod(val, NULL);
     else if (!strcmp(key, "max_power_w")) fg_cfg.max_power_w = strtod(val, NULL);
     else if (!strcmp(key, "tensor_tflops")) fg_cfg.tensor_tflops = strtod(val, NULL);
+    else if (!strcmp(key, "tf32_tflops")) fg_cfg.tf32_tflops = strtod(val, NULL);
+    else if (!strcmp(key, "fp8_tflops")) fg_cfg.fp8_tflops = strtod(val, NULL);
     else if (!strcmp(key, "fp32_tflops")) fg_cfg.fp32_tflops = strtod(val, NULL);
     else if (!strcmp(key, "fp64_tflops")) fg_cfg.fp64_tflops = strtod(val, NULL);
     else if (!strcmp(key, "host_link_gbs")) fg_cfg.host_link_gbs = strtod(val, NULL);
@@ -142,7 +145,7 @@ static void fg_load(void)
                                  "latency_scale", "copy_max_mb", "state_path", "host", "dev_dir", "nccl_dir",
                                  "nccl_timeout_s", "ib_gbps", "driver_version", "cuda_version", "vbios_version", "nvlinks", "sm_count",
                                  "nvlink_link_gbs", "power_limit_w", "idle_power_w", "max_power_w", "tensor_tflops",
-                                 "fp32_tflops", "fp64_tflops", "host_link_gbs", "hbm_gbs", "coherent_gpu_memory"};
+                                 "tf32_tflops", "fp8_tflops", "fp32_tflops", "fp64_tflops", "host_link_gbs", "hbm_gbs", "coherent_gpu_memory"};
     fg_cfg.count = 4;
     snprintf(fg_cfg.name, sizeof fg_cfg.name, "NVIDIA GB200");
     fg_cfg.mem_mb = 189471;
@@ -163,7 +166,9 @@ static void fg_load(void)
     fg_cfg.power_limit_w = 1200;
     fg_cfg.idle_power_w = 140;
     fg_cfg.max_power_w = 1000;
-    fg_cfg.tensor_tflops = 1200;    /* dense, tensor cores */
+    fg_cfg.tensor_tflops = 2500;    /* dense BF16/FP16, tensor cores */
+    fg_cfg.tf32_tflops = 1250;
+    fg_cfg.fp8_tflops = 5000;
     fg_cfg.fp32_tflops = 60;
     fg_cfg.fp64_tflops = 40;
     fg_cfg.host_link_gbs = 400;     /* NVLink-C2C */
@@ -241,6 +246,8 @@ static inline double fg_power_limit_mw(void) { fg_init(); return fg_cfg.power_li
 static inline double fg_idle_power_mw(void) { fg_init(); return fg_cfg.idle_power_w * 1000; }
 static inline double fg_max_power_mw(void) { fg_init(); return fg_cfg.max_power_w * 1000; }
 static inline double fg_tensor_flop_per_ns(void) { fg_init(); return fg_cfg.tensor_tflops * 1000; }
+static inline double fg_tf32_flop_per_ns(void) { fg_init(); return fg_cfg.tf32_tflops * 1000; }
+static inline double fg_fp8_flop_per_ns(void) { fg_init(); return fg_cfg.fp8_tflops * 1000; }
 static inline double fg_fp32_flop_per_ns(void) { fg_init(); return fg_cfg.fp32_tflops * 1000; }
 static inline double fg_fp64_flop_per_ns(void) { fg_init(); return fg_cfg.fp64_tflops * 1000; }
 static inline double fg_host_link_bytes_per_ns(void) { fg_init(); return fg_cfg.host_link_gbs; }

@@ -55,13 +55,35 @@ static void gemm_work(void *stream, double m, double n, double k, double batch, 
 
 #define CUDA_R_32F 0
 #define CUDA_R_64F 1
+#define CUDA_R_8F_E4M3 28
+#define CUDA_R_8F_E5M2 29
 #define CUBLAS_COMPUTE_32F 68
+#define CUBLAS_COMPUTE_32F_PEDANTIC 69
 #define CUBLAS_COMPUTE_64F 70
+#define CUBLAS_COMPUTE_64F_PEDANTIC 71
+#define CUBLAS_COMPUTE_32F_FAST_TF32 77
+#define CUBLAS_TF32_TENSOR_OP_MATH 3
 
-static double rate_for(int atype, int compute)
+/* A cuBLAS handle: its stream in the first word (cublasSetStream), then the
+ * math mode (cublasSetMathMode; TF32 tensor cores for FP32 GEMMs). */
+struct blas_handle {
+    void *stream;
+    int math_mode;
+};
+
+static int tf32_mode(void *h) { return h && ((struct blas_handle *)h)->math_mode == CUBLAS_TF32_TENSOR_OP_MATH; }
+
+/* GEMM rate by precision, as NVIDIA publishes for the GPU (dense): FP64,
+ * FP32 without tensor cores, TF32, FP8 and, for every other type
+ * (BF16, FP16, ...), the 16-bit tensor rate. */
+static double rate_for(int atype, int compute, int tf32)
 {
-    if (atype == CUDA_R_64F || compute == CUBLAS_COMPUTE_64F) return STUB_FP64_FLOP_PER_NS;
-    if (atype == CUDA_R_32F && compute == CUBLAS_COMPUTE_32F) return STUB_FP32_FLOP_PER_NS;
+    if (atype == CUDA_R_64F || compute == CUBLAS_COMPUTE_64F || compute == CUBLAS_COMPUTE_64F_PEDANTIC)
+        return STUB_FP64_FLOP_PER_NS;
+    if (compute == CUBLAS_COMPUTE_32F_FAST_TF32) return STUB_TF32_FLOP_PER_NS;
+    if (atype == CUDA_R_32F && (compute == CUBLAS_COMPUTE_32F || compute == CUBLAS_COMPUTE_32F_PEDANTIC))
+        return tf32 && compute == CUBLAS_COMPUTE_32F ? STUB_TF32_FLOP_PER_NS : STUB_FP32_FLOP_PER_NS;
+    if (atype == CUDA_R_8F_E4M3 || atype == CUDA_R_8F_E5M2) return STUB_FP8_FLOP_PER_NS;
     return STUB_TENSOR_FLOP_PER_NS;
 }
 
@@ -106,7 +128,19 @@ static cublasStatus_t get_int(void *h, int *out, int v)
 
 API cublasStatus_t cublasGetPointerMode_v2(void *h, int *m) { return get_int(h, m, 0); }
 API cublasStatus_t cublasGetAtomicsMode(void *h, int *m) { return get_int(h, m, 0); }
-API cublasStatus_t cublasGetMathMode(void *h, int *m) { return get_int(h, m, 0); }
+API cublasStatus_t cublasGetMathMode(void *h, int *m)
+{
+    if (!h || !m) return CUBLAS_STATUS_INVALID_VALUE;
+    *m = ((struct blas_handle *)h)->math_mode;
+    return CUBLAS_STATUS_SUCCESS;
+}
+
+API cublasStatus_t cublasSetMathMode(void *h, int m)
+{
+    if (!h) return CUBLAS_STATUS_INVALID_VALUE;
+    ((struct blas_handle *)h)->math_mode = m;
+    return CUBLAS_STATUS_SUCCESS;
+}
 API cublasStatus_t cublasGetSmCountTarget(void *h, int *n) { return get_int(h, n, 0); }
 API cublasStatus_t cublasGetEmulationStrategy(void *h, int *s) { return get_int(h, s, 0); }
 
@@ -131,7 +165,7 @@ API cublasStatus_t cublasSgemm_v2(void *h, int ta, int tb, int m, int n, int k, 
                                   int lda, const float *B, int ldb, const float *beta, float *C, int ldc)
 {
     (void)ta; (void)tb; (void)alpha; (void)A; (void)lda; (void)B; (void)ldb; (void)beta; (void)C; (void)ldc;
-    gemm_work(stream_of(h), m, n, k, 1, STUB_FP32_FLOP_PER_NS);
+    gemm_work(stream_of(h), m, n, k, 1, tf32_mode(h) ? STUB_TF32_FLOP_PER_NS : STUB_FP32_FLOP_PER_NS);
     return CUBLAS_STATUS_SUCCESS;
 }
 
@@ -158,7 +192,7 @@ API cublasStatus_t cublasSgemmStridedBatched(void *h, int ta, int tb, int m, int
 {
     (void)ta; (void)tb; (void)alpha; (void)A; (void)lda; (void)sA; (void)B; (void)ldb; (void)sB; (void)beta;
     (void)C; (void)ldc; (void)sC;
-    gemm_work(stream_of(h), m, n, k, batch, STUB_FP32_FLOP_PER_NS);
+    gemm_work(stream_of(h), m, n, k, batch, tf32_mode(h) ? STUB_TF32_FLOP_PER_NS : STUB_FP32_FLOP_PER_NS);
     return CUBLAS_STATUS_SUCCESS;
 }
 
@@ -168,7 +202,7 @@ API cublasStatus_t cublasGemmEx(void *h, int ta, int tb, int m, int n, int k, co
 {
     (void)ta; (void)tb; (void)alpha; (void)A; (void)lda; (void)B; (void)btype; (void)ldb; (void)beta; (void)C;
     (void)ctype; (void)ldc; (void)algo;
-    gemm_work(stream_of(h), m, n, k, 1, rate_for(atype, compute));
+    gemm_work(stream_of(h), m, n, k, 1, rate_for(atype, compute, tf32_mode(h)));
     return CUBLAS_STATUS_SUCCESS;
 }
 
@@ -179,7 +213,7 @@ API cublasStatus_t cublasGemmStridedBatchedEx(void *h, int ta, int tb, int m, in
 {
     (void)ta; (void)tb; (void)alpha; (void)A; (void)lda; (void)sA; (void)B; (void)btype; (void)ldb; (void)sB;
     (void)beta; (void)C; (void)ctype; (void)ldc; (void)sC; (void)algo;
-    gemm_work(stream_of(h), m, n, k, batch, rate_for(atype, compute));
+    gemm_work(stream_of(h), m, n, k, batch, rate_for(atype, compute, tf32_mode(h)));
     return CUBLAS_STATUS_SUCCESS;
 }
 
@@ -190,7 +224,7 @@ API cublasStatus_t cublasGemmBatchedEx(void *h, int ta, int tb, int m, int n, in
 {
     (void)ta; (void)tb; (void)alpha; (void)A; (void)lda; (void)B; (void)btype; (void)ldb; (void)beta; (void)C;
     (void)ctype; (void)ldc; (void)algo;
-    gemm_work(stream_of(h), m, n, k, batch, rate_for(atype, compute));
+    gemm_work(stream_of(h), m, n, k, batch, rate_for(atype, compute, tf32_mode(h)));
     return CUBLAS_STATUS_SUCCESS;
 }
 
@@ -213,12 +247,24 @@ API cublasStatus_t cublasLtGetProperty(int type, int *v)
 }
 
 API cublasStatus_t cublasLtCreate(void **h) { return new_handle(h); }
-API cublasStatus_t cublasLtMatmulDescCreate(void **d, int compute, int scale) { (void)compute; (void)scale; return new_handle(d); }
+/* A matmul descriptor remembers its compute type, for the GEMM's rate. */
+struct lt_desc {
+    int compute, scale;
+};
+
+API cublasStatus_t cublasLtMatmulDescCreate(void **d, int compute, int scale)
+{
+    if (new_handle(d) != CUBLAS_STATUS_SUCCESS) return CUBLAS_STATUS_INVALID_VALUE;
+    ((struct lt_desc *)*d)->compute = compute;
+    ((struct lt_desc *)*d)->scale = scale;
+    return CUBLAS_STATUS_SUCCESS;
+}
 
 /* Layouts remember their shape so cublasLtMatmul can size its work. */
 struct lt_layout {
     uint64_t rows, cols;
     int32_t batch;
+    int type;
 };
 
 #define CUBLASLT_MATRIX_LAYOUT_ROWS 2
@@ -227,9 +273,10 @@ struct lt_layout {
 
 API cublasStatus_t cublasLtMatrixLayoutCreate(void **l, int type, uint64_t rows, uint64_t cols, int64_t ld)
 {
-    (void)type; (void)ld;
+    (void)ld;
     if (new_handle(l) != CUBLAS_STATUS_SUCCESS) return CUBLAS_STATUS_INVALID_VALUE;
     struct lt_layout *lay = *l;
+    lay->type = type;
     lay->rows = rows;
     lay->cols = cols;
     lay->batch = 1;
@@ -252,12 +299,13 @@ API cublasStatus_t cublasLtMatmul(void *lt, void *desc, const void *alpha, const
                                   const void *Cdesc, void *D, const void *Ddesc, const void *algo, void *ws,
                                   size_t ws_size, void *stream)
 {
-    (void)lt; (void)desc; (void)alpha; (void)A; (void)B; (void)Bdesc; (void)beta; (void)C; (void)Cdesc; (void)D;
+    (void)lt; (void)alpha; (void)A; (void)B; (void)Bdesc; (void)beta; (void)C; (void)Cdesc; (void)D;
     (void)algo; (void)ws; (void)ws_size;
     const struct lt_layout *a = Adesc, *d = Ddesc;
     if (!a || !d || !d->rows) return CUBLAS_STATUS_INVALID_VALUE;
     double m = (double)d->rows, n = (double)d->cols, k = (double)a->rows * (double)a->cols / m;
-    gemm_work(stream, m, n, k, d->batch > 0 ? d->batch : 1, STUB_TENSOR_FLOP_PER_NS);
+    const struct lt_desc *op = desc;
+    gemm_work(stream, m, n, k, d->batch > 0 ? d->batch : 1, rate_for(a->type, op ? op->compute : 0, 0));
     return CUBLAS_STATUS_SUCCESS;
 }
 

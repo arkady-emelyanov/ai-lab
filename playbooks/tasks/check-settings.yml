@@ -32,7 +32,8 @@
       - fakegpu_idle_power_w | float < fakegpu_max_power_w | float
       - fakegpu_max_power_w | float <= fakegpu_power_limit_w | float
       - fakegpu_nvlink_link_gbs | float > 0 and fakegpu_host_link_gbs | float > 0 and fakegpu_hbm_gbs | float > 0
-      - fakegpu_tensor_tflops | float > 0 and fakegpu_fp32_tflops | float > 0 and fakegpu_fp64_tflops | float > 0
+      - fakegpu_tensor_tflops | float > 0 and fakegpu_tf32_tflops | float > 0 and fakegpu_fp8_tflops | float > 0
+      - fakegpu_fp32_tflops | float > 0 and fakegpu_fp64_tflops | float > 0
       - fakegpu_sm_count | int > 0
       - fakegpu_cuda_version is match('^[0-9]+\.[0-9]+$')
       - fakegpu_coherent_gpu_memory in ['os', 'driver']

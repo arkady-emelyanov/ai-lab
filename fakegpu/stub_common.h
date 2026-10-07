@@ -64,6 +64,8 @@ static inline void stub_ib_traffic(void *stream, double tx, double rx)
 #define STUB_LAUNCH_NS 5000.0          /* library call overhead */
 /* GPU profile from /etc/fakegpu.conf (fakegpu.h). */
 #define STUB_TENSOR_FLOP_PER_NS (fg_tensor_flop_per_ns())
+#define STUB_TF32_FLOP_PER_NS (fg_tf32_flop_per_ns())
+#define STUB_FP8_FLOP_PER_NS (fg_fp8_flop_per_ns())
 #define STUB_FP32_FLOP_PER_NS (fg_fp32_flop_per_ns())
 #define STUB_FP64_FLOP_PER_NS (fg_fp64_flop_per_ns())
 #define STUB_NVLINK_B_PER_NS (fg_nvlink_bytes_per_ns()) /* all of a GPU's NVLinks, per direction */

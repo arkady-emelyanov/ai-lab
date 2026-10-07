@@ -44,7 +44,7 @@ AI lab models what the hardware shows to software (APIs, topology, telemetry, ti
 | Grace CPUs | modelled (NUMA layout only) | two Grace NUMA nodes per tray in `nvidia-smi topo -m` and `numactl -H` | the trays run on the host's x86-64 cores, not Grace (aarch64): `uname -m` and `scontrol show node` say `x86_64` |
 | Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | LDAP without TLS |
 
-**Timing is a behavioural model, not a prediction.** Durations are derived from NVIDIA's published GB200 figures (compute rates, memory, NVLink and InfiniBand bandwidth), simplified, and applied to each operation's size: one tensor rate for every low-precision type (TF32-class, about half NVIDIA's dense BF16 figure), half the HBM bandwidth for read plus write, an estimated FP32 rate ([Emulated GPUs](docs/fake-gpu.md#how-it-works)). Jobs take plausible time and put plausible load on the GPUs and links, jobs take plausible time and put plausible load on the GPUs and links, but the figures are not calibrated against hardware and do not predict real GB200 performance.
+**Timing is a behavioural model, not a prediction.** Durations come from NVIDIA's published GB200 figures (dense compute rates per precision, memory, NVLink and InfiniBand bandwidth) applied to each operation's size; the FP32 rate without tensor cores, which NVIDIA does not publish, is an estimate ([Emulated GPUs](docs/fake-gpu.md#how-it-works)). Jobs take plausible time and put plausible load on the GPUs and links, jobs take plausible time and put plausible load on the GPUs and links, but the figures are not calibrated against hardware and do not predict real GB200 performance.
 
 Details are in each component page and in [Architecture](docs/architecture.md#limitations).
 

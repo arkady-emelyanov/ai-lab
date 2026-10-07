@@ -23,12 +23,12 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 
 **Simulated time.** Every CUDA stream has a timeline. Asynchronous work (kernels, copies, cuBLAS/cuDNN calls, NCCL collectives) is appended and returns at once; `cudaStreamSynchronize`, `cudaDeviceSynchronize`, events and blocking copies wait until the timeline catches up. A stream holds at most 1024 pending operations, like the hardware's push buffer, so tight launch loops block the CPU. `cudaEventElapsedTime` reports simulated durations.
 
-Rates are derived from NVIDIA's published GB200 figures, simplified: NVIDIA lists 2.5 PFLOP/s dense BF16/FP16, 1.25 PFLOP/s dense TF32 and 40 TFLOP/s FP64 per GPU and 8 TB/s HBM; the lab uses one tensor rate (TF32-class) for every low-precision type, half the HBM bandwidth for read plus write, and an estimated FP32 rate (NVIDIA publishes none). All are configurable ([Configuration](#configuration)).
+Rates follow NVIDIA's published GB200 figures per GPU (dense): 2.5 PFLOP/s BF16/FP16, 1.25 PFLOP/s TF32, 5 PFLOP/s FP8 and 40 TFLOP/s FP64 on tensor cores; NVIDIA publishes no FP32 figure without tensor cores, so ~60 TFLOP/s is an estimate. Memory-bound work uses half the published 8 TB/s HBM bandwidth, since a copy reads and writes. All are configurable ([Configuration](#configuration)).
 
 | Operation | Cost (GB200-like, × `latency_scale`) |
 |---|---|
 | Kernel launch | 3 µs + 2.5 µs per wave of blocks over 148 SMs |
-| GEMM (cuBLAS, cuBLASLt) | 2·m·n·k FLOPs at ~1.2 PFLOP/s (tensor), ~60 TFLOP/s (fp32), ~40 TFLOP/s (fp64) |
+| GEMM (cuBLAS, cuBLASLt) | 2·m·n·k FLOPs at the rate of its precision: ~2.5 PFLOP/s BF16/FP16 (and other 16-bit types), ~1.25 PFLOP/s TF32 (`CUBLAS_COMPUTE_32F_FAST_TF32`, or FP32 with `CUBLAS_TF32_TENSOR_OP_MATH`, as PyTorch's `allow_tf32` sets), ~5 PFLOP/s FP8, ~60 TFLOP/s FP32, ~40 TFLOP/s FP64 |
 | Copy host↔GPU / GPU↔GPU / device | ~400 GB/s / ~900 GB/s (NVLink) / ~4 TB/s |
 | NCCL collective, ranks in one NVLink partition | 10 µs + bytes × bus factor (all-reduce 2(n−1)/n) at ~900 GB/s |
 | NCCL collective across partitions | 20 µs + bytes × bus factor(m) at ~900 GB/s (NVLink, inside each partition) + bytes × bus factor(g) / m at 50 GB/s (InfiniBand, one 400 Gb/s NIC per GPU), for g partitions of at least m ranks |
@@ -77,7 +77,7 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 | `fakegpu_power_limit_w` | 1200 | NVML power limit (`nvidia-smi`, GPU exporter), the BMCs' `PowerLimitWatts` |
 | `fakegpu_idle_power_w`, `fakegpu_max_power_w` | 140, 1000 | power draw idle and at full utilisation (NVML, `nvidia-smi`, the BMCs' sensors, which use the same model) |
 | `fakegpu_sm_count` | 148 | multiprocessor count (CUDA device attribute), kernel duration (waves of blocks) |
-| `fakegpu_tensor_tflops`, `fakegpu_fp32_tflops`, `fakegpu_fp64_tflops` | 1200, 60, 40 | dense throughput of GEMMs and convolutions (cuBLAS, cuBLASLt, cuDNN) |
+| `fakegpu_tensor_tflops`, `fakegpu_tf32_tflops`, `fakegpu_fp8_tflops`, `fakegpu_fp32_tflops`, `fakegpu_fp64_tflops` | 2500, 1250, 5000, 60, 40 | dense GEMM throughput per precision (cuBLAS, cuBLASLt): BF16/FP16 and other 16-bit types, TF32, FP8 on tensor cores; FP32 without tensor cores; FP64 |
 | `fakegpu_host_link_gbs`, `fakegpu_hbm_gbs` | 400, 4000 | host-to-GPU copies (NVLink-C2C) and device-to-device copies |
 | `fakegpu_coherent_gpu_memory` | `os` | like the driver option `NVreg_CoherentGPUMemoryMode`: `os` (the driver's default) has each GPU's coherent memory as a NUMA node, as on GB200: GPUs on nodes 2, 10, 18, 26 after the Grace CPUs' nodes 0 and 1 (`nvidia-smi topo -m` "GPU NUMA ID", `topo -gnid`, `nvmlDeviceGetNumaNodeId`, `numactl -H`); `driver` is CDMM (driver-managed GPU memory, which NVIDIA recommends for Kubernetes): GPU NUMA ID N/A, `nvmlDeviceGetNumaNodeId` not supported. Either way "NUMA Affinity" (`nvmlDeviceGetMemoryAffinity`) is the GPU's Grace CPU: 0 for GPUs 0–1, 1 for GPUs 2–3 |
 | `fakegpu_driver_version` | `580.95.05` | `nvidia-smi` "Driver Version", NVML (`nvmlSystemGetDriverVersion`, `nvmlSystemGetNVMLVersion`), GFD's `nvidia.com/cuda.driver-version.*` labels |
