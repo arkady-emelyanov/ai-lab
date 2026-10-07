@@ -8,15 +8,7 @@ A complete GPU cluster on a single Linux machine, for building and testing clust
 
 The GPUs are fake but behave like real ones to everything above them: applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes realistic simulated time, and the GPUs report realistic load, memory, power and temperature. Nothing is computed. Management interfaces (Redfish BMCs, an NVLink partition controller, fabric telemetry) change what the GPUs report and what the scheduler places jobs on.
 
-A blog series walks through the lab:
-
-1. [A GB200 GPU cluster on your laptop (minus the GPUs)](https://blog.emelianov.cloud/ai-lab/01-intro/)
-2. [Running an emulated GB200 cluster with Slurm](https://blog.emelianov.cloud/ai-lab/02-slurm/)
-3. [The same GPU cluster on Kubernetes, with Kueue and JobSet](https://blog.emelianov.cloud/ai-lab/03-kubernetes/)
-4. [BMCs and Redfish, the out-of-band side of a GPU rack](https://blog.emelianov.cloud/ai-lab/04-bmc-redfish/)
-5. [NVLink partitions, fabric health and telemetry](https://blog.emelianov.cloud/ai-lab/05-nvlink/)
-6. [Observing a GPU cluster, layer by layer](https://blog.emelianov.cloud/ai-lab/06-observability/)
-7. [Networking, and where the emulation stops](https://blog.emelianov.cloud/ai-lab/07-networking/)
+A blog series walks through the lab, starting with [AI lab, part 1: a GB200 GPU cluster on your laptop (minus the GPUs)](https://blog.emelianov.cloud/ai-lab/01-intro/).
 
 What you get:
 
