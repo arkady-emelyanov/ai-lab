@@ -4,7 +4,7 @@
 
 ## Overview
 
-The lab runs three BMCs, one per tray, each in its own container, serving Redfish over HTTPS with a self-signed certificate. `fakebmc` is a small Go service (standard library only) modelled on NVIDIA's OpenBMC fork, [NVIDIA/bmcweb](https://github.com/NVIDIA/bmcweb), with the resource layout of NVIDIA's GB200 BMCs (NVIDIA's BMC models in [infra-controller](https://github.com/dsx-ai-factory/infra-controller)'s `bmc-mock`, the Switch BMC manual), in one of two roles:
+The lab runs three BMCs, one per tray, each in its own container, serving Redfish over HTTPS with a self-signed certificate. `fakebmc` is a small Go service (standard library only) modelled on NVIDIA's fork of OpenBMC's Redfish server bmcweb, [NVIDIA/bmcweb](https://github.com/NVIDIA/bmcweb), with the resource layout of NVIDIA's GB200 BMCs (NVIDIA's BMC models in [infra-controller](https://github.com/dsx-ai-factory/infra-controller)'s `bmc-mock`, the Switch BMC manual), in one of two roles:
 
 | BMC | Address | Role | Manages |
 |---|---|---|---|
@@ -27,7 +27,7 @@ Credentials: `root` / `0penBmc` (OpenBMC's default; `bmc_username`, `bmc_passwor
 | `…/GPU_<n>/EnvironmentMetrics` | `GET`: GPU temperature and power (`TemperatureCelsius`, `PowerWatts`, linked to the GPU chassis' sensors), power limit |
 | `…/GPU_<n>/Ports/NVLink_<k>` | `GET` (`LinkDown` when either end is disabled); `PATCH {"Oem": {"Nvidia": {"LinkDisableSticky": true}}}` |
 | `…/GPU_<n>/Ports/NVLink_<k>/Settings` | `GET`; `PATCH {"LinkState": "Disabled" \| "Enabled"}`, applied at the next tray reset |
-| `/redfish/v1/Chassis/Chassis_0` | `GET`: the tray (PowerState, serial); `Assembly` (serial for inventory tools); `Sensors` (`Total_GPU_Power_0`), `EnvironmentMetrics` (the tray's GPU power), `ThermalSubsystem/ThermalMetrics` (all GPU temperatures; no fans, the tray is liquid-cooled) |
+| `/redfish/v1/Chassis/Chassis_0` | `GET`: the tray (PowerState, serial); `Assembly` (serial for inventory tools); `Sensors` (`Total_GPU_Power_0`), `EnvironmentMetrics` (the tray's GPU power), `ThermalSubsystem/ThermalMetrics` (all GPU temperatures; no fans modelled: CPUs and GPUs are liquid-cooled, and the real tray's fans cool the rest) |
 | `/redfish/v1/Chassis/HGX_GPU_<n>` | `GET`: the GPU's UUID and serial; `Sensors` (`HGX_GPU_<n>_TEMP_0` °C, `HGX_GPU_<n>_Power_0` W; no reading, `UnavailableOffline`, with the tray off), `EnvironmentMetrics` |
 | `/redfish/v1/Chassis/CBC_<n>` | `GET`: NVLink cable cartridges; `Oem.Nvidia` `ChassisPhysicalSlotNumber`, `ComputeTrayIndex`, `TopologyId` place the tray in the rack |
 | `/redfish/v1/Chassis/BMC_0`, `HGX_Chassis_0` | `GET` |
@@ -79,7 +79,7 @@ bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 | `fakegpu_vbios_version` | `97.00.82.00.0F` | GPU VBIOS: `HGX_FW_GPU_<n>`, the same as `nvidia-smi` on the tray ([Emulated GPUs](fake-gpu.md#configuration)) |
 | `nvswitch_firmware_version`, `nvswitch_cpld_firmware_version` | `fakebmc-nvswitch-1`, `fakebmc-cpld-1` | switch tray: `MGX_FW_NVSwitch_<n>`, `MGX_FW_CPLD_0` |
 
-Port speeds (`CurrentSpeedGbps` of 2 lanes) follow `fakegpu_nvlink_link_gbs`, the GPU sensors and `PowerLimitWatts` the GPU profile's power figures, so they match `nvidia-smi` whatever the profile ([Emulated GPUs](fake-gpu.md#configuration)).
+Port speeds (`CurrentSpeedGbps`, the port's speed as DMTF defines it: 400 Gb/s for an NVLink5 port, with `Width` 2 lanes) follow `fakegpu_nvlink_link_gbs`, the GPU sensors and `PowerLimitWatts` the GPU profile's power figures, so they match `nvidia-smi` whatever the profile ([Emulated GPUs](fake-gpu.md#configuration)).
 
 **Per tray.** A tray BMC takes the VBIOS and its firmware versions from the tray's own variables, so one tray can drift from the others (for inventory or compliance tests). Set them under the tray in `inventory/hosts.yml`, then `make configure`; the tray's `nvidia-smi` reports the same VBIOS:
 

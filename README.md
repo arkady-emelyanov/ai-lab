@@ -4,7 +4,7 @@
 
 > **Independent research project, not affiliated with or endorsed by NVIDIA.** It emulates NVIDIA hardware and software interfaces in software, for personal research and education. See [Disclaimer](#disclaimer).
 
-A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates one NVIDIA GB200-class **NVL8** NVLink domain (two GPU trays with four GPUs each, an NVLink switch tray, BMCs, an InfiniBand fabric) and runs the real software stack around it: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
+A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates an 8-GPU slice of a GB200 NVL72-style NVLink domain, which the lab calls **NVL8** (its own name, not an NVIDIA product): two GPU trays with four GPUs each, an NVLink switch tray, BMCs and an InfiniBand fabric and runs the real software stack around it: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
 
 It is software-in-the-loop: the scheduler, frameworks and tools are the real software, unmodified, running against a behavioural model of the hardware. Applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes modelled time, and the GPUs report modelled load, memory, power and temperature; the BMCs and the NVLink partition controller change what the GPUs report and where the scheduler places jobs. Nothing is computed: see [What is real and what is modelled](#what-is-real-and-what-is-modelled).
 
@@ -41,9 +41,10 @@ AI lab models what the hardware shows to software (APIs, topology, telemetry, ti
 | NVLink and NVSwitch | modelled ([partition controller](docs/nvlink-partitions.md), BMCs) | 18 links per GPU to two 72-port switches, partitions and cliques applied at GPU reset, disabled links, fabric telemetry | NMX-C's wire protocol; one NVL8 domain only |
 | BMCs | modelled ([Redfish](docs/bmc-redfish.md)) | GB200 resource layout, power actions that stop and start the tray, GPU sensors, firmware inventory | IPMI, BlueField DPUs |
 | InfiniBand | modelled ([topology](docs/topology.md)) | `ibnetdiscover` topology for topograph, NIC byte counters, 400 Gb/s in NCCL timing | packets, subnet manager; one leaf switch |
+| Grace CPUs | modelled (NUMA layout only) | two Grace NUMA nodes per tray in `nvidia-smi topo -m` and `numactl -H` | the trays run on the host's x86-64 cores, not Grace (aarch64): `uname -m` and `scontrol show node` say `x86_64` |
 | Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | LDAP without TLS |
 
-**Timing is a behavioural model, not a prediction.** Durations come from documented GB200 figures (FLOP rates, memory, NVLink and InfiniBand bandwidth) applied to each operation's size: jobs take plausible time and put plausible load on the GPUs and links, but the figures are not calibrated against hardware and do not predict real GB200 performance.
+**Timing is a behavioural model, not a prediction.** Durations are derived from NVIDIA's published GB200 figures (compute rates, memory, NVLink and InfiniBand bandwidth), simplified, and applied to each operation's size: one tensor rate for every low-precision type (TF32-class, about half NVIDIA's dense BF16 figure), half the HBM bandwidth for read plus write, an estimated FP32 rate ([Emulated GPUs](docs/fake-gpu.md#how-it-works)). Jobs take plausible time and put plausible load on the GPUs and links, jobs take plausible time and put plausible load on the GPUs and links, but the figures are not calibrated against hardware and do not predict real GB200 performance.
 
 Details are in each component page and in [Architecture](docs/architecture.md#limitations).
 
@@ -58,7 +59,7 @@ curl -fsSL https://raw.githubusercontent.com/arkady-emelyanov/ai-lab/main/skills
 
 **Requirements:**
 
-- Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git.
+- x86-64 Linux (not arm64 or macOS) with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git.
 - Your user in the `incus-admin` group.
 - RAM: the running cluster uses about 10 GiB; 16 GiB free recommended. Container memory limits add up to 27 GiB (32 GiB with k3s).
 - CPU: 4 or more cores.
@@ -66,7 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/arkady-emelyanov/ai-lab/main/skills
 
 ```
 make init          # host side: Ansible venv, secrets, Go builds; reports any host fix needed
-make up            # create and configure the cluster (~15 minutes)
+make up            # create and configure the cluster (~15-25 minutes)
 make frameworks    # PyTorch + Ray on the cluster (optional, several GB)
 make test          # end-to-end checks
 ```

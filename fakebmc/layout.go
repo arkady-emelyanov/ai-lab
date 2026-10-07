@@ -34,10 +34,11 @@ const (
 	switchSysChass  = "BMC_eeprom"
 )
 
-// laneGbps is the signalling rate of each of an NVLink port's 2 lanes:
-// the link's bandwidth per direction (nvlink_link_gbs, GB/s) in Gb/s over
-// its lanes (NVLink5: 50 GB/s = 2 x 200 Gb/s).
-func (s *Server) laneGbps() float64 { return s.cfg.NVLinkLinkGbs * 8 / 2 }
+// portGbps is an NVLink port's speed for Redfish's Port.CurrentSpeedGbps,
+// which DMTF defines per port (Width gives its lanes): the link's bandwidth
+// per direction (nvlink_link_gbs, GB/s) in Gb/s (NVLink5: 50 GB/s = 400 Gb/s
+// over 2 lanes of 200 Gb/s).
+func (s *Server) portGbps() float64 { return s.cfg.NVLinkLinkGbs * 8 }
 
 func gpuChassisID(g int) string { return fmt.Sprintf("HGX_GPU_%d", g) }
 

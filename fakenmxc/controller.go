@@ -208,17 +208,37 @@ func (c *controller) byUID(uid uint64) (gpu, bool) {
 }
 
 // resolve turns UIDs or locations (not both) into GPU UIDs.
+// codeError is a failure with the NMX-C return code it maps to.
+type codeError struct {
+	code pb.ReturnCode
+	msg  string
+}
+
+func (e *codeError) Error() string { return e.msg }
+
+func errCode(code pb.ReturnCode, format string, args ...any) error {
+	return &codeError{code, fmt.Sprintf(format, args...)}
+}
+
+// failErr turns an error from resolve into a partition result.
+func failErr(err error) *pb.PartitionResult {
+	if e, ok := err.(*codeError); ok {
+		return fail(e.code, "%s", e.msg)
+	}
+	return fail(pb.ReturnCode_NMX_ST_BADPARAM, "%v", err)
+}
+
 func (c *controller) resolve(uids []uint64, locs []*pb.Location) ([]uint64, error) {
 	if len(uids) > 0 && len(locs) > 0 {
-		return nil, fmt.Errorf("give GPUs by UID or by location, not both")
+		return nil, errCode(pb.ReturnCode_NMX_ST_BADPARAM, "give GPUs by UID or by location, not both")
 	}
 	if len(uids) == 0 && len(locs) == 0 {
-		return nil, fmt.Errorf("no GPUs given")
+		return nil, errCode(pb.ReturnCode_NMX_ST_BADPARAM, "no GPUs given")
 	}
 	var out []uint64
 	for _, u := range uids {
 		if _, ok := c.byUID(u); !ok {
-			return nil, fmt.Errorf("unknown GPU UID %d", u)
+			return nil, errCode(pb.ReturnCode_NMX_ST_RESOURCE_BAD, "unknown GPU UID %d", u)
 		}
 		out = append(out, u)
 	}
@@ -232,7 +252,7 @@ func (c *controller) resolve(uids []uint64, locs []*pb.Location) ([]uint64, erro
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("no GPU at slot %d gpu %d", l.SlotId, l.GpuId)
+			return nil, errCode(pb.ReturnCode_NMX_ST_RESOURCE_BAD, "no GPU at slot %d gpu %d", l.SlotId, l.GpuId)
 		}
 	}
 	return out, nil
@@ -243,10 +263,10 @@ func (c *controller) checkGateway(id string) bool { return id != "" && c.gateway
 // commit persists and publishes a change, returning the partition result.
 func (c *controller) commit(id uint32, msg string) *pb.PartitionResult {
 	if err := c.save(); err != nil {
-		return &pb.PartitionResult{ReturnCode: pb.ReturnCode_NMX_ST_INVALID_ARGUMENT, Message: err.Error()}
+		return &pb.PartitionResult{ReturnCode: pb.ReturnCode_NMX_ST_NMX_CONTROLLER_DB_ERROR, Message: err.Error()}
 	}
 	if err := c.publish(); err != nil {
-		return &pb.PartitionResult{ReturnCode: pb.ReturnCode_NMX_ST_INVALID_ARGUMENT, Message: err.Error()}
+		return &pb.PartitionResult{ReturnCode: pb.ReturnCode_NMX_ST_NMX_CONTROLLER_INTERNAL_ERROR, Message: err.Error()}
 	}
 	res := &pb.PartitionResult{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS, Message: msg}
 	if _, ok := c.Partitions[id]; ok {
@@ -263,7 +283,7 @@ func fail(code pb.ReturnCode, format string, args ...any) *pb.PartitionResult {
 
 func (c *controller) Hello(_ context.Context, r *pb.ClientHello) (*pb.ServerHello, error) {
 	if r.GatewayId == "" {
-		return &pb.ServerHello{ReturnCode: pb.ReturnCode_NMX_ST_INVALID_ARGUMENT}, nil
+		return &pb.ServerHello{ReturnCode: pb.ReturnCode_NMX_ST_BADPARAM}, nil
 	}
 	c.mu.Lock()
 	c.gateways[r.GatewayId] = true
@@ -276,7 +296,7 @@ func (c *controller) GetDomainProperties(_ context.Context, r *pb.DomainRequest)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.DomainProperties{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.DomainProperties{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	return &pb.DomainProperties{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS, DomainUuid: c.cfg.DomainUUID,
 		DomainName: c.cfg.DomainName, ComputeNodeCount: uint32(len(c.cfg.Trays)), SwitchNodeCount: 1,
@@ -288,7 +308,7 @@ func (c *controller) GetDomainStateInfo(_ context.Context, r *pb.DomainRequest) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.DomainStateInfo{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.DomainStateInfo{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	return &pb.DomainStateInfo{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS,
 		ControlPlaneState:       pb.ControlPlaneState_NMX_CONTROL_PLANE_STATE_CONFIGURED,
@@ -299,7 +319,7 @@ func (c *controller) GetComputeNodeInfoList(_ context.Context, r *pb.DomainReque
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.ComputeNodeInfoList{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.ComputeNodeInfoList{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	out := &pb.ComputeNodeInfoList{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS}
 	for _, t := range c.cfg.Trays {
@@ -313,7 +333,7 @@ func (c *controller) GetSwitchNodeInfoList(_ context.Context, r *pb.DomainReques
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.SwitchNodeInfoList{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.SwitchNodeInfoList{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	down := 0
 	for _, g := range c.gpus {
@@ -330,7 +350,7 @@ func (c *controller) GetGpuInfoList(_ context.Context, r *pb.GpuInfoListRequest)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.GpuInfoList{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.GpuInfoList{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	out := &pb.GpuInfoList{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS}
 	for _, g := range c.gpus {
@@ -350,7 +370,7 @@ func (c *controller) GetTopologyInfo(_ context.Context, r *pb.DomainRequest) (*p
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.TopologyInfo{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.TopologyInfo{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	out := &pb.TopologyInfo{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS}
 	per := c.cfg.NVLinks / c.cfg.Switches
@@ -378,7 +398,7 @@ func (c *controller) GetPartitionCount(_ context.Context, r *pb.DomainRequest) (
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.PartitionCount{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.PartitionCount{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	return &pb.PartitionCount{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS, Count: uint32(len(c.Partitions))}, nil
 }
@@ -387,7 +407,7 @@ func (c *controller) GetPartitionIdList(_ context.Context, r *pb.DomainRequest) 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.PartitionIdList{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.PartitionIdList{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	return &pb.PartitionIdList{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS, PartitionIds: c.sortedIDs()}, nil
 }
@@ -396,7 +416,7 @@ func (c *controller) GetPartitionInfoList(_ context.Context, r *pb.PartitionInfo
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return &pb.PartitionInfoList{ReturnCode: pb.ReturnCode_NMX_ST_NOT_HELLO}, nil
+		return &pb.PartitionInfoList{ReturnCode: pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID}, nil
 	}
 	out := &pb.PartitionInfoList{ReturnCode: pb.ReturnCode_NMX_ST_SUCCESS}
 	ids := r.PartitionIds
@@ -405,7 +425,7 @@ func (c *controller) GetPartitionInfoList(_ context.Context, r *pb.PartitionInfo
 	}
 	for _, id := range ids {
 		if _, ok := c.Partitions[id]; !ok {
-			return &pb.PartitionInfoList{ReturnCode: pb.ReturnCode_NMX_ST_NOT_FOUND}, nil
+			return &pb.PartitionInfoList{ReturnCode: pb.ReturnCode_NMX_ST_PARTITION_ID_NOT_IN_USE}, nil
 		}
 		out.Partitions = append(out.Partitions, c.partitionInfo(id))
 	}
@@ -422,20 +442,20 @@ func (c *controller) CreatePartition(_ context.Context, r *pb.CreatePartitionReq
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return fail(pb.ReturnCode_NMX_ST_NOT_HELLO, "call Hello first"), nil
+		return fail(pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID, "call Hello first"), nil
 	}
 	uids, err := c.resolve(r.GpuUids, r.Locations)
 	if err != nil {
-		return fail(pb.ReturnCode_NMX_ST_INVALID_ARGUMENT, "%v", err), nil
+		return failErr(err), nil
 	}
 	for _, p := range c.Partitions {
 		if r.PartitionName != "" && p.Name == r.PartitionName {
-			return fail(pb.ReturnCode_NMX_ST_ALREADY_EXISTS, "partition name %q is in use", r.PartitionName), nil
+			return fail(pb.ReturnCode_NMX_ST_PARTITION_NAME_IN_USE, "partition name %q is in use", r.PartitionName), nil
 		}
 	}
 	for _, u := range uids {
 		if id := c.owner(u); id != 0 {
-			return fail(pb.ReturnCode_NMX_ST_GPU_IN_USE, "GPU %d is in partition %d; remove it there first", u, id), nil
+			return fail(pb.ReturnCode_NMX_ST_RESOURCE_USED_IN_ANOTHER_PARTITION, "GPU %d is in partition %d; remove it there first", u, id), nil
 		}
 	}
 	// A user partition's GPUs report its id as their clique, so the default
@@ -450,14 +470,17 @@ func (c *controller) CreatePartition(_ context.Context, r *pb.CreatePartitionReq
 		}
 	}
 	if id > maxPartitionID {
-		return fail(pb.ReturnCode_NMX_ST_INVALID_ARGUMENT, "partition ids are 1..%d", maxPartitionID), nil
+		if r.PartitionId == 0 {
+			return fail(pb.ReturnCode_NMX_ST_RESOURCE_EXHAUSTED, "no partition id left (1..%d)", maxPartitionID), nil
+		}
+		return fail(pb.ReturnCode_NMX_ST_BADPARAM, "partition ids are 1..%d", maxPartitionID), nil
 	}
 	if id == c.cfg.DefaultClique {
-		return fail(pb.ReturnCode_NMX_ST_INVALID_ARGUMENT,
+		return fail(pb.ReturnCode_NMX_ST_PARTITION_ID_IN_USE,
 			"partition id %d is the default partition's clique; choose another id", id), nil
 	}
 	if _, used := c.Partitions[id]; used {
-		return fail(pb.ReturnCode_NMX_ST_ALREADY_EXISTS, "partition %d exists", id), nil
+		return fail(pb.ReturnCode_NMX_ST_PARTITION_ID_IN_USE, "partition %d exists", id), nil
 	}
 	name := r.PartitionName
 	if name == "" {
@@ -471,10 +494,10 @@ func (c *controller) DeletePartition(_ context.Context, r *pb.DeletePartitionReq
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return fail(pb.ReturnCode_NMX_ST_NOT_HELLO, "call Hello first"), nil
+		return fail(pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID, "call Hello first"), nil
 	}
 	if _, ok := c.Partitions[r.PartitionId]; !ok {
-		return fail(pb.ReturnCode_NMX_ST_NOT_FOUND, "no partition %d", r.PartitionId), nil
+		return fail(pb.ReturnCode_NMX_ST_PARTITION_ID_NOT_IN_USE, "no partition %d", r.PartitionId), nil
 	}
 	delete(c.Partitions, r.PartitionId)
 	return c.commit(r.PartitionId, "partition deleted; its GPUs are in no partition"), nil
@@ -484,26 +507,26 @@ func (c *controller) AddGpusToPartition(_ context.Context, r *pb.GpuMembershipRe
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return fail(pb.ReturnCode_NMX_ST_NOT_HELLO, "call Hello first"), nil
+		return fail(pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID, "call Hello first"), nil
 	}
 	p, ok := c.Partitions[r.PartitionId]
 	if !ok {
-		return fail(pb.ReturnCode_NMX_ST_NOT_FOUND, "no partition %d", r.PartitionId), nil
+		return fail(pb.ReturnCode_NMX_ST_PARTITION_ID_NOT_IN_USE, "no partition %d", r.PartitionId), nil
 	}
 	uids, err := c.resolve(r.GpuUids, r.Locations)
 	if err != nil {
-		return fail(pb.ReturnCode_NMX_ST_INVALID_ARGUMENT, "%v", err), nil
+		return failErr(err), nil
 	}
 	for _, u := range uids {
-		if id := c.owner(u); id != 0 && id != r.PartitionId {
-			return fail(pb.ReturnCode_NMX_ST_GPU_IN_USE, "GPU %d is in partition %d; remove it there first", u, id), nil
+		switch id := c.owner(u); id {
+		case 0:
+		case r.PartitionId:
+			return fail(pb.ReturnCode_NMX_ST_RESOURCE_USED_IN_THIS_PARTITION, "GPU %d is already in partition %d", u, id), nil
+		default:
+			return fail(pb.ReturnCode_NMX_ST_RESOURCE_USED_IN_ANOTHER_PARTITION, "GPU %d is in partition %d; remove it there first", u, id), nil
 		}
 	}
-	for _, u := range uids {
-		if c.owner(u) == 0 {
-			p.GPUs = append(p.GPUs, u)
-		}
-	}
+	p.GPUs = append(p.GPUs, uids...)
 	return c.commit(r.PartitionId, "GPUs added"), nil
 }
 
@@ -511,18 +534,21 @@ func (c *controller) RemoveGpusFromPartition(_ context.Context, r *pb.GpuMembers
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.checkGateway(r.GatewayId) {
-		return fail(pb.ReturnCode_NMX_ST_NOT_HELLO, "call Hello first"), nil
+		return fail(pb.ReturnCode_NMX_ST_CONNECTION_NOT_VALID, "call Hello first"), nil
 	}
 	p, ok := c.Partitions[r.PartitionId]
 	if !ok {
-		return fail(pb.ReturnCode_NMX_ST_NOT_FOUND, "no partition %d", r.PartitionId), nil
+		return fail(pb.ReturnCode_NMX_ST_PARTITION_ID_NOT_IN_USE, "no partition %d", r.PartitionId), nil
 	}
 	uids, err := c.resolve(r.GpuUids, r.Locations)
 	if err != nil {
-		return fail(pb.ReturnCode_NMX_ST_INVALID_ARGUMENT, "%v", err), nil
+		return failErr(err), nil
 	}
 	remove := map[uint64]bool{}
 	for _, u := range uids {
+		if c.owner(u) != r.PartitionId {
+			return fail(pb.ReturnCode_NMX_ST_RESOURCE_NOT_IN_USE, "GPU %d is not in partition %d", u, r.PartitionId), nil
+		}
 		remove[u] = true
 	}
 	kept := p.GPUs[:0]

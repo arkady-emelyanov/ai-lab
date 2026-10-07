@@ -123,6 +123,9 @@ class Gpu:
         mask = (ctypes.c_ulong * 4)()
         check(nvml.nvmlDeviceGetMemoryAffinity(h, 4, mask, 0))
         self.numa_affinity = ",".join(str(i * 64 + b) for i, m in enumerate(mask) for b in range(64) if m >> b & 1)
+        mask = (ctypes.c_ulong * 64)()
+        check(nvml.nvmlDeviceGetCpuAffinity(h, 64, mask))
+        self.cpu_affinity = cpu_ranges(i * 64 + b for i, m in enumerate(mask) for b in range(64) if m >> b & 1)
         fv = FieldValue(fieldId=FI_GPU_RECOVERY_ACTION)
         check(nvml.nvmlDeviceGetFieldValues(h, 1, ctypes.byref(fv)))
         self.recovery = RECOVERY_ACTIONS.get(fv.value & 0xFFFFFFFF, "Unknown") if fv.nvmlReturn == 0 else "N/A"
@@ -196,13 +199,24 @@ def table(devs):
     print("+-----------------------------------------------------------------------------------------+")
 
 
+def cpu_ranges(cpus):
+    """[0, 1, 2, 5] -> "0-2,5", as nvidia-smi prints CPU affinity."""
+    out = []
+    for c in sorted(cpus):
+        if out and out[-1][1] == c - 1:
+            out[-1][1] = c
+        else:
+            out.append([c, c])
+    return ",".join(f"{a}" if a == b else f"{a}-{b}" for a, b in out)
+
+
 def topo(devs):
     names = [f"GPU{g.index}" for g in devs]
     print("\t" + "\t".join(names) + "\tCPU Affinity\tNUMA Affinity\tGPU NUMA ID")
     for g in devs:
         # Through NVSwitch, a pair is bonded by the links both ends still have up.
         row = ["X" if o.index == g.index else f"NV{min(sum(g.links), sum(o.links))}" for o in devs]
-        print(f"GPU{g.index}\t" + "\t".join(row) + f"\t0-{os.cpu_count() - 1}\t{g.numa_affinity}\t\t{g.gpu_numa}")
+        print(f"GPU{g.index}\t" + "\t".join(row) + f"\t{g.cpu_affinity}\t{g.numa_affinity}\t\t{g.gpu_numa}")
     print("""
 Legend:
 

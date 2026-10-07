@@ -4,7 +4,7 @@
 
 ## Overview
 
-The lab is a set of Incus system containers on a single Linux host, configured by Ansible into a GPU cluster that behaves like one GB200-class **NVL8** NVLink domain: two GPU compute trays with four GPUs each, an NVLink switch tray, management controllers (BMCs) and the services around a production GPU cluster, scheduled by Slurm or by Kubernetes (k3s): `scheduler` in `inventory/group_vars/all.yml` picks one, never both. The GPUs, the NVLink fabric and the InfiniBand network are emulated; everything else (Slurm or k3s, LDAP, storage, monitoring) is real software.
+The lab is a set of Incus system containers on a single Linux host, configured by Ansible into a GPU cluster that behaves like an 8-GPU slice of a GB200 NVL72-style NVLink domain, which the lab calls **NVL8** (its own name, not an NVIDIA product): two GPU compute trays with four GPUs each, an NVLink switch tray, management controllers (BMCs) and the services around a production GPU cluster, scheduled by Slurm or by Kubernetes (k3s): `scheduler` in `inventory/group_vars/all.yml` picks one, never both. The GPUs, the NVLink fabric and the InfiniBand network are emulated; everything else (Slurm or k3s, LDAP, storage, monitoring) is real software.
 
 Device nodes, NVML and CUDA behaviour, Redfish resources, partition semantics and metrics are modelled on NVIDIA hardware and its management stack; emulation shortcuts are listed under [Limitations](#limitations).
 

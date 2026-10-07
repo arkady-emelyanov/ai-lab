@@ -203,7 +203,7 @@ def test_default_clique_is_not_a_partition_id(lab):
     _grpc(lab, "RemoveGpusFromPartition", partition_id=32766, gpu_uids=uids)
     try:
         refused = _grpc(lab, "CreatePartition", partition_name="clique-test", partition_id=clique, gpu_uids=uids)
-        assert refused.get("returnCode") == "NMX_ST_INVALID_ARGUMENT", refused
+        assert refused.get("returnCode") == "NMX_ST_PARTITION_ID_IN_USE", refused
         made = _grpc(lab, "CreatePartition", partition_name="clique-test", gpu_uids=uids)
         assert made["partition"]["partitionId"] != clique
         _grpc(lab, "DeletePartition", partition_id=made["partition"]["partitionId"])

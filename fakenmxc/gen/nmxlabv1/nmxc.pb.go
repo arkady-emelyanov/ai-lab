@@ -29,36 +29,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// NVIDIA's GB200 NVL Partition User's Guide names NMX_ST_SUCCESS,
-// NMX_ST_NOT_READY and NMX_ST_NOT_CONFIGURED; the other codes are the lab's.
+// Return codes as named in NVIDIA's NMX-C gRPC API documentation
+// (networking-docs.nvidia.com/nmxcswum, "gRPC API"), for the cases the lab
+// produces. NVIDIA's numbers are in its proprietary .proto; these are the lab's.
 type ReturnCode int32
 
 const (
-	ReturnCode_NMX_ST_SUCCESS          ReturnCode = 0
-	ReturnCode_NMX_ST_INVALID_ARGUMENT ReturnCode = 1
-	ReturnCode_NMX_ST_NOT_FOUND        ReturnCode = 2
-	ReturnCode_NMX_ST_ALREADY_EXISTS   ReturnCode = 3
-	ReturnCode_NMX_ST_GPU_IN_USE       ReturnCode = 4 // GPU already belongs to another partition
-	ReturnCode_NMX_ST_NOT_HELLO        ReturnCode = 5 // Hello was not called first
+	ReturnCode_NMX_ST_SUCCESS                            ReturnCode = 0
+	ReturnCode_NMX_ST_BADPARAM                           ReturnCode = 1  // missing or invalid input parameter
+	ReturnCode_NMX_ST_PARTITION_ID_NOT_IN_USE            ReturnCode = 2  // no partition with this id
+	ReturnCode_NMX_ST_PARTITION_ID_IN_USE                ReturnCode = 3  // partition id already in use
+	ReturnCode_NMX_ST_RESOURCE_USED_IN_ANOTHER_PARTITION ReturnCode = 4  // GPU already belongs to another partition
+	ReturnCode_NMX_ST_CONNECTION_NOT_VALID               ReturnCode = 5  // called before a successful Hello
+	ReturnCode_NMX_ST_PARTITION_NAME_IN_USE              ReturnCode = 6  // partition name already in use
+	ReturnCode_NMX_ST_RESOURCE_USED_IN_THIS_PARTITION    ReturnCode = 7  // GPU already in this partition
+	ReturnCode_NMX_ST_RESOURCE_NOT_IN_USE                ReturnCode = 8  // GPU not in this partition
+	ReturnCode_NMX_ST_RESOURCE_BAD                       ReturnCode = 9  // no GPU with this UID or location
+	ReturnCode_NMX_ST_RESOURCE_EXHAUSTED                 ReturnCode = 10 // no partition id left
+	ReturnCode_NMX_ST_NMX_CONTROLLER_DB_ERROR            ReturnCode = 11 // the partition state could not be saved
+	ReturnCode_NMX_ST_NMX_CONTROLLER_INTERNAL_ERROR      ReturnCode = 12 // the change could not be published
 )
 
 // Enum value maps for ReturnCode.
 var (
 	ReturnCode_name = map[int32]string{
-		0: "NMX_ST_SUCCESS",
-		1: "NMX_ST_INVALID_ARGUMENT",
-		2: "NMX_ST_NOT_FOUND",
-		3: "NMX_ST_ALREADY_EXISTS",
-		4: "NMX_ST_GPU_IN_USE",
-		5: "NMX_ST_NOT_HELLO",
+		0:  "NMX_ST_SUCCESS",
+		1:  "NMX_ST_BADPARAM",
+		2:  "NMX_ST_PARTITION_ID_NOT_IN_USE",
+		3:  "NMX_ST_PARTITION_ID_IN_USE",
+		4:  "NMX_ST_RESOURCE_USED_IN_ANOTHER_PARTITION",
+		5:  "NMX_ST_CONNECTION_NOT_VALID",
+		6:  "NMX_ST_PARTITION_NAME_IN_USE",
+		7:  "NMX_ST_RESOURCE_USED_IN_THIS_PARTITION",
+		8:  "NMX_ST_RESOURCE_NOT_IN_USE",
+		9:  "NMX_ST_RESOURCE_BAD",
+		10: "NMX_ST_RESOURCE_EXHAUSTED",
+		11: "NMX_ST_NMX_CONTROLLER_DB_ERROR",
+		12: "NMX_ST_NMX_CONTROLLER_INTERNAL_ERROR",
 	}
 	ReturnCode_value = map[string]int32{
-		"NMX_ST_SUCCESS":          0,
-		"NMX_ST_INVALID_ARGUMENT": 1,
-		"NMX_ST_NOT_FOUND":        2,
-		"NMX_ST_ALREADY_EXISTS":   3,
-		"NMX_ST_GPU_IN_USE":       4,
-		"NMX_ST_NOT_HELLO":        5,
+		"NMX_ST_SUCCESS":                            0,
+		"NMX_ST_BADPARAM":                           1,
+		"NMX_ST_PARTITION_ID_NOT_IN_USE":            2,
+		"NMX_ST_PARTITION_ID_IN_USE":                3,
+		"NMX_ST_RESOURCE_USED_IN_ANOTHER_PARTITION": 4,
+		"NMX_ST_CONNECTION_NOT_VALID":               5,
+		"NMX_ST_PARTITION_NAME_IN_USE":              6,
+		"NMX_ST_RESOURCE_USED_IN_THIS_PARTITION":    7,
+		"NMX_ST_RESOURCE_NOT_IN_USE":                8,
+		"NMX_ST_RESOURCE_BAD":                       9,
+		"NMX_ST_RESOURCE_EXHAUSTED":                 10,
+		"NMX_ST_NMX_CONTROLLER_DB_ERROR":            11,
+		"NMX_ST_NMX_CONTROLLER_INTERNAL_ERROR":      12,
 	}
 )
 
@@ -1931,15 +1953,23 @@ const file_nmxc_proto_rawDesc = "" +
 	"\vreturn_code\x18\x01 \x01(\x0e2\x15.nmxlab.v1.ReturnCodeR\n" +
 	"returnCode\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x126\n" +
-	"\tpartition\x18\x03 \x01(\v2\x18.nmxlab.v1.PartitionInfoR\tpartition*\x9b\x01\n" +
+	"\tpartition\x18\x03 \x01(\v2\x18.nmxlab.v1.PartitionInfoR\tpartition*\xbd\x03\n" +
 	"\n" +
 	"ReturnCode\x12\x12\n" +
-	"\x0eNMX_ST_SUCCESS\x10\x00\x12\x1b\n" +
-	"\x17NMX_ST_INVALID_ARGUMENT\x10\x01\x12\x14\n" +
-	"\x10NMX_ST_NOT_FOUND\x10\x02\x12\x19\n" +
-	"\x15NMX_ST_ALREADY_EXISTS\x10\x03\x12\x15\n" +
-	"\x11NMX_ST_GPU_IN_USE\x10\x04\x12\x14\n" +
-	"\x10NMX_ST_NOT_HELLO\x10\x05*`\n" +
+	"\x0eNMX_ST_SUCCESS\x10\x00\x12\x13\n" +
+	"\x0fNMX_ST_BADPARAM\x10\x01\x12\"\n" +
+	"\x1eNMX_ST_PARTITION_ID_NOT_IN_USE\x10\x02\x12\x1e\n" +
+	"\x1aNMX_ST_PARTITION_ID_IN_USE\x10\x03\x12-\n" +
+	")NMX_ST_RESOURCE_USED_IN_ANOTHER_PARTITION\x10\x04\x12\x1f\n" +
+	"\x1bNMX_ST_CONNECTION_NOT_VALID\x10\x05\x12 \n" +
+	"\x1cNMX_ST_PARTITION_NAME_IN_USE\x10\x06\x12*\n" +
+	"&NMX_ST_RESOURCE_USED_IN_THIS_PARTITION\x10\a\x12\x1e\n" +
+	"\x1aNMX_ST_RESOURCE_NOT_IN_USE\x10\b\x12\x17\n" +
+	"\x13NMX_ST_RESOURCE_BAD\x10\t\x12\x1d\n" +
+	"\x19NMX_ST_RESOURCE_EXHAUSTED\x10\n" +
+	"\x12\"\n" +
+	"\x1eNMX_ST_NMX_CONTROLLER_DB_ERROR\x10\v\x12(\n" +
+	"$NMX_ST_NMX_CONTROLLER_INTERNAL_ERROR\x10\f*`\n" +
 	"\x11ControlPlaneState\x12#\n" +
 	"\x1fNMX_CONTROL_PLANE_STATE_UNKNOWN\x10\x00\x12&\n" +
 	"\"NMX_CONTROL_PLANE_STATE_CONFIGURED\x10\x01*\x9e\x01\n" +

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Slurm's `topology/block` places jobs inside NVLink domains. Instead of a hand-written `topology.conf`, the lab generates it from the live system with [topograph](https://github.com/dsx-ai-factory/topograph) (NVIDIA, Apache-2.0), using its bare-metal provider `infiniband-bm`:
+Slurm's `topology/block` places jobs inside NVLink domains. Instead of a hand-written `topology.conf`, the lab generates it from the live system with [topograph](https://github.com/dsx-ai-factory/topograph) (NVIDIA's, now under the dsx-ai-factory GitHub organisation; Apache-2.0), using its bare-metal provider `infiniband-bm`:
 
 | Source | Command on the trays (through pdsh) | Gives |
 |---|---|---|

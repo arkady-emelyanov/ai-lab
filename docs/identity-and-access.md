@@ -54,7 +54,7 @@ bin/ssh login kubectl auth whoami                 # k3s mode: joe, groups lab-us
 ## Limitations
 
 - LDAP runs without TLS (`ldap_auth_disable_tls_never_use_in_production = true` in SSSD), so passwords cross the Incus bridge in clear.
-- In k3s mode users authenticate to Kubernetes with a client certificate (10 years, in `~/.kube/config`), not their LDAP password; a certificate cannot be revoked short of rotating the cluster's client CA. Pods run as the user's uid only because `examples/k8s/submit` sets it; nothing enforces it.
+- In k3s mode users authenticate to Kubernetes with a client certificate (10 years, in `~/.kube/config`), not their LDAP password; a certificate cannot be revoked short of rotating the cluster's client CA. Pods run as the user's uid only because `examples/kubernetes/submit` sets it; nothing enforces it.
 - Users authenticate to the login node; jobs on the trays run as the user via Slurm (or as the uid their pods ask for). Users cannot SSH from the login node to the trays unless they use agent forwarding with their own key.
 
 ## References

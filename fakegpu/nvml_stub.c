@@ -599,23 +599,48 @@ API nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses_v3(nvmlDevice_t d, unsi
 /* ---- affinity ---------------------------------------------------------- */
 
 /* Every GPU is local to every CPU of the (container's) node. */
-static nvmlReturn_t all_cpus(nvmlDevice_t d, unsigned size, unsigned long *set)
+/* The cores of the GPU's own Grace CPU: the tray's CPUs (the container's,
+ * as lxcfs shows them in /sys/devices/system/cpu/online) split evenly between
+ * its Grace CPUs, the same split numactl -H reports (GB200: GPUs 0-1 on the
+ * first Grace's cores, 2-3 on the second's). */
+static nvmlReturn_t grace_cpus(nvmlDevice_t d, unsigned size, unsigned long *set)
 {
     CHECK_DEV(d);
     if (!set || !size) return NVML_ERROR_INVALID_ARGUMENT;
     memset(set, 0, size * sizeof *set);
-    long ncpu = sysconf(_SC_NPROCESSORS_CONF);
-    const long bits = (long)(8 * sizeof *set);
-    for (long c = 0; c < ncpu && c < (long)size * bits; c++) set[c / bits] |= 1UL << (c % bits);
+    int cpus[4096], n = 0;
+    FILE *f = fopen("/sys/devices/system/cpu/online", "r");
+    if (f) {
+        int a, b;
+        char sep;
+        while (n < 4096 && fscanf(f, "%d", &a) == 1) {
+            b = a;
+            if (fscanf(f, "%c", &sep) == 1 && sep == '-') {
+                if (fscanf(f, "%d", &b) != 1) break;
+                if (fscanf(f, "%c", &sep) != 1) sep = '\n';
+            }
+            for (int c = a; c <= b && n < 4096; c++) cpus[n++] = c;
+            if (sep != ',') break;
+        }
+        fclose(f);
+    }
+    if (!n) /* no sysfs: all configured CPUs */
+        for (long c = 0; c < sysconf(_SC_NPROCESSORS_CONF) && n < 4096; c++) cpus[n++] = (int)c;
+    int graces = (fg_count() + 1) / 2;
+    if (graces < 1) graces = 1;
+    int per = (n + graces - 1) / graces, g = fg_grace_of(idx);
+    const int bits = (int)(8 * sizeof *set);
+    for (int i = g * per; i < (g + 1) * per && i < n; i++)
+        if (cpus[i] / bits < (int)size) set[cpus[i] / bits] |= 1UL << (cpus[i] % bits);
     return NVML_SUCCESS;
 }
 
-API nvmlReturn_t nvmlDeviceGetCpuAffinity(nvmlDevice_t d, unsigned size, unsigned long *set) { return all_cpus(d, size, set); }
+API nvmlReturn_t nvmlDeviceGetCpuAffinity(nvmlDevice_t d, unsigned size, unsigned long *set) { return grace_cpus(d, size, set); }
 
 API nvmlReturn_t nvmlDeviceGetCpuAffinityWithinScope(nvmlDevice_t d, unsigned size, unsigned long *set, unsigned scope)
 {
     (void)scope;
-    return all_cpus(d, size, set);
+    return grace_cpus(d, size, set);
 }
 
 /* The nearest memory is the GPU's own Grace CPU's node (GB200: GPUs 0-1 on

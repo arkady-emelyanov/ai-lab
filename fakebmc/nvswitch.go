@@ -342,8 +342,8 @@ func (s *Server) switchPort(w http.ResponseWriter, r *http.Request) {
 		"LinkState":        state,
 		"LinkStatus":       status,
 		"Width":            2,
-		"CurrentSpeedGbps": s.laneGbps(),
-		"MaxSpeedGbps":     s.laneGbps(),
+		"CurrentSpeedGbps": s.portGbps(),
+		"MaxSpeedGbps":     s.portGbps(),
 		"Status":           obj{"State": map[bool]string{true: "Disabled", false: "Enabled"}[disabled], "Health": health},
 		"Oem":              obj{"Nvidia": nvidia},
 	})

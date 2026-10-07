@@ -31,15 +31,23 @@ service NMXController {
   rpc RemoveGpusFromPartition(GpuMembershipRequest) returns (PartitionResult);
 }
 
-// NVIDIA's GB200 NVL Partition User's Guide names NMX_ST_SUCCESS,
-// NMX_ST_NOT_READY and NMX_ST_NOT_CONFIGURED; the other codes are the lab's.
+// Return codes as named in NVIDIA's NMX-C gRPC API documentation
+// (networking-docs.nvidia.com/nmxcswum, "gRPC API"), for the cases the lab
+// produces. NVIDIA's numbers are in its proprietary .proto; these are the lab's.
 enum ReturnCode {
   NMX_ST_SUCCESS = 0;
-  NMX_ST_INVALID_ARGUMENT = 1;
-  NMX_ST_NOT_FOUND = 2;
-  NMX_ST_ALREADY_EXISTS = 3;
-  NMX_ST_GPU_IN_USE = 4;          // GPU already belongs to another partition
-  NMX_ST_NOT_HELLO = 5;           // Hello was not called first
+  NMX_ST_BADPARAM = 1;                            // missing or invalid input parameter
+  NMX_ST_PARTITION_ID_NOT_IN_USE = 2;             // no partition with this id
+  NMX_ST_PARTITION_ID_IN_USE = 3;                 // partition id already in use
+  NMX_ST_RESOURCE_USED_IN_ANOTHER_PARTITION = 4;  // GPU already belongs to another partition
+  NMX_ST_CONNECTION_NOT_VALID = 5;                // called before a successful Hello
+  NMX_ST_PARTITION_NAME_IN_USE = 6;               // partition name already in use
+  NMX_ST_RESOURCE_USED_IN_THIS_PARTITION = 7;     // GPU already in this partition
+  NMX_ST_RESOURCE_NOT_IN_USE = 8;                 // GPU not in this partition
+  NMX_ST_RESOURCE_BAD = 9;                        // no GPU with this UID or location
+  NMX_ST_RESOURCE_EXHAUSTED = 10;                 // no partition id left
+  NMX_ST_NMX_CONTROLLER_DB_ERROR = 11;            // the partition state could not be saved
+  NMX_ST_NMX_CONTROLLER_INTERNAL_ERROR = 12;      // the change could not be published
 }
 
 enum ControlPlaneState {

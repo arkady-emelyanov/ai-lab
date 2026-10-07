@@ -72,3 +72,16 @@ def test_numactl_unemulated_options_fail_with_message(tmp_path):
     for args in (["--shm", "/tmp/key", "-m", "0"], ["-N", "netdev:eth0", "true"]):
         r = numactl(tmp_path, *args)
         assert r.returncode == 1 and "not emulated" in r.stderr
+
+
+def test_cpu_affinity_is_the_gpus_grace_cpu(tmp_path):
+    """topo -m CPU Affinity: GPUs 0-1 on the first half of the tray's CPUs (Grace 0), 2-3 on the second (Grace 1), as numactl -H splits them."""
+    with open("/sys/devices/system/cpu/online") as f:
+        online = [c for part in f.read().strip().split(",") for c in range(int(part.split("-")[0]), int(part.split("-")[-1]) + 1)]
+    half = -(-len(online) // 2)
+    first, second = online[:half], online[half:]
+    rng = lambda cs: f"{cs[0]}-{cs[-1]}" if len(cs) > 1 else f"{cs[0]}"
+    rows = [line.split("\t") for line in smi(tmp_path, "topo", "-m").splitlines() if line.startswith("GPU") and "\t" in line]
+    assert [r[-4] for r in rows] == [rng(first), rng(first), rng(second), rng(second)]
+    hw = numactl(tmp_path, "-H").stdout
+    assert hw.split("node 0 cpus:")[1].split("\n")[0].split() == [str(c) for c in first]
