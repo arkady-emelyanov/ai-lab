@@ -34,6 +34,15 @@ job 14 on sched-worker[1-2]: 8 tasks
 7: rank 7 on sched-worker2 CUDA_VISIBLE_DEVICES=3: NVIDIA GB200, GPU-d01e22ed-…, 1, scratch  198G
 ```
 
+Expected `ddp-train` results (Slurm, the defaults `--batch 64 --width 8192 --layers 8` with `--steps 16000`, measured on the lab at commit `680c432`; the numbers vary a little with the host's CPU):
+
+| Run | Step | 16,000 steps (`sacct` Elapsed) | GPU load during the run |
+|---|---|---|---|
+| All 8 GPUs in one NVLink partition | ~4.2 ms, ~123k samples/s, 50 TFLOP/s/GPU | 1:18–1:19 | 85–87 % utilisation, 850–890 W, ~56 °C |
+| Split across two partitions (one per tray) | ~9.5 ms, ~54k samples/s, 22 TFLOP/s/GPU | 2:39–2:41 | ~93 % utilisation, 925–945 W, ~67 °C |
+
+The step time is mostly NCCL and launch overhead: the model's BF16 GEMMs take a small share of it, so the GEMM rates barely change it. Split across partitions, the gradient all-reduce crosses InfiniBand between them: the step takes over twice as long, and the GPUs count the longer collectives as busy time, so utilisation and power rise ([NVLink partitions](nvlink-partitions.md)).
+
 **Writing your own jobs:** build models directly on the GPU (`with torch.device("cuda")`): GPU memory is lazily backed, while a model built on the CPU first occupies the tray's host RAM (8 GiB per tray; 10 GiB in k3s mode). Timing reacts to sizes as on real hardware: larger GEMMs take longer, all-reduce time grows with gradient size.
 
 ## Verification
