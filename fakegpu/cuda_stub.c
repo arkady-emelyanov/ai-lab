@@ -130,7 +130,7 @@ API CUresult cuInit(unsigned flags) { (void)flags; return CUDA_SUCCESS; }
 API CUresult cuDriverGetVersion(int *v)
 {
     if (!v) return CUDA_ERROR_INVALID_VALUE;
-    *v = FG_CUDA_VERSION;
+    *v = fg_cuda_version();
     return CUDA_SUCCESS;
 }
 

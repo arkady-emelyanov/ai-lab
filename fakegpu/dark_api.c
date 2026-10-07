@@ -319,7 +319,7 @@ static CUresult integrity_check(uint32_t version, uint64_t unix_seconds, uint64_
     ic_hash(acc, pass1, sizeof pass1, 0x36);
 
     struct ic_pass3 in = {
-        .driver_version = FG_CUDA_VERSION,
+        .driver_version = (uint32_t)fg_cuda_version(),
         .version = version,
         .pid = (uint32_t)getpid(),
         .tid = (uint32_t)pthread_self(),

@@ -25,6 +25,10 @@
  *                 assumed to share one partition
  *   nccl_timeout_s  how long a rank waits for its peers there (default 60)
  *   ib_gbps       InfiniBand bandwidth per GPU (one NIC each, default 400)
+ *   driver_version  driver version NVML and nvidia-smi report (580.95.05)
+ *   cuda_version  highest CUDA version the driver supports, MAJOR.MINOR
+ *                 (13.0): cuDriverGetVersion, NVML, nvidia-smi
+ *   vbios_version GPU VBIOS version (97.00.82.00.0F)
  *   host          tray name GPU identities derive from (default: hostname;
  *                 set it so containers, whose hostname differs, see the
  *                 tray's GPUs)
@@ -49,8 +53,6 @@
 #define FG_CC_MINOR 0
 #define FG_SM_COUNT 148
 #define FG_PCI_DEVICE_ID 0x294110DE
-#define FG_DRIVER_VERSION "580.95.05"
-#define FG_CUDA_VERSION 13000   /* 13.0 */
 
 static const unsigned fg_pci_bus[FG_MAX_GPUS] = {0x18, 0x2A, 0x3A, 0x5D, 0x9A, 0xAB, 0xBA, 0xDB};
 
@@ -70,6 +72,9 @@ static struct {
     char nccl_dir[200];
     double nccl_timeout_s;
     double ib_gbps;
+    char driver_version[32];
+    char cuda_version[16];
+    char vbios_version[32];
 } fg_cfg;
 static pthread_once_t fg_cfg_once = PTHREAD_ONCE_INIT;
 
@@ -98,13 +103,16 @@ static void fg_set(const char *key, const char *val)
     else if (!strcmp(key, "nccl_dir")) snprintf(fg_cfg.nccl_dir, sizeof fg_cfg.nccl_dir, "%s", val);
     else if (!strcmp(key, "nccl_timeout_s")) fg_cfg.nccl_timeout_s = strtod(val, NULL);
     else if (!strcmp(key, "ib_gbps")) fg_cfg.ib_gbps = strtod(val, NULL);
+    else if (!strcmp(key, "driver_version")) snprintf(fg_cfg.driver_version, sizeof fg_cfg.driver_version, "%s", val);
+    else if (!strcmp(key, "cuda_version")) snprintf(fg_cfg.cuda_version, sizeof fg_cfg.cuda_version, "%s", val);
+    else if (!strcmp(key, "vbios_version")) snprintf(fg_cfg.vbios_version, sizeof fg_cfg.vbios_version, "%s", val);
 }
 
 static void fg_load(void)
 {
     static const char *keys[] = {"count", "name", "mem_mb", "cluster_uuid", "clique_id", "sideband_dir",
                                  "latency_scale", "copy_max_mb", "state_path", "host", "dev_dir", "nccl_dir",
-                                 "nccl_timeout_s", "ib_gbps"};
+                                 "nccl_timeout_s", "ib_gbps", "driver_version", "cuda_version", "vbios_version"};
     fg_cfg.count = 4;
     snprintf(fg_cfg.name, sizeof fg_cfg.name, "NVIDIA GB200");
     fg_cfg.mem_mb = 189471;
@@ -116,6 +124,9 @@ static void fg_load(void)
     snprintf(fg_cfg.dev_dir, sizeof fg_cfg.dev_dir, "/dev");
     fg_cfg.nccl_timeout_s = 60;
     fg_cfg.ib_gbps = 400;
+    snprintf(fg_cfg.driver_version, sizeof fg_cfg.driver_version, "580.95.05");
+    snprintf(fg_cfg.cuda_version, sizeof fg_cfg.cuda_version, "13.0");
+    snprintf(fg_cfg.vbios_version, sizeof fg_cfg.vbios_version, "97.00.82.00.0F");
 
     const char *path = getenv("FAKEGPU_CONF");
     FILE *f = fopen(path ? path : "/etc/fakegpu.conf", "r");
@@ -177,6 +188,16 @@ static inline const char *fg_name(void) { fg_init(); return fg_cfg.name; }
 static inline unsigned long long fg_mem_bytes(void) { fg_init(); return fg_cfg.mem_mb << 20; }
 static inline const unsigned char *fg_cluster_uuid(void) { fg_init(); return fg_cfg.cluster_uuid; }
 static inline unsigned fg_clique_id(void) { fg_init(); return fg_cfg.clique_id; }
+static inline const char *fg_driver_version(void) { fg_init(); return fg_cfg.driver_version; }
+static inline const char *fg_vbios_version(void) { fg_init(); return fg_cfg.vbios_version; }
+/* CUDA version as the driver API encodes it: 1000 x major + 10 x minor. */
+static inline int fg_cuda_version(void)
+{
+    fg_init();
+    int major = 0, minor = 0;
+    sscanf(fg_cfg.cuda_version, "%d.%d", &major, &minor);
+    return major * 1000 + minor * 10;
+}
 static inline double fg_latency_scale(void) { fg_init(); return fg_cfg.latency_scale < 0 ? 0 : fg_cfg.latency_scale; }
 static inline size_t fg_copy_max(void) { fg_init(); return (size_t)fg_cfg.copy_max_mb << 20; }
 

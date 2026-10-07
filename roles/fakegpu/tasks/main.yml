@@ -51,11 +51,14 @@
     - { path: "{{ fakegpu_nccl_dir }}", mode: "1777" }
   run_once: true
 
+# Processes read it once: the GPU exporter and GFD restart when it changes
+# (e.g. new driver or CUDA versions); jobs pick it up when they next start.
 - name: Configure the emulated tray
   ansible.builtin.template:
     src: fakegpu.conf.j2
     dest: /etc/fakegpu.conf
     mode: "0644"
+  notify: Restart fakegpu users
 
 - name: Put the fake driver on the linker path
   ansible.builtin.copy:

@@ -74,13 +74,20 @@ API const char *nvmlErrorString(nvmlReturn_t r)
     }
 }
 
-API nvmlReturn_t nvmlSystemGetDriverVersion(char *v, unsigned len) { return copy_str(v, len, FG_DRIVER_VERSION); }
-API nvmlReturn_t nvmlSystemGetNVMLVersion(char *v, unsigned len) { return copy_str(v, len, "13." FG_DRIVER_VERSION); }
+API nvmlReturn_t nvmlSystemGetDriverVersion(char *v, unsigned len) { return copy_str(v, len, fg_driver_version()); }
+
+/* NVML's version: the CUDA major version, then the driver's (e.g. 13.580.95.05). */
+API nvmlReturn_t nvmlSystemGetNVMLVersion(char *v, unsigned len)
+{
+    char s[64];
+    snprintf(s, sizeof s, "%d.%s", fg_cuda_version() / 1000, fg_driver_version());
+    return copy_str(v, len, s);
+}
 
 API nvmlReturn_t nvmlSystemGetCudaDriverVersion(int *v)
 {
     if (!v) return NVML_ERROR_INVALID_ARGUMENT;
-    *v = FG_CUDA_VERSION;
+    *v = fg_cuda_version();
     return NVML_SUCCESS;
 }
 
@@ -197,7 +204,7 @@ API nvmlReturn_t nvmlDeviceGetBoardPartNumber(nvmlDevice_t d, char *s, unsigned 
 API nvmlReturn_t nvmlDeviceGetVbiosVersion(nvmlDevice_t d, char *s, unsigned len)
 {
     CHECK_DEV(d);
-    return copy_str(s, len, "97.00.82.00.0F");
+    return copy_str(s, len, fg_vbios_version());
 }
 
 API nvmlReturn_t nvmlDeviceGetBrand(nvmlDevice_t d, int *b)

@@ -66,11 +66,16 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 |---|---|---|
 | `fakegpu_count`, `fakegpu_name`, `fakegpu_mem_mb`, `fakegpu_type` | 4, `NVIDIA GB200`, 189471, `gb200` | GPUs per tray, name, memory, Slurm GRES type |
 | `fakegpu_nvlinks` | 18 | NVLinks per GPU (Blackwell: 18 × NVLink5) |
+| `fakegpu_driver_version` | `580.95.05` | driver version: `nvidia-smi` "Driver Version", NVML (`nvmlSystemGetDriverVersion`, `nvmlSystemGetNVMLVersion`), GPU Feature Discovery's `nvidia.com/cuda.driver-version.*` labels |
+| `fakegpu_cuda_version` | `13.0` | highest CUDA version the driver supports (`MAJOR.MINOR`): `nvidia-smi` "CUDA Version", `cuDriverGetVersion`, `nvmlSystemGetCudaDriverVersion`, GFD's `nvidia.com/cuda.runtime-version.*` labels |
+| `fakegpu_vbios_version` | `97.00.82.00.0F` | GPU VBIOS: `nvidia-smi` "VBIOS Version", NVML, the tray BMCs' firmware inventory (`HGX_FW_GPU_<n>`) |
 | `nvl_cluster_uuid`, `nvl_clique_id` | | NVLink domain UUID, clique of the default partition |
 | `fakegpu_latency_scale` | 1.0 | multiplier for all simulated times; 0 disables delays |
 | `fakegpu_copy_max_mb` | 64 | copies above this are timed but not performed |
 | `fakegpu_nccl_dir` | `/shared/.fakegpu/nccl` | where NCCL ranks exchange their NVLink partitions (empty: no exchange, one partition assumed) |
 | `ib_gbps_per_gpu` | 400 | InfiniBand bandwidth per GPU (one NIC each) for NCCL between partitions |
+
+Changing a version needs only `make configure`: it rewrites `/etc/fakegpu.conf` and the BMCs' configuration and restarts the GPU exporter and, in k3s mode, GPU Feature Discovery; processes read the file when they start, so running jobs keep the versions they started with. The cuBLAS and cuDNN stubs keep reporting the CUDA 13 runtime they mimic.
 
 `/etc/fakegpu.conf` also gets `host`, the tray's name, which GPU identities derive from. Debugging: `FAKEGPU_DEBUG=1` logs CUDA entry points resolved to no-ops and unknown export tables.
 

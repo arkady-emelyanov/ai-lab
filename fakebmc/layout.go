@@ -320,9 +320,6 @@ func (s *Server) managerReset(w http.ResponseWriter, r *http.Request) {
 
 // ---- firmware inventory ------------------------------------------------------------
 
-// vbiosVersion is what the fake NVML reports (nvmlDeviceGetVbiosVersion).
-const vbiosVersion = "97.00.82.00.0F"
-
 func (s *Server) firmware() [][2]string {
 	bmc := "fakebmc-" + version
 	if s.isSwitch() {
@@ -334,7 +331,7 @@ func (s *Server) firmware() [][2]string {
 	}
 	fw := [][2]string{{"FW_BMC_0", bmc}, {"HGX_FW_BMC_0", "fakebmc-hmc-" + version}}
 	for g := 0; g < s.cfg.GPUCount; g++ {
-		fw = append(fw, [2]string{fmt.Sprintf("HGX_FW_GPU_%d", g), vbiosVersion})
+		fw = append(fw, [2]string{fmt.Sprintf("HGX_FW_GPU_%d", g), s.cfg.VBIOSVersion}) // as nvidia-smi reports it
 	}
 	return fw
 }

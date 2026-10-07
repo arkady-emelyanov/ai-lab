@@ -123,6 +123,14 @@ fakegpu_type: gb200
 fakegpu_name: NVIDIA GB200
 fakegpu_mem_mb: 189471
 fakegpu_nvlinks: 18
+# Versions the emulated driver reports: nvidia-smi ("Driver Version", "CUDA
+# Version", "VBIOS Version"), NVML, cuDriverGetVersion, GPU Feature Discovery's
+# nvidia.com/cuda.driver-version.* and cuda.runtime-version.* labels, and the
+# tray BMCs' firmware inventory (VBIOS). cuda_version is the highest CUDA
+# version the driver supports, MAJOR.MINOR.
+fakegpu_driver_version: "580.95.05"
+fakegpu_cuda_version: "13.0"
+fakegpu_vbios_version: "97.00.82.00.0F"
 # DMI product name of a tray, as GPU Feature Discovery reports it
 # (nvidia.com/gpu.machine); a container would otherwise show the host's board.
 tray_product_name: GB200 NVL

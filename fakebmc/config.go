@@ -15,16 +15,18 @@ type Config struct {
 	Tray        string `json:"tray"`
 	TrayIndex   int    `json:"tray_index"`   // 0-based position in the NVLink domain (CBC chassis)
 	ProductName string `json:"product_name"` // the tray's model, e.g. "GB200 NVL"
-	GPUCount    int    `json:"gpu_count"`
-	GPUName     string `json:"gpu_name"`
-	GPUMemMB    int    `json:"gpu_mem_mb"`
-	NVLinks     int    `json:"nvlinks"`
-	ClusterUUID string `json:"cluster_uuid"`
-	CliqueID    int    `json:"clique_id"`
-	Username    string `json:"username"`
-	Password    string `json:"password"`
-	StateDir    string `json:"state_dir"`
-	SidebandDir string `json:"sideband_dir"`
+	// GPU VBIOS version, as the tray's NVML reports it (firmware inventory).
+	VBIOSVersion string `json:"vbios_version"`
+	GPUCount     int    `json:"gpu_count"`
+	GPUName      string `json:"gpu_name"`
+	GPUMemMB     int    `json:"gpu_mem_mb"`
+	NVLinks      int    `json:"nvlinks"`
+	ClusterUUID  string `json:"cluster_uuid"`
+	CliqueID     int    `json:"clique_id"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	StateDir     string `json:"state_dir"`
+	SidebandDir  string `json:"sideband_dir"`
 	// The tray's GPU occupancy file (fake GPU stack's shared state), read
 	// only: source of the GPU sensors.
 	TelemetryPath string `json:"telemetry_path"`
@@ -59,7 +61,7 @@ func loadConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := &Config{Role: "tray", Listen: ":443", ProductName: "GB200 NVL", GPUCount: 4, NVLinks: 18, Username: "root", StateDir: "/var/lib/fakebmc",
+	cfg := &Config{Role: "tray", Listen: ":443", ProductName: "GB200 NVL", VBIOSVersion: "97.00.82.00.0F", GPUCount: 4, NVLinks: 18, Username: "root", StateDir: "/var/lib/fakebmc",
 		Switches: 2, SwitchPorts: 72}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)

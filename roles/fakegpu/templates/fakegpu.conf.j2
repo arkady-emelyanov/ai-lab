@@ -10,6 +10,10 @@ latency_scale = {{ fakegpu_latency_scale }}
 copy_max_mb = {{ fakegpu_copy_max_mb }}
 state_path = {{ telemetry_tray_path }}/occupancy
 host = {{ inventory_hostname }}
+# Versions NVML, the CUDA driver API and nvidia-smi report.
+driver_version = {{ fakegpu_driver_version }}
+cuda_version = {{ fakegpu_cuda_version }}
+vbios_version = {{ fakegpu_vbios_version }}
 # NCCL communicators exchange each rank's NVLink partition here (every Slurm
 # job and pod mounts {{ shared_mount }}).
 nccl_dir = {{ fakegpu_nccl_dir }}
