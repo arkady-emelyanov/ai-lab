@@ -36,6 +36,8 @@ All tunables live in `inventory/group_vars/all.yml`; the instance list, groups, 
 | `nvswitch` | `sched-nvswitch` |
 | `bmc` (`tray_bmc`, `nvswitch_bmc`) | the three BMCs |
 
+**CPU placement.** `instance_limits` gives each instance a memory limit and a CPU count; `make provision` turns the CPU count of the GPU trays into whole physical cores of their own, from the host's topology (`lscpu`), and pins every other instance to the remaining cores (`playbooks/files/cpu-placement`; on this lab's 6-core, 12-thread host: trays on cores 0–1 and 2–3, everything else on 4–5). With a plain count Incus places and rebalances containers itself and lets them overlap: a tray then shares cores with the controller, and in k3s mode its pods keep only the CPUs the tray had when the kubelet started (the kubelet copies them into the pod cgroup once), so a long-running tray's GPUs slowed down. A tray whose pinning changes gets its kubelet restarted. Processes on the host itself are not confined: heavy work on the host can still slow a tray. If the host has too few cores, the count-based limits stay.
+
 **Secrets** (`.secrets/`, git-ignored, owner-only, created by `make init` or on first use):
 
 | File | Used for |

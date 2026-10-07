@@ -97,6 +97,31 @@
       loop: "{{ instances }}"
       when: item not in (incus_list.stdout | from_json | map(attribute='name'))
 
+    # Trays get whole physical cores of their own; everything else shares the
+    # rest. With a CPU count, Incus places and rebalances instances itself and
+    # lets a tray share cores with the controller, which slows its GPUs.
+    - name: Work out the CPU placement from the host's cores
+      ansible.builtin.command: >-
+        {{ playbook_dir }}/files/cpu-placement {{ limits.workers.cpu }} {{ groups['workers'] | join(' ') }}
+        -- {{ instances | difference(groups['workers']) | join(' ') }}
+      register: placement
+      changed_when: false
+
+    - name: Pin instances to their cores
+      ansible.builtin.shell: |
+        want={{ (placement.stdout | from_json)[item] }}
+        [ "$(incus config get {{ item }} limits.cpu {{ proj }})" = "$want" ] && exit 0
+        incus config set {{ item }} limits.cpu=$want {{ proj }}
+        # The kubelet copies the node's CPUs into the pod cgroup once, at
+        # start; pods would keep only the overlap of old and new CPUs.
+        {% if item in groups['workers'] %}
+        incus exec {{ item }} {{ proj }} -- systemctl try-restart k3s-agent.service || true
+        {% endif %}
+        echo changed
+      loop: "{{ instances | select('in', placement.stdout | from_json) | list }}"
+      register: pinned
+      changed_when: "'changed' in pinned.stdout"
+
     # Let first boot (cloud-init) finish before restarting anything.
     - name: Wait for first boot to finish
       ansible.builtin.command: incus exec {{ item }} {{ proj }} -- cloud-init status --wait

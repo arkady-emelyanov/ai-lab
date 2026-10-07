@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""CPU placement for the lab's instances, from the host's topology (lscpu).
+
+Each GPU tray gets whole physical cores of its own (both hyperthreads), enough
+for its CPU limit; every other instance shares the remaining cores. Trays then
+never compete with the controller, the BMCs or each other for a core, which
+Incus' own placement of a CPU count (limits.cpu=N) allows: it rebalances and
+overlaps instances over time.
+
+  cpu-placement TRAY_THREADS TRAY... -- OTHER...
+Prints {"instance": "cpu,list", ...}, or {} when the host has too few cores
+(then the count-based limits stay)."""
+import json
+import subprocess
+import sys
+
+args = sys.argv[1:]
+need, sep = int(args[0]), args.index("--")
+trays, others = args[1:sep], args[sep + 1:]
+
+cores = {}
+for line in subprocess.run(["lscpu", "-p=CPU,CORE,SOCKET"], capture_output=True, text=True, check=True).stdout.splitlines():
+    if line.startswith("#"):
+        continue
+    cpu, core, socket = (int(x) for x in line.split(","))
+    cores.setdefault((socket, core), []).append(cpu)
+free = [sorted(t) for _, t in sorted(cores.items())]
+
+placement = {}
+for tray in trays:
+    mine = []
+    while free and len(mine) < need:
+        mine += free.pop(0)
+    if len(mine) < need:
+        print("{}")
+        sys.exit()
+    placement[tray] = mine
+rest = sorted(c for core in free for c in core)
+if not rest:  # nothing left for the controller and the rest
+    print("{}")
+    sys.exit()
+for other in others:
+    placement[other] = rest
+print(json.dumps({name: ",".join(str(c) for c in sorted(cpus)) for name, cpus in placement.items()}))
