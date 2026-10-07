@@ -94,17 +94,19 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
 
 ## Instances
 
-| Instance | Address | Role | Incus project | Docs |
-|---|---|---|---|---|
-| `sched-control` | 10.107.111.10 | slurmctld, slurmdbd + MariaDB, Slurm exporter (or k3s server and add-ons, kube-state-metrics), OpenLDAP, Prometheus, Redfish exporter, Grafana, topograph | default | [Slurm](slurm.md), [Kubernetes](kubernetes.md), [Identity](identity-and-access.md), [Monitoring](monitoring.md), [Topology](topology.md) |
-| `sched-login` | 10.107.111.11 | login node: Slurm client or kubectl, tools, user shells | default | [Identity & access](identity-and-access.md) |
-| `sched-storage` | 10.107.111.12 | RustFS (S3), Redis (JuiceFS metadata) | default | [Storage](storage.md) |
-| `sched-worker1`, `sched-worker2` | .21, .22 | GPU trays: slurmd (or k3s agent and device plugin), 4 fake GB200 each, GPU exporter | `trays` | [Fake GPUs](fake-gpu.md), [Slurm](slurm.md), [Kubernetes](kubernetes.md) |
-| `sched-worker1-bmc`, `sched-worker2-bmc` | .31, .32 | Redfish BMC per GPU tray | default | [BMCs](bmc-redfish.md) |
-| `sched-nvswitch-bmc` | .33 | Redfish BMC of the NVLink switch tray | default | [BMCs](bmc-redfish.md) |
-| `sched-nvswitch` | .34 | switch tray host: NVLink partition controller and fabric telemetry | default | [NVLink partitions](nvlink-partitions.md) |
+| Instance | Address | Role | Incus project | Host cores | Docs |
+|---|---|---|---|---|---|
+| `sched-control` | 10.107.111.10 | slurmctld, slurmdbd + MariaDB, Slurm exporter (or k3s server and add-ons, kube-state-metrics), OpenLDAP, Prometheus, Redfish exporter, Grafana, topograph | default | shared | [Slurm](slurm.md), [Kubernetes](kubernetes.md), [Identity](identity-and-access.md), [Monitoring](monitoring.md), [Topology](topology.md) |
+| `sched-login` | 10.107.111.11 | login node: Slurm client or kubectl, tools, user shells | default | shared | [Identity & access](identity-and-access.md) |
+| `sched-storage` | 10.107.111.12 | RustFS (S3), Redis (JuiceFS metadata) | default | shared | [Storage](storage.md) |
+| `sched-worker1`, `sched-worker2` | .21, .22 | GPU trays: slurmd (or k3s agent and device plugin), 4 fake GB200 each, GPU exporter | `trays` | own, per tray | [Fake GPUs](fake-gpu.md), [Slurm](slurm.md), [Kubernetes](kubernetes.md) |
+| `sched-worker1-bmc`, `sched-worker2-bmc` | .31, .32 | Redfish BMC per GPU tray | default | shared | [BMCs](bmc-redfish.md) |
+| `sched-nvswitch-bmc` | .33 | Redfish BMC of the NVLink switch tray | default | shared | [BMCs](bmc-redfish.md) |
+| `sched-nvswitch` | .34 | switch tray host: NVLink partition controller and fabric telemetry | default | shared | [NVLink partitions](nvlink-partitions.md) |
 
 Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; the last octet comes from `ip_host` in `inventory/hosts.yml`). Every instance has the others in `/etc/hosts`. The instance name is also the hostname, the Slurm or Kubernetes node name and the `bin/ssh` alias.
+
+**Host cores.** Each GPU tray is pinned to whole physical cores of its own (both hyperthreads), enough for its CPU limit; all other instances share the remaining cores. The placement is worked out from the host's topology at `make provision`; on this lab's 6-core, 12-thread host the trays get cores 0–1 and 2–3 and the rest share cores 4–5. A tray therefore never competes with the controller, the BMCs or the other tray for a core, so both trays feed their GPUs at the same rate ([Platform](platform.md#configuration)).
 
 ## How the pieces connect
 

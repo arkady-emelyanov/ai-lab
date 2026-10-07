@@ -107,16 +107,17 @@
       register: placement
       changed_when: false
 
+    # A tray whose pinning changes gets its kubelet restarted: the kubelet
+    # copies the node's CPUs into the pod cgroup once, at start, so pods
+    # would keep only the overlap of old and new CPUs.
     - name: Pin instances to their cores
       ansible.builtin.shell: |
         want={{ (placement.stdout | from_json)[item] }}
         [ "$(incus config get {{ item }} limits.cpu {{ proj }})" = "$want" ] && exit 0
         incus config set {{ item }} limits.cpu=$want {{ proj }}
-        # The kubelet copies the node's CPUs into the pod cgroup once, at
-        # start; pods would keep only the overlap of old and new CPUs.
-        {% if item in groups['workers'] %}
-        incus exec {{ item }} {{ proj }} -- systemctl try-restart k3s-agent.service || true
-        {% endif %}
+        case " {{ groups['workers'] | join(' ') }} " in
+          *" {{ item }} "*) incus exec {{ item }} {{ proj }} -- systemctl try-restart k3s-agent.service || true ;;
+        esac
         echo changed
       loop: "{{ instances | select('in', placement.stdout | from_json) | list }}"
       register: pinned
