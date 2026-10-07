@@ -6,6 +6,8 @@
 
 A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It emulates one NVIDIA GB200-class **NVL8** NVLink domain (two GPU trays with four GPUs each, an NVLink switch tray, BMCs, an InfiniBand fabric) and runs the real software stack around it: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
 
+![AI lab overview: the platform instances (login, control, storage) and the NVL8 NVLink domain: an NVLink switch tray with two NVSwitches, two GPU trays with four GB200 each, a Redfish BMC per tray, an InfiniBand leaf and spine](/docs/assets/overview.png)
+
 The GPUs are fake but behave like real ones to everything above them: applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes realistic simulated time, and the GPUs report realistic load, memory, power and temperature. Nothing is computed. Management interfaces (Redfish BMCs, an NVLink partition controller, fabric telemetry) change what the GPUs report and what the scheduler places jobs on.
 
 A blog series walks through the lab, starting with [AI lab, part 1: a GB200 GPU cluster on your laptop (minus the GPUs)](https://blog.emelianov.cloud/ai-lab/01-intro/).
