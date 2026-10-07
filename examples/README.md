@@ -1,6 +1,6 @@
 # Examples
 
-The same four jobs for each scheduler; use the folder that matches `scheduler` in `inventory/local.yml`.
+The same four jobs for each scheduler; use the folder that matches `scheduler` in `local.yml`.
 
 | Job | Slurm (`slurm/`) | Kubernetes (`kubernetes/`) | What it does |
 |---|---|---|---|

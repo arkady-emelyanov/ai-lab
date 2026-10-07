@@ -1,7 +1,7 @@
 # Local NVL8 Slurm cluster on Incus.
 #
 #   make init        prepare the host: venv, Ansible collections, secrets, checks;
-#                    creates inventory/local.yml (local settings, not in git)
+#                    creates local.yml (local settings, not in git)
 #   make up          init + create instances + configure the cluster
 #   make frameworks  shared PyTorch + Ray venv on /shared (several GB)
 #   make test        end-to-end checks (Slurm, GPUs, NCCL, Ray, BMC, metrics)
@@ -23,9 +23,9 @@ ANSIBLE  := $(VENV)/bin/ansible-playbook
 INCUS_SG := sg incus-admin -c
 SECRETS  := .secrets
 , := ,
-LOCAL    := inventory/local.yml
+LOCAL    := local.yml
 # Ansible refuses non-blocking stdio (some terminals/IDEs); detach stdin.
-# The checkout's own settings (inventory/local.yml) override everything else.
+# The checkout's own settings (local.yml) override everything else.
 RUN      = $(INCUS_SG) '$(ANSIBLE) $$(test -f $(LOCAL) && echo --extra-vars=@$(LOCAL)) $(1) </dev/null'
 
 .PHONY: init proto check up provision configure frameworks test test-fakegpu test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
@@ -35,7 +35,7 @@ init: $(LOCAL) $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .ca
 
 # Local settings, not in git: created once, never overwritten.
 $(LOCAL):
-	cp inventory/local.example.yml $@
+	cp local.example.yml $@
 
 $(VENV)/.done: requirements.yml
 	python3 -m venv $(VENV)

@@ -4,7 +4,7 @@
 
 ## Overview
 
-With `scheduler: k3s` in `inventory/local.yml` the lab runs Kubernetes (k3s 1.36) on the emulated hardware: the fake GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Slurm](slurm.md) mode. It is one or the other: in k3s mode no Slurm component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
+With `scheduler: k3s` in `local.yml` the lab runs Kubernetes (k3s 1.36) on the emulated hardware: the fake GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Slurm](slurm.md) mode. It is one or the other: in k3s mode no Slurm component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
 
 | Component | Where | Role |
 |---|---|---|

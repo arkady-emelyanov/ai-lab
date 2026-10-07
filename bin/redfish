@@ -16,8 +16,8 @@ tray=$1 path=$2
 shift 2
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-# inventory/local.yml overrides all.yml, as in Ansible.
-var() { cat "$repo/inventory/group_vars/all.yml" "$repo/inventory/local.yml" 2>/dev/null | sed -n "s/^$1: *//p" | tail -1; }
+# local.yml overrides all.yml, as in Ansible.
+var() { cat "$repo/inventory/group_vars/all.yml" "$repo/local.yml" 2>/dev/null | sed -n "s/^$1: *//p" | tail -1; }
 user=$(var bmc_username)
 pass=$(var bmc_password)
 

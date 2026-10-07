@@ -27,7 +27,7 @@ Commands that need the Incus socket run under `sg incus-admin`, so a group membe
 
 ## Configuration
 
-All tunables and their defaults live in `inventory/group_vars/all.yml`; your own values go in `inventory/local.yml` (created by `make init`, not in git), which overrides it (Ansible extra vars). The instance list, groups, static addresses (`ip_host`) and tray numbers in `inventory/hosts.yml`. Change a value and run `make configure` (or `make provision` for instance-level settings such as limits and devices). The exception is `scheduler` (`slurm` or `k3s`): it decides what is installed and how instances are created, so changing it on a built cluster takes `make down` and `make up` (volumes are kept).
+All tunables and their defaults live in `inventory/group_vars/all.yml`; your own values go in `local.yml` (created by `make init`, not in git), which overrides it (Ansible extra vars). The instance list, groups, static addresses (`ip_host`) and tray numbers in `inventory/hosts.yml`. Change a value and run `make configure` (or `make provision` for instance-level settings such as limits and devices). The exception is `scheduler` (`slurm` or `k3s`): it decides what is installed and how instances are created, so changing it on a built cluster takes `make down` and `make up` (volumes are kept).
 
 | Group | Instances |
 |---|---|

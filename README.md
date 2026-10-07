@@ -51,9 +51,9 @@ make test          # end-to-end checks
 
 `make init` prints the exact command for anything the host still needs (group membership, an AppArmor rule for Incus DNS, the inotify and kernel keyring limits); see [Platform](docs/platform.md#troubleshooting).
 
-**Your settings:** `make init` creates `inventory/local.yml` (from `inventory/local.example.yml`, not in git). Put anything you change there rather than in `inventory/group_vars/all.yml`: every `make` target passes it to Ansible as extra vars, so its values win over `all.yml` and the roles' defaults, and `git pull` never conflicts with it.
+**Your settings:** `make init` creates `local.yml` (from `local.example.yml`, not in git). Put anything you change there rather than in `inventory/group_vars/all.yml`: every `make` target passes it to Ansible as extra vars, so its values win over `all.yml` and the roles' defaults, and `git pull` never conflicts with it.
 
-**Kubernetes instead of Slurm:** set `scheduler: k3s` in `inventory/local.yml` before `make up` (on a built cluster: `make down`, change it, `make up`; volumes are kept). See [Kubernetes (k3s)](docs/kubernetes.md).
+**Kubernetes instead of Slurm:** set `scheduler: k3s` in `local.yml` before `make up` (on a built cluster: `make down`, change it, `make up`; volumes are kept). See [Kubernetes (k3s)](docs/kubernetes.md).
 
 **First steps:**
 
@@ -119,7 +119,7 @@ Each page covers: overview, usage, verification, references (plus configuration 
 
 | Command | Purpose |
 |---|---|
-| `make up`, `make configure` | build the cluster; re-apply configuration after changing `inventory/local.yml` |
+| `make up`, `make configure` | build the cluster; re-apply configuration after changing `local.yml` |
 | `make test` | end-to-end checks |
 | `make test-fakegpu` | fake GPU library tests on this machine, no lab needed |
 | `make test-bmc` | BMC integration tests (`-disruptive`, `-conformance` tiers) |
@@ -137,10 +137,10 @@ Each page covers: overview, usage, verification, references (plus configuration 
 ```
 AGENTS.md                instructions for AI coding agents (deploying the lab for a user; CLAUDE.md points to it)
 skills/ai-lab/           installable agent skill for operating the lab (jobs, GPUs, partitions, BMCs, metrics)
+local.yml                your settings, overriding inventory/group_vars/all.yml (created by make init, not in git)
 Makefile                 entry points (init, up, configure, frameworks, test, down, purge, shell)
 bin/                     ssh / scp / ssh-copy-id wrappers, redfish, nvlink, kubectl and grpcurl helpers
-inventory/               instances and groups (hosts.yml), all tunables and their defaults (group_vars/all.yml),
-                         your settings (local.yml, created by make init, not in git)
+inventory/               instances and groups (hosts.yml), all tunables and their defaults (group_vars/all.yml)
 playbooks/               provision (Incus), site (configuration), frameworks, test, destroy
 roles/                   one role per component (see the component pages)
 fakegpu/                 fake NVIDIA userspace: C stubs, symbol lists, nvidia-smi

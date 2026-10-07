@@ -63,7 +63,7 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 
 ## Configuration
 
-`inventory/group_vars/all.yml` (override them in `inventory/local.yml`), applied with `make configure` (written to `/etc/fakegpu.conf` on the trays; every key can be overridden per process with `FAKEGPU_<KEY>`):
+`inventory/group_vars/all.yml` (override them in `local.yml`), applied with `make configure` (written to `/etc/fakegpu.conf` on the trays; every key can be overridden per process with `FAKEGPU_<KEY>`):
 
 | Variable | Default | Read by |
 |---|---|---|

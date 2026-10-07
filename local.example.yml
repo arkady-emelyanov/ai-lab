@@ -1,5 +1,5 @@
 # Local settings for this checkout: make init copies this file to
-# inventory/local.yml (not in git), and every make target passes that to
+# local.yml (not in git), and every make target passes that to
 # Ansible as extra vars, so a variable set there wins over
 # inventory/group_vars/all.yml and the roles' defaults. Use it for anything
 # you change on your machine; all.yml keeps the shared defaults.

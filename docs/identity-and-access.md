@@ -28,7 +28,7 @@ Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolve
 
 The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. `make configure` creates a lab key per directory user and authorises it in their home on `/shared`, so it works on every node; `bin/ssh` picks it by user name. Plain `ssh` from elsewhere uses your own key (`bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub login`) or the LDAP password.
 
-**Add a user:** append an entry to `cluster_users` (copy the list from `inventory/group_vars/all.yml` to `inventory/local.yml`) and run `make configure`:
+**Add a user:** append an entry to `cluster_users` (copy the list from `inventory/group_vars/all.yml` to `local.yml`) and run `make configure`:
 
 ```yaml
 cluster_users:

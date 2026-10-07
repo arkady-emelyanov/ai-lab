@@ -39,8 +39,8 @@ make test          # end-to-end checks, ~10 minutes
 ```
 
 - Run long steps in the background with their full output in a log file (`make up > /tmp/ai-lab-up.log 2>&1`), and tell the user the path and `tail -f /tmp/ai-lab-up.log` so they can follow it.
-- The user's settings go in `inventory/local.yml`: `make init` creates it from `inventory/local.example.yml`, it is not in git, and its values override `inventory/group_vars/all.yml` (passed to Ansible as extra vars). Change settings there, never in `all.yml`, which holds the shared defaults (and is committed).
-- `scheduler: slurm` (default) or `scheduler: k3s` in `inventory/local.yml` selects Slurm or Kubernetes; ask the user which one if they did not say, before `make up`.
+- The user's settings go in `local.yml`: `make init` creates it from `local.example.yml`, it is not in git, and its values override `inventory/group_vars/all.yml` (passed to Ansible as extra vars). Change settings there, never in `all.yml`, which holds the shared defaults (and is committed).
+- `scheduler: slurm` (default) or `scheduler: k3s` in `local.yml` selects Slurm or Kubernetes; ask the user which one if they did not say, before `make up`.
 - `make frameworks` installs PyTorch and Ray into the lab (several GB, needed for the DDP and Ray examples); offer it, do not run it unasked.
 - If a step fails, read the log, check [Platform: Troubleshooting](docs/platform.md#troubleshooting), fix the cause and rerun the step: every target is idempotent.
 
@@ -58,6 +58,6 @@ Tell the user what they have and how to use it, from the README's [Quickstart](R
 
 - Layout and components: [README](README.md#repository-layout), [Architecture](docs/architecture.md).
 - Tests: `make test-fakegpu` (fake GPU libraries, on the host, no lab), `make test-bmc` (BMC integration tests against the running lab; `-disruptive` power-cycles a tray), `make test` (end to end). See [Testing](docs/testing.md).
-- Commits keep `inventory/group_vars/all.yml` at the shared defaults (`scheduler: slurm`); local choices belong in the uncommitted `inventory/local.yml`. Tools that read settings without Ansible (`bin/redfish`, `bin/nvlink`, `tests/bmc`, the Makefile) read `all.yml` and then `local.yml`, last value wins; new ones must do the same.
+- Commits keep `inventory/group_vars/all.yml` at the shared defaults (`scheduler: slurm`); local choices belong in the uncommitted `local.yml`. Tools that read settings without Ansible (`bin/redfish`, `bin/nvlink`, `tests/bmc`, the Makefile) read `all.yml` and then `local.yml`, last value wins; new ones must do the same.
 - Changes to roles or playbooks apply to a running lab with `make configure`; it keeps data and monitoring history, unlike `make down` + `make up`.
 - Markdown: never hard-wrap prose; one line per paragraph or list item.

@@ -10,4 +10,4 @@ fakebmc/fakebmc
 fakenmxc/fakenmxc
 fakedp/fakedp
 __pycache__/
-inventory/local.yml
+/local.yml
