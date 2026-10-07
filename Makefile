@@ -4,6 +4,8 @@
 #   make up          init + create instances + configure the cluster
 #   make frameworks  shared PyTorch + Ray venv on /shared (several GB)
 #   make test        end-to-end checks (Slurm, GPUs, NCCL, Ray, BMC, metrics)
+#   make test-fakegpu  fake GPU library tests on this machine, no lab needed (NCCL
+#                    across NVLink partitions, InfiniBand counters)
 #   make test-bmc    BMC integration tests (pytest); -disruptive power-cycles a tray,
 #                    -conformance lists gaps to real GB200 behaviour
 #   make shell       login node as joe          make shell-root   login node as root
@@ -23,7 +25,7 @@ SECRETS  := .secrets
 # Ansible refuses non-blocking stdio (some terminals/IDEs); detach stdin.
 RUN      = $(INCUS_SG) '$(ANSIBLE) $(1) </dev/null'
 
-.PHONY: init proto check up provision configure frameworks test test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
+.PHONY: init proto check up provision configure frameworks test test-fakegpu test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
 
 init: $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
 	@chmod -R go-rwx $(SECRETS)
@@ -137,6 +139,10 @@ PYTEST_ARGS ?=
 $(PYTEST): $(VENV)/.done
 	$(VENV)/bin/pip install -q pytest requests
 	touch $@
+
+# Builds the fake GPU libraries here and runs them with emulated trays.
+test-fakegpu: $(PYTEST)
+	$(PYTEST) tests/fakegpu $(PYTEST_ARGS)
 
 test-bmc: init $(PYTEST)
 	$(INCUS_SG) '$(PYTEST) tests/bmc $(PYTEST_ARGS) </dev/null'

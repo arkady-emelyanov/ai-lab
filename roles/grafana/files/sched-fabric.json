@@ -599,6 +599,92 @@
         }
       ],
       "id": 18
+    },
+    {
+      "type": "row",
+      "title": "InfiniBand (NCCL between NVLink partitions)",
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": [],
+      "id": 19
+    },
+    {
+      "type": "timeseries",
+      "title": "InfiniBand TX per tray",
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance) (rate(node_infiniband_port_data_transmitted_bytes_total[1m]))",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "id": 20
+    },
+    {
+      "type": "timeseries",
+      "title": "NVLink vs InfiniBand (domain)",
+      "gridPos": {
+        "x": 12,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "min": 0,
+          "custom": {
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(nvlink_gpu_tx_bytes_total[1m]))",
+          "legendFormat": "NVLink",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(node_infiniband_port_data_transmitted_bytes_total[1m]))",
+          "legendFormat": "InfiniBand",
+          "refId": "B"
+        }
+      ],
+      "id": 21
     }
   ],
   "tags": [

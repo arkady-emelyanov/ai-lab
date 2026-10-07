@@ -120,6 +120,7 @@ Each page covers: overview, usage, verification, references (plus configuration 
 |---|---|
 | `make up`, `make configure` | build the cluster; re-apply configuration after changing `inventory/group_vars/all.yml` |
 | `make test` | end-to-end checks |
+| `make test-fakegpu` | fake GPU library tests on this machine, no lab needed |
 | `make test-bmc` | BMC integration tests (`-disruptive`, `-conformance` tiers) |
 | `make down`, `make purge` | delete instances (keep volumes); delete everything |
 | `bin/ssh login`, `bin/ssh root@<instance>` | SSH as joe / root; `bin/scp`, `bin/ssh-copy-id` likewise |
@@ -172,7 +173,7 @@ docs/                    component documentation
 
 - The emulation stops at computation: GPU kernels do not run, so results are not numerically meaningful.
 - Copies larger than 64 MiB are timed but not performed.
-- Fake NCCL ranks do not communicate: a failed link or rank does not fail its peers' collectives.
+- Fake NCCL ranks exchange only their NVLink partitions (for the cost of collectives): a failed link or rank does not fail its peers' collectives.
 - Containers share the host kernel, so Slurm jobs are not confined by cgroups.
 - In k3s mode users may mount host paths in their pods, and GPUs come from the lab's own device plugin rather than NVIDIA's.
 - The partition controller is not wire-compatible with NVIDIA's NMX-C (its `.proto` is proprietary).

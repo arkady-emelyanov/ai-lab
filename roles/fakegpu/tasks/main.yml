@@ -39,6 +39,18 @@
     state: directory
     mode: "1777"
 
+# On the shared volume: every rank of a job (Slurm or pod) writes its NVLink
+# partition here when NCCL creates a communicator.
+- name: Create the NCCL topology exchange directory
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ fakegpu_nccl_dir | dirname }}", mode: "0755" }
+    - { path: "{{ fakegpu_nccl_dir }}", mode: "1777" }
+  run_once: true
+
 - name: Configure the emulated tray
   ansible.builtin.template:
     src: fakegpu.conf.j2

@@ -70,7 +70,7 @@ bin/ssh sched-control scontrol show config | grep -E 'TRES|Topology|DefMem'
 
 ## Limitations
 
-- Slurm 23.11: `--segment` and `BlockSizes` (newer block-topology features) are not available. Slurm packs a job into as few blocks as possible but does not require one block: when the domain is split into partitions, an 8-GPU job runs across two blocks, with ranks in different cliques, without an error.
+- Slurm 23.11: `--segment` and `BlockSizes` (newer block-topology features) are not available. Slurm packs a job into as few blocks as possible but does not require one block: when the domain is split into partitions, an 8-GPU job runs across two blocks, with ranks in different cliques, without an error. Its collectives then cross InfiniBand between the partitions, as on real hardware, so it runs slower ([Fake GPUs](fake-gpu.md#how-it-works)).
 - No cgroup confinement: a job can use more CPU or memory than it asked for inside its container, and `nvidia-smi` in a job lists all of the tray's GPUs.
 - After a tray is powered off (e.g. through its BMC), Slurm keeps showing it `idle` until `SlurmdTimeout` (300 s) passes, and jobs scheduled on it in the meantime fail. topograph drops the unreachable tray from `topology.conf` within a minute; both recover once the tray is powered on.
 - After the host is suspended, the controller marks the trays down for not responding; they come back with `scontrol update nodename=sched-worker[1-2] state=resume` (slurmd registers only when it starts).

@@ -465,6 +465,7 @@
         - { query: nvlink_gpu_links, count: "{{ fakegpu_count * groups['workers'] | length }}" }
         - { query: nvswitch_ports_up, count: "{{ nvswitch_count }}" }
         - { query: idrac_system_power_on == 1, count: "{{ groups['bmc'] | length }}" }
+        - { query: node_infiniband_port_data_transmitted_bytes_total, count: "{{ ib_hcas_per_node * groups['workers'] | length }}" }
       loop_control:
         label: "{{ item.query }}"
       register: series

@@ -14,6 +14,7 @@ Prometheus on `sched-control` scrapes every layer; Grafana on the same host pres
 | `nvlink` | `sched-nvswitch:9372` | `fakenmxc` | NVLink partitions, link state, traffic, switch ports ([NVLink partitions](nvlink-partitions.md#usage)) |
 | `juicefs` | all cluster nodes `:9567` | JuiceFS client | `/pfs` operations and throughput |
 | `redfish` | all BMCs, through the controller `:9348`, every 30 s | [idrac_exporter](https://github.com/mrlhansen/idrac_exporter) v2.6.3, a generic Redfish exporter (iDRAC, iLO, XClarity, Supermicro, OpenBMC) | out of band: tray power state, GPU temperatures, system and BMC health, machine info ([BMCs](bmc-redfish.md)) |
+| `node` (InfiniBand) | trays' node_exporter textfile collector, every 15 s | `ib-port-counters` (`roles/fakeib`) | NIC port counters under node_exporter's infiniband names: `node_infiniband_port_data_transmitted_bytes_total`, `..._received_bytes_total` `{device="mlx5_<gpu>", port="1"}`; NCCL traffic between NVLink partitions |
 | `kube-state-metrics` (k3s mode) | controller NodePort `:30808` | [kube-state-metrics](https://github.com/kubernetes/kube-state-metrics) | nodes and their allocatable GPUs, pods' GPU requests, jobs |
 
 **Slurm GPU allocation.** The Slurm exporter has no GPU metrics; `slurm-gpu-metrics` (systemd timer, every 15 s) writes them for node_exporter's textfile collector on the controller:
@@ -57,7 +58,7 @@ Dashboards (folder *Lab*):
 | Dashboard | Content |
 |---|---|
 | **Lab overview** | GPU utilisation, memory, power and temperature per tray and GPU; processes on GPUs; domain power; JuiceFS throughput; tray power from the BMCs next to the GPU exporters' state; GPU temperature in band (NVML) vs out of band (BMC) |
-| **Scheduler & NVLink fabric** | GPUs allocated vs total, GPUs per node and user, jobs and nodes by state; unhealthy GPUs, switch ports down, partitions, NVLink and NVSwitch throughput |
+| **Scheduler & NVLink fabric** | GPUs allocated vs total, GPUs per node and user, jobs and nodes by state; unhealthy GPUs, switch ports down, partitions, NVLink and NVSwitch throughput; InfiniBand traffic per tray and NVLink vs InfiniBand for the domain |
 | **Nvidia GPU Metrics** | the GPU exporter's own dashboard (grafana.com 14574) |
 | **Node Exporter Full** | grafana.com 1860 |
 

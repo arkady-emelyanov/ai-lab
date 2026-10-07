@@ -47,8 +47,8 @@ libcublas.so.12: cublas_stub.c build/cublas_weak.c stub_common.h
 libcublasLt.so.12: cublas_stub.c build/cublasLt_weak.c stub_common.h
 	$(CC) $(CFLAGS) $(CU12) -DSTUB_CUBLASLT $(LDFLAGS) -Wl,-soname,$@ -o $@ cublas_stub.c build/cublasLt_weak.c
 
-libnccl.so.2: nccl_stub.c build/nccl_weak.c stub_common.h
-	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ nccl_stub.c build/nccl_weak.c -ldl
+libnccl.so.2: nccl_stub.c build/nccl_weak.c stub_common.h fakegpu.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ nccl_stub.c build/nccl_weak.c -ldl -lpthread
 
 libcudnn.so.9: cudnn_stub.c build/cudnn_weak.c stub_common.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ cudnn_stub.c build/cudnn_weak.c

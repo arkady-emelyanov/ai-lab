@@ -47,6 +47,18 @@ static inline void stub_nvlink_traffic(void *stream, double tx, double rx)
     if (traffic && (tx > 0 || rx > 0)) traffic(stream, (uint64_t)tx, (uint64_t)rx);
 }
 
+/* Counts InfiniBand bytes sent/received by the stream's GPU's NIC. */
+static inline void stub_ib_traffic(void *stream, double tx, double rx)
+{
+    static void (*traffic)(void *, uint64_t, uint64_t);
+    static int looked_up;
+    if (!looked_up) {
+        traffic = (void (*)(void *, uint64_t, uint64_t))stub_libcuda_sym("fakegpu_ib_traffic");
+        looked_up = 1;
+    }
+    if (traffic && (tx > 0 || rx > 0)) traffic(stream, (uint64_t)tx, (uint64_t)rx);
+}
+
 #define STUB_LAUNCH_NS 5000.0          /* library call overhead */
 #define STUB_TENSOR_FLOP_PER_NS 1.2e6  /* ~1.2 PFLOP/s dense, tensor cores */
 #define STUB_FP32_FLOP_PER_NS 6.0e4    /* ~60 TFLOP/s */

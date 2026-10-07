@@ -144,6 +144,11 @@ sideband_bmc_path: /var/lib/fakebmc/sideband
 # the switch tray host (NVLink traffic and utilisation) read.
 telemetry_tray_path: /var/lib/fakegpu/telemetry
 telemetry_bmc_path: /var/lib/fakebmc/telemetry
+# Fake NCCL: ranks exchange their NVLink partitions here at communicator init
+# (on the shared volume, reachable from every job and pod); collectives
+# between partitions cross InfiniBand at this rate per GPU (one NIC each).
+fakegpu_nccl_dir: "{{ shared_mount }}/.fakegpu/nccl"
+ib_gbps_per_gpu: 400
 
 # NVLink switch tray: switch chips and ports per chip (8 GPUs x 18 links fill
 # 2 x 72 ports), and the partition controller's gRPC port.

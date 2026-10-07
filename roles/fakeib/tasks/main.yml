@@ -11,3 +11,51 @@
     content: "{{ {'spine': ib_spine, 'leaf': ib_leaf, 'nodes': groups['workers'] | map('community.general.dict_kv', 'name') | map('combine', {'hcas': ib_hcas_per_node}) | list} | to_nice_json }}\n"
     dest: /etc/fakeib.json
     mode: "0644"
+
+# Port counters of the trays' NICs (one per GPU, mlx5_<gpu>) for
+# node_exporter's textfile collector: the NCCL traffic between NVLink
+# partitions, under node_exporter's infiniband metric names.
+- name: Install the InfiniBand port counter exporter
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/fakeib/ib-port-counters"
+    dest: /usr/local/sbin/ib-port-counters
+    mode: "0755"
+
+- name: Create the node_exporter textfile directory
+  ansible.builtin.file:
+    path: /var/lib/prometheus/node-exporter
+    state: directory
+    mode: "0755"
+
+- name: Export the port counters every 15 seconds
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: /etc/systemd/system/{{ item.name }}
+    mode: "0644"
+  loop:
+    - name: ib-port-counters.service
+      content: |
+        [Unit]
+        Description=InfiniBand port counters for node_exporter
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/ib-port-counters {{ telemetry_tray_path }}/occupancy /var/lib/prometheus/node-exporter/infiniband.prom {{ ib_hcas_per_node }}
+    - name: ib-port-counters.timer
+      content: |
+        [Unit]
+        Description=InfiniBand port counters every 15 seconds
+        [Timer]
+        OnBootSec=15s
+        OnUnitActiveSec=15s
+        AccuracySec=1s
+        [Install]
+        WantedBy=timers.target
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Enable the port counter timer
+  ansible.builtin.systemd_service:
+    name: ib-port-counters.timer
+    state: started
+    enabled: true
+    daemon_reload: true

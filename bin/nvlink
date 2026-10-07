@@ -29,8 +29,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SERVICE = "nmxlab.v1.NMXController"
 GATEWAY = "bin-nvlink"
-HEALTH = {"NMX_GPU_HEALTH_HEALTHY": "healthy", "NMX_GPU_HEALTH_DEGRADED_BANDWIDTH": "degraded",
-          "NMX_GPU_HEALTH_UNKNOWN": "unknown"}
+HEALTH = {"NMX_GPU_HEALTH_HEALTHY": "healthy", "NMX_GPU_HEALTH_DEGRADED": "degraded",
+          "NMX_GPU_HEALTH_NO_NVLINK": "no-nvlink", "NMX_GPU_HEALTH_DEGRADED_BW": "degraded-bw",
+          "NMX_GPU_HEALTH_UNKNOWN": "unknown",
+          "NMX_PARTITION_HEALTH_HEALTHY": "healthy", "NMX_PARTITION_HEALTH_DEGRADED": "degraded",
+          "NMX_PARTITION_HEALTH_DEGRADED_BANDWIDTH": "degraded-bw", "NMX_PARTITION_HEALTH_UNHEALTHY": "unhealthy",
+          "NMX_PARTITION_HEALTH_UNKNOWN": "unknown"}
 
 
 def fail(msg):

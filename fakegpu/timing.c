@@ -141,6 +141,19 @@ API void fakegpu_nvlink_traffic(CUstream h, uint64_t tx, uint64_t rx)
     __atomic_add_fetch(&o->gpu[phys].nvlink_rx, rx, __ATOMIC_RELAXED);
 }
 
+/* InfiniBand traffic of the stream's GPU, through its own NIC (NCCL between
+ * NVLink partitions). Exported for the NCCL stub. */
+API void fakegpu_ib_traffic(CUstream h, uint64_t tx, uint64_t rx)
+{
+    pthread_mutex_lock(&tl_lock);
+    int phys = stream_of(h)->phys;
+    pthread_mutex_unlock(&tl_lock);
+    struct fg_occupancy *o = fg_occupancy();
+    if (!o) return;
+    __atomic_add_fetch(&o->net[phys].ib_tx, tx, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&o->net[phys].ib_rx, rx, __ATOMIC_RELAXED);
+}
+
 /* Blocking operations: queue the work, then wait for it. */
 API void fakegpu_run(CUstream h, uint64_t ns) { sleep_until(fakegpu_enqueue(h, ns)); }
 

@@ -27,7 +27,9 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 | Kernel launch | 3 µs + 2.5 µs per wave of blocks over 148 SMs |
 | GEMM (cuBLAS, cuBLASLt) | 2·m·n·k FLOPs at ~1.2 PFLOP/s (tensor), ~60 TFLOP/s (fp32), ~40 TFLOP/s (fp64) |
 | Copy host↔GPU / GPU↔GPU / device | ~400 GB/s / ~900 GB/s (NVLink) / ~4 TB/s |
-| NCCL collective | 10 µs + bytes × bus factor (all-reduce 2(n−1)/n) at ~900 GB/s |
+| NCCL collective, ranks in one NVLink partition | 10 µs + bytes × bus factor (all-reduce 2(n−1)/n) at ~900 GB/s |
+| NCCL collective across partitions | 20 µs + bytes × bus factor(m) at ~900 GB/s (NVLink, inside each partition) + bytes × bus factor(g) / m at 50 GB/s (InfiniBand, one 400 Gb/s NIC per GPU), for g partitions of at least m ranks |
+| NCCL send/recv | 10 µs + bytes at ~900 GB/s to a peer in the same partition, 50 GB/s otherwise |
 | cuDNN convolution or graph | 40 µs |
 
 **Occupancy.** Every CUDA process registers in a shared table (`state_path`, on the tray's telemetry volume): its PID and memory per GPU, each GPU's busy time and NVLink bytes. Processes in containers (Kubernetes pods) use the same table: each slot records its owner's PID namespace and is held by a file lock the kernel drops when the process exits, so liveness is judged correctly from any namespace, and NVML lists each process under the PID the caller can see. NVML derives utilisation from busy time, power from utilisation (140 W idle to ~1 kW), energy, temperature (32 °C idle towards ~75 °C with a 20 s thermal lag), clocks and P-state, and lists processes. The tray's BMC reads the same table and applies the same model, so its sensors agree with NVML ([BMCs](bmc-redfish.md#how-it-works)). GPU memory is accounted against the 186 GB capacity (allocations beyond it fail with out-of-memory) but is lazily backed, so large GPU buffers cost no host RAM.
@@ -54,6 +56,8 @@ nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
 
 PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks-and-examples.md)).
 
+**NCCL topology.** Like real NCCL at initialisation, every rank learns where its peers' GPUs are: each finds its own GPU's NVLink partition through NVML (PCI bus id, then fabric info: cluster UUID and clique, as of the GPU's last reset), and the ranks of a communicator exchange them through files in `fakegpu_nccl_dir` on `/shared`, keyed by the communicator's unique id (`ncclCommSplit` exchanges colours the same way, so split communicators know their members). Collectives inside one partition run over NVLink; across partitions they are hierarchical, as NCCL does across nodes: NVLink inside each partition and InfiniBand between them, so a job split across partitions slows down and its traffic shows on the trays' NIC counters ([Monitoring](monitoring.md)). A GPU in no partition (clique 0) has no NVLink peer. If a peer does not report within `nccl_timeout_s` (60 s), the rank warns once on stderr and assumes one partition; NCCL calls never fail. The link rates are documented figures (NVLink5 per GPU, NDR 400 per NIC), not measurements; message sizes, NCCL's algorithm choice and overlap with computation make real ratios vary.
+
 ## Configuration
 
 `inventory/group_vars/all.yml`, applied with `make configure` (written to `/etc/fakegpu.conf` on the trays; every key can be overridden per process with `FAKEGPU_<KEY>`):
@@ -65,6 +69,8 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 | `nvl_cluster_uuid`, `nvl_clique_id` | | NVLink domain UUID, clique of the default partition |
 | `fakegpu_latency_scale` | 1.0 | multiplier for all simulated times; 0 disables delays |
 | `fakegpu_copy_max_mb` | 64 | copies above this are timed but not performed |
+| `fakegpu_nccl_dir` | `/shared/.fakegpu/nccl` | where NCCL ranks exchange their NVLink partitions (empty: no exchange, one partition assumed) |
+| `ib_gbps_per_gpu` | 400 | InfiniBand bandwidth per GPU (one NIC each) for NCCL between partitions |
 
 `/etc/fakegpu.conf` also gets `host`, the tray's name, which GPU identities derive from. Debugging: `FAKEGPU_DEBUG=1` logs CUDA entry points resolved to no-ops and unknown export tables.
 
@@ -75,13 +81,14 @@ bin/ssh sched-worker1 nvidia-smi -L                          # 4 × NVIDIA GB200
 bin/ssh login 'srun -N1 --gpus-per-node=2 bash -c "echo \$CUDA_VISIBLE_DEVICES; nvidia-smi -L -i \$CUDA_VISIBLE_DEVICES"'   # Slurm: the job's 2 GPUs
 bin/ssh login 'cd examples/kubernetes && ./submit --wait nvl8-hello.yaml'   # k3s: 8 pods, one GPU each
 bin/ssh login sbatch < examples/slurm/gpu-topology.sbatch    # topology, NVLink matrix, fabric per tray
+make test-fakegpu                                            # the libraries on this machine, no lab: NCCL across partitions, NIC counters
 ```
 
 While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, utilisation, power and rising temperature; the same values appear in Prometheus ([Monitoring](monitoring.md)).
 
 ## Limitations
 
-- Kernels do not run: tensors computed on the GPU hold zeros or garbage; NCCL collectives behave as if every rank contributed the same data (so cross-rank consistency checks pass); ranks do not communicate, so a failed link or rank does not fail its peers' collectives.
+- Kernels do not run: tensors computed on the GPU hold zeros or garbage; NCCL collectives behave as if every rank contributed the same data (so cross-rank consistency checks pass); ranks exchange only their NVLink partitions at initialisation, so a failed link or rank does not fail its peers' collectives.
 - Data larger than `fakegpu_copy_max_mb` does not round-trip between host and GPU.
 - Unusual APIs reach generated no-ops that return success without filling outputs; mainstream PyTorch, Ray, NCCL and NVML paths are implemented.
 - Only x86-64; the stubs mimic CUDA 13 (and the CUDA 12 SONAMEs for cuBLAS).

@@ -17,6 +17,14 @@
  *   copy_max_mb   copies larger than this are timed but not performed, so
  *                 big "device" buffers never touch host RAM (default 64)
  *   state_path    shared occupancy file (default /dev/shm/fakegpu)
+ *   dev_dir       where the GPU device nodes are looked up (default /dev;
+ *                 tests point it at a directory of plain files)
+ *   nccl_dir      directory every rank of a job can reach (/shared in the
+ *                 lab) where NCCL communicators exchange each rank's NVLink
+ *                 partition at init; empty: no exchange, all ranks are
+ *                 assumed to share one partition
+ *   nccl_timeout_s  how long a rank waits for its peers there (default 60)
+ *   ib_gbps       InfiniBand bandwidth per GPU (one NIC each, default 400)
  *   host          tray name GPU identities derive from (default: hostname;
  *                 set it so containers, whose hostname differs, see the
  *                 tray's GPUs)
@@ -58,6 +66,10 @@ static struct {
     unsigned long long copy_max_mb;
     char state_path[200];
     char host[128];
+    char dev_dir[200];
+    char nccl_dir[200];
+    double nccl_timeout_s;
+    double ib_gbps;
 } fg_cfg;
 static pthread_once_t fg_cfg_once = PTHREAD_ONCE_INIT;
 
@@ -82,12 +94,17 @@ static void fg_set(const char *key, const char *val)
     else if (!strcmp(key, "copy_max_mb")) fg_cfg.copy_max_mb = strtoull(val, NULL, 10);
     else if (!strcmp(key, "state_path")) snprintf(fg_cfg.state_path, sizeof fg_cfg.state_path, "%s", val);
     else if (!strcmp(key, "host")) snprintf(fg_cfg.host, sizeof fg_cfg.host, "%s", val);
+    else if (!strcmp(key, "dev_dir")) snprintf(fg_cfg.dev_dir, sizeof fg_cfg.dev_dir, "%s", val);
+    else if (!strcmp(key, "nccl_dir")) snprintf(fg_cfg.nccl_dir, sizeof fg_cfg.nccl_dir, "%s", val);
+    else if (!strcmp(key, "nccl_timeout_s")) fg_cfg.nccl_timeout_s = strtod(val, NULL);
+    else if (!strcmp(key, "ib_gbps")) fg_cfg.ib_gbps = strtod(val, NULL);
 }
 
 static void fg_load(void)
 {
     static const char *keys[] = {"count", "name", "mem_mb", "cluster_uuid", "clique_id", "sideband_dir",
-                                 "latency_scale", "copy_max_mb", "state_path", "host"};
+                                 "latency_scale", "copy_max_mb", "state_path", "host", "dev_dir", "nccl_dir",
+                                 "nccl_timeout_s", "ib_gbps"};
     fg_cfg.count = 4;
     snprintf(fg_cfg.name, sizeof fg_cfg.name, "NVIDIA GB200");
     fg_cfg.mem_mb = 189471;
@@ -96,6 +113,9 @@ static void fg_load(void)
     fg_cfg.latency_scale = 1.0;
     fg_cfg.copy_max_mb = 64;
     snprintf(fg_cfg.state_path, sizeof fg_cfg.state_path, "/dev/shm/fakegpu");
+    snprintf(fg_cfg.dev_dir, sizeof fg_cfg.dev_dir, "/dev");
+    fg_cfg.nccl_timeout_s = 60;
+    fg_cfg.ib_gbps = 400;
 
     const char *path = getenv("FAKEGPU_CONF");
     FILE *f = fopen(path ? path : "/etc/fakegpu.conf", "r");
@@ -144,8 +164,8 @@ static void fg_scan(void)
 {
     fg_init();
     for (int i = 0; i < fg_cfg.count; i++) {
-        char dev[32];
-        snprintf(dev, sizeof dev, "/dev/nvidia%d", i);
+        char dev[256];
+        snprintf(dev, sizeof dev, "%s/nvidia%d", fg_cfg.dev_dir, i);
         if (access(dev, F_OK) == 0) fg_present[fg_present_count++] = i;
     }
 }

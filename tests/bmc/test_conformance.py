@@ -147,6 +147,19 @@ def _grpc(lab, method, **req):
     return json.loads(p.stdout or "{}")
 
 
+def test_access_link_down_marks_gpu_no_nvlink(lab, downed_link):
+    """[part] 6.2: an access link failure makes the Control Plane mark the
+    GPU NO_NVLINK; the partition's health remains unchanged."""
+    down, tray, g, link = downed_link
+    _grpc(lab, "Hello")
+    down()
+    gpu = next(x for x in _grpc(lab, "GetGpuInfoList")["gpus"]
+               if x["hostname"] == tray and x.get("location", {}).get("gpuId", 0) == g)
+    assert gpu["health"] == "NMX_GPU_HEALTH_NO_NVLINK"
+    part = next(p for p in _grpc(lab, "GetPartitionInfoList")["partitions"] if p["partitionId"] == gpu["partitionId"])
+    assert part["health"] == "NMX_PARTITION_HEALTH_HEALTHY"
+
+
 def gpu_reset(lab, tray, ids=None):
     """nvidia-smi --gpu-reset on the tray as root; its output."""
     return lab.sh(tray, "nvidia-smi --gpu-reset" + (f" -i {ids}" if ids is not None else ""))
@@ -200,6 +213,39 @@ def test_bmc_reports_the_partition_clique(lab, tray_partition):
     assert all(g["clique"] == pid for g in lab.smi(tray))
     for g in range(lab.gpus):
         assert at(lab.tray_bmc(tray).get(gpu_path(g)), "Oem", "Nvidia", "FabricClique", "CliqueId") == pid
+
+
+def test_nccl_between_partitions_crosses_infiniband(lab, tray_partition):
+    """GPUs in different NVLink partitions cannot reach each other over NVLink
+    ([part]); NCCL then uses the network. Two ranks, one per tray, with tray 2
+    in its own partition: the all-reduce goes through the NICs (one 400 Gb/s
+    NIC per GPU: 50 B/ns) and the tray's port counters show it."""
+    tray2, _ = tray_partition
+    gpu_reset(lab, tray2)
+    tray1 = lab.trays[0]
+    for t in (tray1, tray2):
+        if lab.sh(t, "nvidia-smi -i 0 --query-compute-apps=pid --format=csv,noheader").strip():
+            pytest.skip(f"{t} GPU 0 is in use")
+    run = f"/shared/.fakegpu/nccl-test-{int(time.time())}"
+    subprocess.run([str(REPO / "bin/scp"), "-q", str(REPO / "tests/fakegpu/nccl_rank.py"), f"root@{tray1}:/tmp/nccl_rank.py"],
+                   check=True, stdin=subprocess.DEVNULL)
+    lab.sh(tray1, f"mkdir -p {run} && cp /tmp/nccl_rank.py {run}/")
+    nbytes = 1 << 28
+    cmd = (f"FAKEGPU_STATE_PATH=/var/lib/fakegpu/telemetry/occupancy python3 {run}/nccl_rank.py "
+           f"/usr/local/lib/fakegpu 2 {{rank}} {run}/id allreduce {nbytes}")
+    procs = [subprocess.Popen([str(REPO / "bin/ssh"), f"root@{t}", cmd.format(rank=r)], stdin=subprocess.DEVNULL,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+             for r, t in enumerate((tray1, tray2))]
+    try:
+        results = [json.loads(p.communicate(timeout=120)[0]) for p in procs]
+    finally:
+        lab.sh(tray1, f"rm -rf {run}", check=False)
+    for r in results:
+        assert r["ib_tx"] == nbytes and r["nvlink_tx"] == 0, r
+        assert abs(r["busy_ns"] - (20_000 + nbytes / 50)) < 1000, r
+    out = lab.sh(tray2, "ib-port-counters && cat /var/lib/prometheus/node-exporter/infiniband.prom")
+    assert any(line.startswith('node_infiniband_port_data_transmitted_bytes_total{device="mlx5_0"') and int(line.split()[-1]) >= nbytes
+               for line in out.splitlines())
 
 
 def test_gpu_reset_refuses_a_gpu_in_use(lab):

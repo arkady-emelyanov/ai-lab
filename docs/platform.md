@@ -16,6 +16,7 @@ Everything runs on a single Linux host as Incus system containers, created and c
 | `make configure` | `playbooks/site.yml`: configures every instance (idempotent; re-run after changing variables). |
 | `make frameworks` | `playbooks/frameworks.yml`: PyTorch and Ray venv on `/shared` (several GB). |
 | `make test` | `playbooks/test.yml`: end-to-end checks ([Testing](testing.md)). |
+| `make test-fakegpu` | Fake GPU library tests on this machine, without the lab (pytest, `tests/fakegpu`; [Testing](testing.md#fake-gpu-library-tests)). |
 | `make test-bmc`, `make test-bmc-disruptive`, `make test-bmc-conformance` | BMC integration tests from the host (pytest, `tests/bmc`; [Testing](testing.md#bmc-integration-tests)). |
 | `make down` | Deletes all instances; volumes (homes and venv, object data and its JuiceFS metadata, scratch), secrets and caches stay. |
 | `make purge` | Also deletes volumes, the scratch pool, the `trays` project and BMC certificates. |

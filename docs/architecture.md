@@ -140,7 +140,7 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 - GPU kernels do not compute; tensors computed on the GPU hold zeros or garbage. Copies above `fakegpu_copy_max_mb` (64 MiB) are timed but not performed, so large GPU buffers cost no host RAM. See [Fake GPUs](fake-gpu.md#limitations).
 - Containers share the host kernel: Slurm tracks jobs by process (`proctrack/linuxproc`) without cgroup confinement or CPU binding.
-- Fake NCCL ranks do not communicate: a failed link or rank does not fail its peers' collectives.
+- Fake NCCL ranks exchange only their NVLink partitions (for the cost of collectives): a failed link or rank does not fail its peers' collectives.
 - k3s mode: GPUs come from the lab's own device plugin and CDI specification, not NVIDIA's container toolkit or device plugin; users may mount host paths in their pods ([Kubernetes](kubernetes.md#limitations)).
 - Slurm is the Ubuntu 24.04 package (23.11): no `--segment`, no `BlockSizes`.
 - LDAP runs without TLS inside the lab network.

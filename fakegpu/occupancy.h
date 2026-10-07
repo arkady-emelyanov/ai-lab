@@ -58,6 +58,14 @@ struct fg_gpu_reset {
     uint64_t reset_ns;    /* CLOCK_MONOTONIC time of the last reset */
 };
 
+/* InfiniBand traffic of the GPU's NIC (one per GPU, mlx5_<gpu>): NCCL
+ * traffic between ranks in different NVLink partitions. Read by the trays'
+ * InfiniBand port counters (roles/fakeib). */
+struct fg_gpu_net {
+    uint64_t ib_tx;       /* bytes sent */
+    uint64_t ib_rx;       /* bytes received */
+};
+
 /* Fields added later go after everything older versions map, so processes
  * still running an older library never read or clear them. */
 struct fg_occupancy {
@@ -65,6 +73,7 @@ struct fg_occupancy {
     struct fg_proc proc[FG_MAX_PROCS];
     uint64_t pidns[FG_MAX_PROCS]; /* slot owner's PID namespace (inode of /proc/self/ns/pid) */
     struct fg_gpu_reset reset[FG_MAX_GPUS];
+    struct fg_gpu_net net[FG_MAX_GPUS];
 };
 
 static inline uint64_t fg_now_ns(void)
