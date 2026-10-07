@@ -8,7 +8,7 @@ A complete GPU cluster on a single Linux machine, for building and testing clust
 
 It is software-in-the-loop: the scheduler, frameworks and tools are the real software, unmodified, running against a behavioural model of the hardware. Applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes modelled time, and the GPUs report modelled load, memory, power and temperature; the BMCs and the NVLink partition controller change what the GPUs report and where the scheduler places jobs. Nothing is computed: see [What is real and what is modelled](#what-is-real-and-what-is-modelled).
 
-A blog series walks through the lab, starting with [AI lab, part 1: a GB200 GPU cluster on your laptop (minus the GPUs)](https://blog.emelianov.cloud/ai-lab/01-intro/).
+A blog series walks through the lab, starting with [AI lab, part 1: GB200 NVL8 on your laptop (emulated)](https://blog.emelianov.cloud/ai-lab/01-intro/).
 
 What you get:
 

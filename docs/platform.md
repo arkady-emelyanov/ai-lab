@@ -36,6 +36,8 @@ All tunables and their defaults live in `inventory/group_vars/all.yml`; your own
 | `nvswitch` | `sched-nvswitch` |
 | `bmc` (`tray_bmc`, `nvswitch_bmc`) | the three BMCs |
 
+**Package mirror.** Every instance installs Ubuntu packages from `apt_mirror` (default `http://archive.ubuntu.com/ubuntu`, for the archive and security pockets), with short apt timeouts so an unresponsive mirror address fails in seconds. When Canonical's mirrors are slow or unreachable from your network, set a nearby mirror in `local.yml`, e.g. `apt_mirror: http://mirrors.edge.kernel.org/ubuntu` (list: [Ubuntu archive mirrors](https://launchpad.net/ubuntu/+archivemirrors)), and run `make configure` or rerun the step that stalled.
+
 **Hardware parameters.** The emulated hardware is described by variables, each defaulting to GB200 values: the GPU profile, driver, CUDA and VBIOS versions, NVLink domain and InfiniBand link rate in [Emulated GPUs](fake-gpu.md#configuration), BMC firmware (per tray if needed) in [BMCs](bmc-redfish.md#configuration), switch chips and ports in [NVLink partitions](nvlink-partitions.md#configuration), the InfiniBand fabric in [Topology](topology.md#configuration). `make configure` applies a change; `make up` and `make configure` reject inconsistent values first. The lab's size (trays, GPUs per tray, switch trays, InfiniBand switches) is fixed.
 
 **CPU placement.** `instance_limits` gives each instance a memory limit and a CPU count; `make provision` turns the CPU count of the GPU trays into whole physical cores of their own, from the host's topology (`lscpu`), and pins every other instance to the remaining cores (`playbooks/files/cpu-placement`; on this lab's 6-core, 12-thread host: trays on cores 0–1 and 2–3, everything else on 4–5). With a plain count Incus places and rebalances containers itself and lets them overlap: a tray then shares cores with the controller, and in k3s mode its pods keep only the CPUs the tray had when the kubelet started (the kubelet copies them into the pod cgroup once), so a long-running tray's GPUs slowed down. A tray whose pinning changes gets its kubelet restarted. Processes on the host itself are not confined: heavy work on the host can still slow a tray. If the host has too few cores, the count-based limits stay.
@@ -66,6 +68,7 @@ sg incus-admin -c 'incus list --all-projects -c ns4'   # all instances RUNNING w
 
 | Symptom | Cause and fix |
 |---|---|
+| `make up` or `make configure` stalls for minutes at a package task (e.g. `ssh : Install the SSH server`) | the Ubuntu mirror does not answer from your network (Canonical's mirrors sometimes time out). Set `apt_mirror` in `local.yml` to a mirror that answers ([Configuration](#configuration)), stop the run and start it again |
 | `make check`: not in `incus-admin` | `sudo usermod -aG incus-admin $USER` |
 | `make check`: containers get no DNS | Incus' dnsmasq is denied reading NetworkManager's `no-stub-resolv.conf` by AppArmor. `make check` prints the drop-in to add under `/etc/apparmor.d/abstractions/nameservice.d/`. |
 | `make check`: `fs.inotify.max_user_instances` too low; containers boot without network ("Too many open files") | Incus ships `/etc/sysctl.d/10-incus-inotify.conf` (1024) but it only applies after a reboot: `sudo sysctl --system`. |

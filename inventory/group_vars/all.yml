@@ -5,6 +5,11 @@ repo_root: "{{ inventory_dir | dirname }}"
 incus_image: images:ubuntu/24.04/cloud
 incus_profile: default
 incus_bridge: incusbr0
+# Ubuntu package mirror for every instance (archive and security pockets).
+# Canonical's own mirrors are sometimes slow or unreachable from some
+# networks; any Ubuntu mirror works, e.g. http://mirrors.edge.kernel.org/ubuntu
+# or one near you from https://launchpad.net/ubuntu/+archivemirrors.
+apt_mirror: http://archive.ubuntu.com/ubuntu
 instance_limits:
   controller: { cpu: 2, memory: 2GiB }
   login: { cpu: 2, memory: 4GiB }

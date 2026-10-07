@@ -1,0 +1,32 @@
+# Ubuntu packages come from apt_mirror (archive and security pockets alike:
+# every Ubuntu mirror carries noble-security). Runs first on every instance,
+# before any other role installs a package.
+- name: Use the configured Ubuntu mirror
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/ubuntu.sources
+    content: |
+      # Managed by ai-lab (apt_mirror).
+      Types: deb
+      URIs: {{ apt_mirror }}
+      Suites: {{ ansible_distribution_release }} {{ ansible_distribution_release }}-updates {{ ansible_distribution_release }}-backports {{ ansible_distribution_release }}-security
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+    mode: "0644"
+  register: sources
+
+# apt's defaults wait minutes on a mirror address that does not answer
+# (Canonical's own mirrors sometimes drop connections from some networks):
+# give up on it quickly and retry, so a bad address costs seconds.
+- name: Fail fast on unresponsive mirrors
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/80-ai-lab
+    content: |
+      Acquire::http::Timeout "10";
+      Acquire::https::Timeout "10";
+      Acquire::Retries "3";
+    mode: "0644"
+
+- name: Refresh the package lists from the new mirror
+  ansible.builtin.apt:
+    update_cache: true
+  when: sources.changed

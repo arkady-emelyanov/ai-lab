@@ -6,6 +6,12 @@
     fail_msg: "scheduler must be slurm or k3s, not {{ scheduler }}"
     quiet: true
 
+- name: The Ubuntu mirror is a URL
+  ansible.builtin.assert:
+    that: apt_mirror is match('^https?://[^ ]+$')
+    fail_msg: "apt_mirror must be an http(s) URL of an Ubuntu mirror, not {{ apt_mirror }}"
+    quiet: true
+
 - name: The NVLink switch tray can cable every GPU link
   ansible.builtin.assert:
     that:

@@ -9,6 +9,10 @@
     - name: Check the settings
       ansible.builtin.include_tasks: tasks/check-settings.yml
 
+- name: Package sources
+  hosts: all:!localhost
+  roles: [apt]
+
 - name: Base system
   hosts: cluster
   roles:
