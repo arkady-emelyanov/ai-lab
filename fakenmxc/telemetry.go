@@ -115,8 +115,10 @@ func (c *controller) serveMetrics(w http.ResponseWriter, _ *http.Request) {
 	}
 	var rows []gpuRow
 	switchUp := make([]int, c.cfg.Switches)
-	switchTx := make([]float64, c.cfg.Switches)
-	switchRx := make([]float64, c.cfg.Switches)
+	if c.switchTx == nil {
+		c.switchTx, c.switchRx = make([]float64, c.cfg.Switches), make([]float64, c.cfg.Switches)
+		c.lastTx, c.lastRx = map[int]uint64{}, map[int]uint64{}
+	}
 	type portRow struct {
 		labels map[string]string
 		up     float64
@@ -152,11 +154,14 @@ func (c *controller) serveMetrics(w http.ResponseWriter, _ *http.Request) {
 			ports = append(ports, portRow{map[string]string{"switch": fmt.Sprintf("NVSwitch_%d", sw),
 				"port": fmt.Sprint(port), "host": info.Hostname, "gpu": fmt.Sprint(g.idx), "link": fmt.Sprint(l)}, b2f(up)})
 		}
-		if tel != nil && info.ActiveNvlinks > 0 {
-			for sw := range activeOn {
-				share := float64(activeOn[sw]) / float64(info.ActiveNvlinks)
-				switchTx[sw] += float64(tel.NVLinkTx) * share
-				switchRx[sw] += float64(tel.NVLinkRx) * share
+		if tel != nil {
+			dTx, dRx := counterDelta(c.lastTx, gi, tel.NVLinkTx), counterDelta(c.lastRx, gi, tel.NVLinkRx)
+			if info.ActiveNvlinks > 0 {
+				for sw := range activeOn {
+					share := float64(activeOn[sw]) / float64(info.ActiveNvlinks)
+					c.switchTx[sw] += float64(dTx) * share
+					c.switchRx[sw] += float64(dRx) * share
+				}
 			}
 		}
 	}
@@ -183,12 +188,28 @@ func (c *controller) serveMetrics(w http.ResponseWriter, _ *http.Request) {
 		l := map[string]string{"switch": fmt.Sprintf("NVSwitch_%d", sw), "host": c.cfg.SwitchHost}
 		m.sample("nvswitch_ports", l, float64(c.cfg.SwitchPorts))
 		m.sample("nvswitch_ports_up", l, float64(switchUp[sw]))
-		m.sample("nvswitch_tx_bytes_total", l, switchTx[sw])
-		m.sample("nvswitch_rx_bytes_total", l, switchRx[sw])
+		m.sample("nvswitch_tx_bytes_total", l, c.switchTx[sw])
+		m.sample("nvswitch_rx_bytes_total", l, c.switchRx[sw])
 	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte(m.b.String()))
+}
+
+// counterDelta is how much a GPU byte counter grew since the last scrape. The
+// first sight of a GPU only records it (the switch counters start at zero when
+// the controller starts); a counter that went backwards (the tray's occupancy
+// file was recreated) counts from zero.
+func counterDelta(last map[int]uint64, gi int, now uint64) uint64 {
+	prev, seen := last[gi]
+	last[gi] = now
+	switch {
+	case !seen:
+		return 0
+	case now < prev:
+		return now
+	}
+	return now - prev
 }
 
 func b2f(b bool) float64 {

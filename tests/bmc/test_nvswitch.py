@@ -84,6 +84,31 @@ def test_switch_port_down_reaches_gpu_and_telemetry(lab, switch_port):
     assert lab.metric("nvlink_gpu_healthy", host=host, gpu=str(g)) == 1
 
 
+def test_switch_traffic_counters_never_decrease(lab, switch_port):
+    """nvswitch_*_bytes_total are counters: a link going down or coming back
+    changes how new traffic is split over the switches, never past traffic
+    (a decrease would read as a counter reset to Prometheus)."""
+    b, sw, p, host, g, link = switch_port
+    push = ("import ctypes; cu = ctypes.CDLL('libcuda.so.1'); cu.cuInit(0); "
+            "d, c = ctypes.c_int(), ctypes.c_void_p(); "
+            f"cu.cuDeviceGet(ctypes.byref(d), {g}); cu.cuDevicePrimaryCtxRetain(ctypes.byref(c), d); "
+            "cu.cuCtxSetCurrent(c); cu.fakegpu_nvlink_traffic.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64]; "
+            "cu.fakegpu_nvlink_traffic(None, 10**12, 10**12)")
+    counters = lambda: [lab.metric(f"nvswitch_{d}_bytes_total", switch=f"NVSwitch_{s}")  # noqa: E731
+                        for s in range(lab.switches) for d in ("tx", "rx")]
+    samples = [counters()]
+    for state in ("Disabled", "Enabled"):
+        lab.sh(host, f'python3 -c "{push}"')
+        samples.append(counters())
+        b.write("PATCH", switch_port_path(sw, p), {"LinkState": state})
+        samples.append(counters())
+    lab.sh(host, f'python3 -c "{push}"')
+    samples.append(counters())
+    for before, after in zip(samples, samples[1:]):
+        assert all(a >= x for x, a in zip(before, after)), f"a switch counter decreased: {before} -> {after}"
+    assert samples[-1][0] > samples[0][0], "traffic did not reach the switch counters"
+
+
 def test_switch_settings_round_trip(lab):
     b, path = lab.bmc(lab.switch_bmc), switch_path(0)
     mode = lambda: at(b.get(path), "Oem", "Nvidia", "SwitchIsolationMode")  # noqa: E731

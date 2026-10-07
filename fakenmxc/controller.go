@@ -44,6 +44,13 @@ type controller struct {
 	path       string
 	Partitions map[uint32]*partition `json:"partitions"`
 	gateways   map[string]bool
+
+	// Per-switch traffic counters (telemetry.go): each scrape adds the GPU
+	// bytes since the previous scrape, split over the links up at that time,
+	// so a link going down or up never rewrites past traffic.
+	lastTx, lastRx map[int]uint64 // per GPU (global index): counters at the last scrape
+	switchTx       []float64
+	switchRx       []float64
 }
 
 // GPU identities exactly as the fake NVML computes them (fakegpu/fakegpu.h).
@@ -175,8 +182,8 @@ func (c *controller) gpuInfo(g gpu) *pb.GpuInfo {
 	}
 	active := c.cfg.NVLinks - len(c.disabledLinks(g))
 	health := pb.GpuHealth_NMX_GPU_HEALTH_HEALTHY
-	if active < c.cfg.NVLinks {
-		health = pb.GpuHealth_NMX_GPU_HEALTH_DEGRADED_BANDWIDTH
+	if active < c.cfg.NVLinks { // an access link down: NO_NVLINK (partition guide 6.2)
+		health = pb.GpuHealth_NMX_GPU_HEALTH_NO_NVLINK
 	}
 	return &pb.GpuInfo{GpuUid: g.uid, Uuid: g.uuid, Location: c.location(g), Hostname: c.cfg.Trays[g.tray].Name,
 		PartitionId: pid, CliqueId: reported, ActiveNvlinks: uint32(active), Health: health,
@@ -185,14 +192,10 @@ func (c *controller) gpuInfo(g gpu) *pb.GpuInfo {
 
 func (c *controller) partitionInfo(id uint32) *pb.PartitionInfo {
 	p := c.Partitions[id]
-	health := pb.GpuHealth_NMX_GPU_HEALTH_HEALTHY
-	for _, uid := range p.GPUs {
-		if g, ok := c.byUID(uid); ok && c.gpuInfo(g).Health != pb.GpuHealth_NMX_GPU_HEALTH_HEALTHY {
-			health = pb.GpuHealth_NMX_GPU_HEALTH_DEGRADED_BANDWIDTH
-		}
-	}
+	// Access-link failures leave partition health unchanged (partition guide
+	// 6.2); its other states come from trunk links, which the lab lacks.
 	return &pb.PartitionInfo{PartitionId: id, PartitionName: p.Name, GpuUids: append([]uint64(nil), p.GPUs...),
-		IsDefault: id == defaultPartition, State: "ACTIVE", Health: health}
+		IsDefault: id == defaultPartition, State: "ACTIVE", Health: pb.PartitionHealth_NMX_PARTITION_HEALTH_HEALTHY}
 }
 
 func (c *controller) byUID(uid uint64) (gpu, bool) {

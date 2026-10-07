@@ -29,6 +29,8 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// NVIDIA's GB200 NVL Partition User's Guide names NMX_ST_SUCCESS,
+// NMX_ST_NOT_READY and NMX_ST_NOT_CONFIGURED; the other codes are the lab's.
 type ReturnCode int32
 
 const (
@@ -133,12 +135,17 @@ func (ControlPlaneState) EnumDescriptor() ([]byte, []int) {
 	return file_nmxc_proto_rawDescGZIP(), []int{1}
 }
 
+// GPU health as in the GB200 NVL Partition User's Guide (4.1.2.4 GetGpuInfoList).
+// The lab marks a GPU with an access link down NO_NVLINK, as the Control
+// Plane does (6.2 Access Link); DEGRADED and DEGRADED_BW are not produced.
 type GpuHealth int32
 
 const (
-	GpuHealth_NMX_GPU_HEALTH_UNKNOWN            GpuHealth = 0
-	GpuHealth_NMX_GPU_HEALTH_HEALTHY            GpuHealth = 1
-	GpuHealth_NMX_GPU_HEALTH_DEGRADED_BANDWIDTH GpuHealth = 2 // some NVLinks down
+	GpuHealth_NMX_GPU_HEALTH_UNKNOWN     GpuHealth = 0 // not visible on the fabric
+	GpuHealth_NMX_GPU_HEALTH_HEALTHY     GpuHealth = 1 // all links working
+	GpuHealth_NMX_GPU_HEALTH_DEGRADED    GpuHealth = 2 // seen, some but not all links down
+	GpuHealth_NMX_GPU_HEALTH_NO_NVLINK   GpuHealth = 3 // unable to participate in NVLink partitioning
+	GpuHealth_NMX_GPU_HEALTH_DEGRADED_BW GpuHealth = 4 // can participate, with degraded bandwidth
 )
 
 // Enum value maps for GpuHealth.
@@ -146,12 +153,16 @@ var (
 	GpuHealth_name = map[int32]string{
 		0: "NMX_GPU_HEALTH_UNKNOWN",
 		1: "NMX_GPU_HEALTH_HEALTHY",
-		2: "NMX_GPU_HEALTH_DEGRADED_BANDWIDTH",
+		2: "NMX_GPU_HEALTH_DEGRADED",
+		3: "NMX_GPU_HEALTH_NO_NVLINK",
+		4: "NMX_GPU_HEALTH_DEGRADED_BW",
 	}
 	GpuHealth_value = map[string]int32{
-		"NMX_GPU_HEALTH_UNKNOWN":            0,
-		"NMX_GPU_HEALTH_HEALTHY":            1,
-		"NMX_GPU_HEALTH_DEGRADED_BANDWIDTH": 2,
+		"NMX_GPU_HEALTH_UNKNOWN":     0,
+		"NMX_GPU_HEALTH_HEALTHY":     1,
+		"NMX_GPU_HEALTH_DEGRADED":    2,
+		"NMX_GPU_HEALTH_NO_NVLINK":   3,
+		"NMX_GPU_HEALTH_DEGRADED_BW": 4,
 	}
 )
 
@@ -180,6 +191,63 @@ func (x GpuHealth) Number() protoreflect.EnumNumber {
 // Deprecated: Use GpuHealth.Descriptor instead.
 func (GpuHealth) EnumDescriptor() ([]byte, []int) {
 	return file_nmxc_proto_rawDescGZIP(), []int{2}
+}
+
+// Partition health (4.1.4). Access-link failures leave it unchanged (6.2);
+// the other states come from trunk links, which a single switch tray lacks.
+type PartitionHealth int32
+
+const (
+	PartitionHealth_NMX_PARTITION_HEALTH_UNKNOWN            PartitionHealth = 0
+	PartitionHealth_NMX_PARTITION_HEALTH_HEALTHY            PartitionHealth = 1
+	PartitionHealth_NMX_PARTITION_HEALTH_DEGRADED_BANDWIDTH PartitionHealth = 2
+	PartitionHealth_NMX_PARTITION_HEALTH_DEGRADED           PartitionHealth = 3
+	PartitionHealth_NMX_PARTITION_HEALTH_UNHEALTHY          PartitionHealth = 4
+)
+
+// Enum value maps for PartitionHealth.
+var (
+	PartitionHealth_name = map[int32]string{
+		0: "NMX_PARTITION_HEALTH_UNKNOWN",
+		1: "NMX_PARTITION_HEALTH_HEALTHY",
+		2: "NMX_PARTITION_HEALTH_DEGRADED_BANDWIDTH",
+		3: "NMX_PARTITION_HEALTH_DEGRADED",
+		4: "NMX_PARTITION_HEALTH_UNHEALTHY",
+	}
+	PartitionHealth_value = map[string]int32{
+		"NMX_PARTITION_HEALTH_UNKNOWN":            0,
+		"NMX_PARTITION_HEALTH_HEALTHY":            1,
+		"NMX_PARTITION_HEALTH_DEGRADED_BANDWIDTH": 2,
+		"NMX_PARTITION_HEALTH_DEGRADED":           3,
+		"NMX_PARTITION_HEALTH_UNHEALTHY":          4,
+	}
+)
+
+func (x PartitionHealth) Enum() *PartitionHealth {
+	p := new(PartitionHealth)
+	*p = x
+	return p
+}
+
+func (x PartitionHealth) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PartitionHealth) Descriptor() protoreflect.EnumDescriptor {
+	return file_nmxc_proto_enumTypes[3].Descriptor()
+}
+
+func (PartitionHealth) Type() protoreflect.EnumType {
+	return &file_nmxc_proto_enumTypes[3]
+}
+
+func (x PartitionHealth) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PartitionHealth.Descriptor instead.
+func (PartitionHealth) EnumDescriptor() ([]byte, []int) {
+	return file_nmxc_proto_rawDescGZIP(), []int{3}
 }
 
 type ClientHello struct {
@@ -1284,8 +1352,8 @@ type PartitionInfo struct {
 	PartitionName string                 `protobuf:"bytes,2,opt,name=partition_name,json=partitionName,proto3" json:"partition_name,omitempty"`
 	GpuUids       []uint64               `protobuf:"varint,3,rep,packed,name=gpu_uids,json=gpuUids,proto3" json:"gpu_uids,omitempty"`
 	IsDefault     bool                   `protobuf:"varint,4,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
-	State         string                 `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"`                             // ACTIVE
-	Health        GpuHealth              `protobuf:"varint,6,opt,name=health,proto3,enum=nmxlab.v1.GpuHealth" json:"health,omitempty"` // worst GPU health in the partition
+	State         string                 `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"` // ACTIVE
+	Health        PartitionHealth        `protobuf:"varint,6,opt,name=health,proto3,enum=nmxlab.v1.PartitionHealth" json:"health,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1355,11 +1423,11 @@ func (x *PartitionInfo) GetState() string {
 	return ""
 }
 
-func (x *PartitionInfo) GetHealth() GpuHealth {
+func (x *PartitionInfo) GetHealth() PartitionHealth {
 	if x != nil {
 		return x.Health
 	}
-	return GpuHealth_NMX_GPU_HEALTH_UNKNOWN
+	return PartitionHealth_NMX_PARTITION_HEALTH_UNKNOWN
 }
 
 type PartitionInfoListRequest struct {
@@ -1823,15 +1891,15 @@ const file_nmxc_proto_rawDesc = "" +
 	"\x0fPartitionIdList\x126\n" +
 	"\vreturn_code\x18\x01 \x01(\x0e2\x15.nmxlab.v1.ReturnCodeR\n" +
 	"returnCode\x12#\n" +
-	"\rpartition_ids\x18\x02 \x03(\rR\fpartitionIds\"\xd7\x01\n" +
+	"\rpartition_ids\x18\x02 \x03(\rR\fpartitionIds\"\xdd\x01\n" +
 	"\rPartitionInfo\x12!\n" +
 	"\fpartition_id\x18\x01 \x01(\rR\vpartitionId\x12%\n" +
 	"\x0epartition_name\x18\x02 \x01(\tR\rpartitionName\x12\x19\n" +
 	"\bgpu_uids\x18\x03 \x03(\x04R\agpuUids\x12\x1d\n" +
 	"\n" +
 	"is_default\x18\x04 \x01(\bR\tisDefault\x12\x14\n" +
-	"\x05state\x18\x05 \x01(\tR\x05state\x12,\n" +
-	"\x06health\x18\x06 \x01(\x0e2\x14.nmxlab.v1.GpuHealthR\x06health\"^\n" +
+	"\x05state\x18\x05 \x01(\tR\x05state\x122\n" +
+	"\x06health\x18\x06 \x01(\x0e2\x1a.nmxlab.v1.PartitionHealthR\x06health\"^\n" +
 	"\x18PartitionInfoListRequest\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12#\n" +
@@ -1874,11 +1942,19 @@ const file_nmxc_proto_rawDesc = "" +
 	"\x10NMX_ST_NOT_HELLO\x10\x05*`\n" +
 	"\x11ControlPlaneState\x12#\n" +
 	"\x1fNMX_CONTROL_PLANE_STATE_UNKNOWN\x10\x00\x12&\n" +
-	"\"NMX_CONTROL_PLANE_STATE_CONFIGURED\x10\x01*j\n" +
+	"\"NMX_CONTROL_PLANE_STATE_CONFIGURED\x10\x01*\x9e\x01\n" +
 	"\tGpuHealth\x12\x1a\n" +
 	"\x16NMX_GPU_HEALTH_UNKNOWN\x10\x00\x12\x1a\n" +
-	"\x16NMX_GPU_HEALTH_HEALTHY\x10\x01\x12%\n" +
-	"!NMX_GPU_HEALTH_DEGRADED_BANDWIDTH\x10\x022\xd7\b\n" +
+	"\x16NMX_GPU_HEALTH_HEALTHY\x10\x01\x12\x1b\n" +
+	"\x17NMX_GPU_HEALTH_DEGRADED\x10\x02\x12\x1c\n" +
+	"\x18NMX_GPU_HEALTH_NO_NVLINK\x10\x03\x12\x1e\n" +
+	"\x1aNMX_GPU_HEALTH_DEGRADED_BW\x10\x04*\xc9\x01\n" +
+	"\x0fPartitionHealth\x12 \n" +
+	"\x1cNMX_PARTITION_HEALTH_UNKNOWN\x10\x00\x12 \n" +
+	"\x1cNMX_PARTITION_HEALTH_HEALTHY\x10\x01\x12+\n" +
+	"'NMX_PARTITION_HEALTH_DEGRADED_BANDWIDTH\x10\x02\x12!\n" +
+	"\x1dNMX_PARTITION_HEALTH_DEGRADED\x10\x03\x12\"\n" +
+	"\x1eNMX_PARTITION_HEALTH_UNHEALTHY\x10\x042\xd7\b\n" +
 	"\rNMXController\x127\n" +
 	"\x05Hello\x12\x16.nmxlab.v1.ClientHello\x1a\x16.nmxlab.v1.ServerHello\x12L\n" +
 	"\x13GetDomainProperties\x12\x18.nmxlab.v1.DomainRequest\x1a\x1b.nmxlab.v1.DomainProperties\x12J\n" +
@@ -1907,90 +1983,91 @@ func file_nmxc_proto_rawDescGZIP() []byte {
 	return file_nmxc_proto_rawDescData
 }
 
-var file_nmxc_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_nmxc_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
 var file_nmxc_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_nmxc_proto_goTypes = []any{
 	(ReturnCode)(0),                  // 0: nmxlab.v1.ReturnCode
 	(ControlPlaneState)(0),           // 1: nmxlab.v1.ControlPlaneState
 	(GpuHealth)(0),                   // 2: nmxlab.v1.GpuHealth
-	(*ClientHello)(nil),              // 3: nmxlab.v1.ClientHello
-	(*ServerHello)(nil),              // 4: nmxlab.v1.ServerHello
-	(*DomainRequest)(nil),            // 5: nmxlab.v1.DomainRequest
-	(*DomainProperties)(nil),         // 6: nmxlab.v1.DomainProperties
-	(*DomainStateInfo)(nil),          // 7: nmxlab.v1.DomainStateInfo
-	(*Location)(nil),                 // 8: nmxlab.v1.Location
-	(*ComputeNodeInfo)(nil),          // 9: nmxlab.v1.ComputeNodeInfo
-	(*ComputeNodeInfoList)(nil),      // 10: nmxlab.v1.ComputeNodeInfoList
-	(*SwitchNodeInfo)(nil),           // 11: nmxlab.v1.SwitchNodeInfo
-	(*SwitchNodeInfoList)(nil),       // 12: nmxlab.v1.SwitchNodeInfoList
-	(*GpuInfo)(nil),                  // 13: nmxlab.v1.GpuInfo
-	(*GpuInfoListRequest)(nil),       // 14: nmxlab.v1.GpuInfoListRequest
-	(*GpuInfoList)(nil),              // 15: nmxlab.v1.GpuInfoList
-	(*NvlinkConnection)(nil),         // 16: nmxlab.v1.NvlinkConnection
-	(*TopologyInfo)(nil),             // 17: nmxlab.v1.TopologyInfo
-	(*PartitionCount)(nil),           // 18: nmxlab.v1.PartitionCount
-	(*PartitionIdList)(nil),          // 19: nmxlab.v1.PartitionIdList
-	(*PartitionInfo)(nil),            // 20: nmxlab.v1.PartitionInfo
-	(*PartitionInfoListRequest)(nil), // 21: nmxlab.v1.PartitionInfoListRequest
-	(*PartitionInfoList)(nil),        // 22: nmxlab.v1.PartitionInfoList
-	(*CreatePartitionRequest)(nil),   // 23: nmxlab.v1.CreatePartitionRequest
-	(*DeletePartitionRequest)(nil),   // 24: nmxlab.v1.DeletePartitionRequest
-	(*GpuMembershipRequest)(nil),     // 25: nmxlab.v1.GpuMembershipRequest
-	(*PartitionResult)(nil),          // 26: nmxlab.v1.PartitionResult
+	(PartitionHealth)(0),             // 3: nmxlab.v1.PartitionHealth
+	(*ClientHello)(nil),              // 4: nmxlab.v1.ClientHello
+	(*ServerHello)(nil),              // 5: nmxlab.v1.ServerHello
+	(*DomainRequest)(nil),            // 6: nmxlab.v1.DomainRequest
+	(*DomainProperties)(nil),         // 7: nmxlab.v1.DomainProperties
+	(*DomainStateInfo)(nil),          // 8: nmxlab.v1.DomainStateInfo
+	(*Location)(nil),                 // 9: nmxlab.v1.Location
+	(*ComputeNodeInfo)(nil),          // 10: nmxlab.v1.ComputeNodeInfo
+	(*ComputeNodeInfoList)(nil),      // 11: nmxlab.v1.ComputeNodeInfoList
+	(*SwitchNodeInfo)(nil),           // 12: nmxlab.v1.SwitchNodeInfo
+	(*SwitchNodeInfoList)(nil),       // 13: nmxlab.v1.SwitchNodeInfoList
+	(*GpuInfo)(nil),                  // 14: nmxlab.v1.GpuInfo
+	(*GpuInfoListRequest)(nil),       // 15: nmxlab.v1.GpuInfoListRequest
+	(*GpuInfoList)(nil),              // 16: nmxlab.v1.GpuInfoList
+	(*NvlinkConnection)(nil),         // 17: nmxlab.v1.NvlinkConnection
+	(*TopologyInfo)(nil),             // 18: nmxlab.v1.TopologyInfo
+	(*PartitionCount)(nil),           // 19: nmxlab.v1.PartitionCount
+	(*PartitionIdList)(nil),          // 20: nmxlab.v1.PartitionIdList
+	(*PartitionInfo)(nil),            // 21: nmxlab.v1.PartitionInfo
+	(*PartitionInfoListRequest)(nil), // 22: nmxlab.v1.PartitionInfoListRequest
+	(*PartitionInfoList)(nil),        // 23: nmxlab.v1.PartitionInfoList
+	(*CreatePartitionRequest)(nil),   // 24: nmxlab.v1.CreatePartitionRequest
+	(*DeletePartitionRequest)(nil),   // 25: nmxlab.v1.DeletePartitionRequest
+	(*GpuMembershipRequest)(nil),     // 26: nmxlab.v1.GpuMembershipRequest
+	(*PartitionResult)(nil),          // 27: nmxlab.v1.PartitionResult
 }
 var file_nmxc_proto_depIdxs = []int32{
 	0,  // 0: nmxlab.v1.ServerHello.return_code:type_name -> nmxlab.v1.ReturnCode
 	0,  // 1: nmxlab.v1.DomainProperties.return_code:type_name -> nmxlab.v1.ReturnCode
 	0,  // 2: nmxlab.v1.DomainStateInfo.return_code:type_name -> nmxlab.v1.ReturnCode
 	1,  // 3: nmxlab.v1.DomainStateInfo.control_plane_state:type_name -> nmxlab.v1.ControlPlaneState
-	8,  // 4: nmxlab.v1.ComputeNodeInfo.location:type_name -> nmxlab.v1.Location
+	9,  // 4: nmxlab.v1.ComputeNodeInfo.location:type_name -> nmxlab.v1.Location
 	0,  // 5: nmxlab.v1.ComputeNodeInfoList.return_code:type_name -> nmxlab.v1.ReturnCode
-	9,  // 6: nmxlab.v1.ComputeNodeInfoList.nodes:type_name -> nmxlab.v1.ComputeNodeInfo
+	10, // 6: nmxlab.v1.ComputeNodeInfoList.nodes:type_name -> nmxlab.v1.ComputeNodeInfo
 	0,  // 7: nmxlab.v1.SwitchNodeInfoList.return_code:type_name -> nmxlab.v1.ReturnCode
-	11, // 8: nmxlab.v1.SwitchNodeInfoList.nodes:type_name -> nmxlab.v1.SwitchNodeInfo
-	8,  // 9: nmxlab.v1.GpuInfo.location:type_name -> nmxlab.v1.Location
+	12, // 8: nmxlab.v1.SwitchNodeInfoList.nodes:type_name -> nmxlab.v1.SwitchNodeInfo
+	9,  // 9: nmxlab.v1.GpuInfo.location:type_name -> nmxlab.v1.Location
 	2,  // 10: nmxlab.v1.GpuInfo.health:type_name -> nmxlab.v1.GpuHealth
 	0,  // 11: nmxlab.v1.GpuInfoList.return_code:type_name -> nmxlab.v1.ReturnCode
-	13, // 12: nmxlab.v1.GpuInfoList.gpus:type_name -> nmxlab.v1.GpuInfo
+	14, // 12: nmxlab.v1.GpuInfoList.gpus:type_name -> nmxlab.v1.GpuInfo
 	0,  // 13: nmxlab.v1.TopologyInfo.return_code:type_name -> nmxlab.v1.ReturnCode
-	16, // 14: nmxlab.v1.TopologyInfo.connections:type_name -> nmxlab.v1.NvlinkConnection
+	17, // 14: nmxlab.v1.TopologyInfo.connections:type_name -> nmxlab.v1.NvlinkConnection
 	0,  // 15: nmxlab.v1.PartitionCount.return_code:type_name -> nmxlab.v1.ReturnCode
 	0,  // 16: nmxlab.v1.PartitionIdList.return_code:type_name -> nmxlab.v1.ReturnCode
-	2,  // 17: nmxlab.v1.PartitionInfo.health:type_name -> nmxlab.v1.GpuHealth
+	3,  // 17: nmxlab.v1.PartitionInfo.health:type_name -> nmxlab.v1.PartitionHealth
 	0,  // 18: nmxlab.v1.PartitionInfoList.return_code:type_name -> nmxlab.v1.ReturnCode
-	20, // 19: nmxlab.v1.PartitionInfoList.partitions:type_name -> nmxlab.v1.PartitionInfo
-	8,  // 20: nmxlab.v1.CreatePartitionRequest.locations:type_name -> nmxlab.v1.Location
-	8,  // 21: nmxlab.v1.GpuMembershipRequest.locations:type_name -> nmxlab.v1.Location
+	21, // 19: nmxlab.v1.PartitionInfoList.partitions:type_name -> nmxlab.v1.PartitionInfo
+	9,  // 20: nmxlab.v1.CreatePartitionRequest.locations:type_name -> nmxlab.v1.Location
+	9,  // 21: nmxlab.v1.GpuMembershipRequest.locations:type_name -> nmxlab.v1.Location
 	0,  // 22: nmxlab.v1.PartitionResult.return_code:type_name -> nmxlab.v1.ReturnCode
-	20, // 23: nmxlab.v1.PartitionResult.partition:type_name -> nmxlab.v1.PartitionInfo
-	3,  // 24: nmxlab.v1.NMXController.Hello:input_type -> nmxlab.v1.ClientHello
-	5,  // 25: nmxlab.v1.NMXController.GetDomainProperties:input_type -> nmxlab.v1.DomainRequest
-	5,  // 26: nmxlab.v1.NMXController.GetDomainStateInfo:input_type -> nmxlab.v1.DomainRequest
-	5,  // 27: nmxlab.v1.NMXController.GetComputeNodeInfoList:input_type -> nmxlab.v1.DomainRequest
-	5,  // 28: nmxlab.v1.NMXController.GetSwitchNodeInfoList:input_type -> nmxlab.v1.DomainRequest
-	14, // 29: nmxlab.v1.NMXController.GetGpuInfoList:input_type -> nmxlab.v1.GpuInfoListRequest
-	5,  // 30: nmxlab.v1.NMXController.GetTopologyInfo:input_type -> nmxlab.v1.DomainRequest
-	5,  // 31: nmxlab.v1.NMXController.GetPartitionCount:input_type -> nmxlab.v1.DomainRequest
-	5,  // 32: nmxlab.v1.NMXController.GetPartitionIdList:input_type -> nmxlab.v1.DomainRequest
-	21, // 33: nmxlab.v1.NMXController.GetPartitionInfoList:input_type -> nmxlab.v1.PartitionInfoListRequest
-	23, // 34: nmxlab.v1.NMXController.CreatePartition:input_type -> nmxlab.v1.CreatePartitionRequest
-	24, // 35: nmxlab.v1.NMXController.DeletePartition:input_type -> nmxlab.v1.DeletePartitionRequest
-	25, // 36: nmxlab.v1.NMXController.AddGpusToPartition:input_type -> nmxlab.v1.GpuMembershipRequest
-	25, // 37: nmxlab.v1.NMXController.RemoveGpusFromPartition:input_type -> nmxlab.v1.GpuMembershipRequest
-	4,  // 38: nmxlab.v1.NMXController.Hello:output_type -> nmxlab.v1.ServerHello
-	6,  // 39: nmxlab.v1.NMXController.GetDomainProperties:output_type -> nmxlab.v1.DomainProperties
-	7,  // 40: nmxlab.v1.NMXController.GetDomainStateInfo:output_type -> nmxlab.v1.DomainStateInfo
-	10, // 41: nmxlab.v1.NMXController.GetComputeNodeInfoList:output_type -> nmxlab.v1.ComputeNodeInfoList
-	12, // 42: nmxlab.v1.NMXController.GetSwitchNodeInfoList:output_type -> nmxlab.v1.SwitchNodeInfoList
-	15, // 43: nmxlab.v1.NMXController.GetGpuInfoList:output_type -> nmxlab.v1.GpuInfoList
-	17, // 44: nmxlab.v1.NMXController.GetTopologyInfo:output_type -> nmxlab.v1.TopologyInfo
-	18, // 45: nmxlab.v1.NMXController.GetPartitionCount:output_type -> nmxlab.v1.PartitionCount
-	19, // 46: nmxlab.v1.NMXController.GetPartitionIdList:output_type -> nmxlab.v1.PartitionIdList
-	22, // 47: nmxlab.v1.NMXController.GetPartitionInfoList:output_type -> nmxlab.v1.PartitionInfoList
-	26, // 48: nmxlab.v1.NMXController.CreatePartition:output_type -> nmxlab.v1.PartitionResult
-	26, // 49: nmxlab.v1.NMXController.DeletePartition:output_type -> nmxlab.v1.PartitionResult
-	26, // 50: nmxlab.v1.NMXController.AddGpusToPartition:output_type -> nmxlab.v1.PartitionResult
-	26, // 51: nmxlab.v1.NMXController.RemoveGpusFromPartition:output_type -> nmxlab.v1.PartitionResult
+	21, // 23: nmxlab.v1.PartitionResult.partition:type_name -> nmxlab.v1.PartitionInfo
+	4,  // 24: nmxlab.v1.NMXController.Hello:input_type -> nmxlab.v1.ClientHello
+	6,  // 25: nmxlab.v1.NMXController.GetDomainProperties:input_type -> nmxlab.v1.DomainRequest
+	6,  // 26: nmxlab.v1.NMXController.GetDomainStateInfo:input_type -> nmxlab.v1.DomainRequest
+	6,  // 27: nmxlab.v1.NMXController.GetComputeNodeInfoList:input_type -> nmxlab.v1.DomainRequest
+	6,  // 28: nmxlab.v1.NMXController.GetSwitchNodeInfoList:input_type -> nmxlab.v1.DomainRequest
+	15, // 29: nmxlab.v1.NMXController.GetGpuInfoList:input_type -> nmxlab.v1.GpuInfoListRequest
+	6,  // 30: nmxlab.v1.NMXController.GetTopologyInfo:input_type -> nmxlab.v1.DomainRequest
+	6,  // 31: nmxlab.v1.NMXController.GetPartitionCount:input_type -> nmxlab.v1.DomainRequest
+	6,  // 32: nmxlab.v1.NMXController.GetPartitionIdList:input_type -> nmxlab.v1.DomainRequest
+	22, // 33: nmxlab.v1.NMXController.GetPartitionInfoList:input_type -> nmxlab.v1.PartitionInfoListRequest
+	24, // 34: nmxlab.v1.NMXController.CreatePartition:input_type -> nmxlab.v1.CreatePartitionRequest
+	25, // 35: nmxlab.v1.NMXController.DeletePartition:input_type -> nmxlab.v1.DeletePartitionRequest
+	26, // 36: nmxlab.v1.NMXController.AddGpusToPartition:input_type -> nmxlab.v1.GpuMembershipRequest
+	26, // 37: nmxlab.v1.NMXController.RemoveGpusFromPartition:input_type -> nmxlab.v1.GpuMembershipRequest
+	5,  // 38: nmxlab.v1.NMXController.Hello:output_type -> nmxlab.v1.ServerHello
+	7,  // 39: nmxlab.v1.NMXController.GetDomainProperties:output_type -> nmxlab.v1.DomainProperties
+	8,  // 40: nmxlab.v1.NMXController.GetDomainStateInfo:output_type -> nmxlab.v1.DomainStateInfo
+	11, // 41: nmxlab.v1.NMXController.GetComputeNodeInfoList:output_type -> nmxlab.v1.ComputeNodeInfoList
+	13, // 42: nmxlab.v1.NMXController.GetSwitchNodeInfoList:output_type -> nmxlab.v1.SwitchNodeInfoList
+	16, // 43: nmxlab.v1.NMXController.GetGpuInfoList:output_type -> nmxlab.v1.GpuInfoList
+	18, // 44: nmxlab.v1.NMXController.GetTopologyInfo:output_type -> nmxlab.v1.TopologyInfo
+	19, // 45: nmxlab.v1.NMXController.GetPartitionCount:output_type -> nmxlab.v1.PartitionCount
+	20, // 46: nmxlab.v1.NMXController.GetPartitionIdList:output_type -> nmxlab.v1.PartitionIdList
+	23, // 47: nmxlab.v1.NMXController.GetPartitionInfoList:output_type -> nmxlab.v1.PartitionInfoList
+	27, // 48: nmxlab.v1.NMXController.CreatePartition:output_type -> nmxlab.v1.PartitionResult
+	27, // 49: nmxlab.v1.NMXController.DeletePartition:output_type -> nmxlab.v1.PartitionResult
+	27, // 50: nmxlab.v1.NMXController.AddGpusToPartition:output_type -> nmxlab.v1.PartitionResult
+	27, // 51: nmxlab.v1.NMXController.RemoveGpusFromPartition:output_type -> nmxlab.v1.PartitionResult
 	38, // [38:52] is the sub-list for method output_type
 	24, // [24:38] is the sub-list for method input_type
 	24, // [24:24] is the sub-list for extension type_name
@@ -2009,7 +2086,7 @@ func file_nmxc_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nmxc_proto_rawDesc), len(file_nmxc_proto_rawDesc)),
-			NumEnums:      3,
+			NumEnums:      4,
 			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,

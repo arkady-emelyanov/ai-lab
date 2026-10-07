@@ -31,6 +31,8 @@ service NMXController {
   rpc RemoveGpusFromPartition(GpuMembershipRequest) returns (PartitionResult);
 }
 
+// NVIDIA's GB200 NVL Partition User's Guide names NMX_ST_SUCCESS,
+// NMX_ST_NOT_READY and NMX_ST_NOT_CONFIGURED; the other codes are the lab's.
 enum ReturnCode {
   NMX_ST_SUCCESS = 0;
   NMX_ST_INVALID_ARGUMENT = 1;
@@ -45,10 +47,25 @@ enum ControlPlaneState {
   NMX_CONTROL_PLANE_STATE_CONFIGURED = 1;
 }
 
+// GPU health as in the GB200 NVL Partition User's Guide (4.1.2.4 GetGpuInfoList).
+// The lab marks a GPU with an access link down NO_NVLINK, as the Control
+// Plane does (6.2 Access Link); DEGRADED and DEGRADED_BW are not produced.
 enum GpuHealth {
-  NMX_GPU_HEALTH_UNKNOWN = 0;
-  NMX_GPU_HEALTH_HEALTHY = 1;
-  NMX_GPU_HEALTH_DEGRADED_BANDWIDTH = 2; // some NVLinks down
+  NMX_GPU_HEALTH_UNKNOWN = 0;      // not visible on the fabric
+  NMX_GPU_HEALTH_HEALTHY = 1;      // all links working
+  NMX_GPU_HEALTH_DEGRADED = 2;     // seen, some but not all links down
+  NMX_GPU_HEALTH_NO_NVLINK = 3;    // unable to participate in NVLink partitioning
+  NMX_GPU_HEALTH_DEGRADED_BW = 4;  // can participate, with degraded bandwidth
+}
+
+// Partition health (4.1.4). Access-link failures leave it unchanged (6.2);
+// the other states come from trunk links, which a single switch tray lacks.
+enum PartitionHealth {
+  NMX_PARTITION_HEALTH_UNKNOWN = 0;
+  NMX_PARTITION_HEALTH_HEALTHY = 1;
+  NMX_PARTITION_HEALTH_DEGRADED_BANDWIDTH = 2;
+  NMX_PARTITION_HEALTH_DEGRADED = 3;
+  NMX_PARTITION_HEALTH_UNHEALTHY = 4;
 }
 
 message ClientHello {
@@ -172,7 +189,7 @@ message PartitionInfo {
   repeated uint64 gpu_uids = 3;
   bool is_default = 4;
   string state = 5;            // ACTIVE
-  GpuHealth health = 6;        // worst GPU health in the partition
+  PartitionHealth health = 6;
 }
 
 message PartitionInfoListRequest {
