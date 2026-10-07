@@ -7,8 +7,8 @@
 #   bin/redfish sched-worker1 /redfish/v1/Systems/System_0/Actions/ComputerSystem.Reset \
 #       -X POST -d '{"ResetType": "ForceRestart"}'
 #
-# Uses the BMC credentials from inventory/group_vars/all.yml (bmc_username,
-# bmc_password); the BMC's certificate is self-signed.
+# Uses the BMC credentials from inventory/group_vars/all.yml or local.yml
+# (bmc_username, bmc_password); the BMC's certificate is self-signed.
 set -euo pipefail
 
 [[ $# -ge 2 ]] || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
@@ -16,9 +16,10 @@ tray=$1 path=$2
 shift 2
 
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-vars="$repo/inventory/group_vars/all.yml"
-user=$(sed -n 's/^bmc_username: *//p' "$vars")
-pass=$(sed -n 's/^bmc_password: *//p' "$vars")
+# inventory/local.yml overrides all.yml, as in Ansible.
+var() { cat "$repo/inventory/group_vars/all.yml" "$repo/inventory/local.yml" 2>/dev/null | sed -n "s/^$1: *//p" | tail -1; }
+user=$(var bmc_username)
+pass=$(var bmc_password)
 
 list() { incus list --all-projects --format json 2>/dev/null || sg incus-admin -c 'incus list --all-projects --format json'; }
 ip=$(list | jq -r --arg n "$tray-bmc" '.[] | select(.name == $n)

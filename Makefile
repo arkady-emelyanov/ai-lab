@@ -1,6 +1,7 @@
 # Local NVL8 Slurm cluster on Incus.
 #
-#   make init        prepare the host: venv, Ansible collections, secrets, checks
+#   make init        prepare the host: venv, Ansible collections, secrets, checks;
+#                    creates inventory/local.yml (local settings, not in git)
 #   make up          init + create instances + configure the cluster
 #   make frameworks  shared PyTorch + Ray venv on /shared (several GB)
 #   make test        end-to-end checks (Slurm, GPUs, NCCL, Ray, BMC, metrics)
@@ -22,13 +23,19 @@ ANSIBLE  := $(VENV)/bin/ansible-playbook
 INCUS_SG := sg incus-admin -c
 SECRETS  := .secrets
 , := ,
+LOCAL    := inventory/local.yml
 # Ansible refuses non-blocking stdio (some terminals/IDEs); detach stdin.
-RUN      = $(INCUS_SG) '$(ANSIBLE) $(1) </dev/null'
+# The checkout's own settings (inventory/local.yml) override everything else.
+RUN      = $(INCUS_SG) '$(ANSIBLE) $$(test -f $(LOCAL) && echo --extra-vars=@$(LOCAL)) $(1) </dev/null'
 
 .PHONY: init proto check up provision configure frameworks test test-fakegpu test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
 
-init: $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
+init: $(LOCAL) $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
 	@chmod -R go-rwx $(SECRETS)
+
+# Local settings, not in git: created once, never overwritten.
+$(LOCAL):
+	cp inventory/local.example.yml $@
 
 $(VENV)/.done: requirements.yml
 	python3 -m venv $(VENV)
@@ -83,7 +90,7 @@ $(SECRETS)/ssh/controller_ed25519:
 
 # topograph needs a newer Go than may be installed: the go command fetches
 # the required toolchain (verified against the checksum database).
-TOPOGRAPH_REF := $(shell sed -n 's/^topograph_ref: *//p' inventory/group_vars/all.yml)
+TOPOGRAPH_REF := $(shell cat inventory/group_vars/all.yml $(wildcard $(LOCAL)) | sed -n 's/^topograph_ref: *//p' | tail -1)
 .cache/topograph/topograph:
 	@command -v go >/dev/null || { echo "ERROR: Go is required to build topograph"; exit 1; }
 	test -d .cache/topograph/.git || git clone -q https://github.com/dsx-ai-factory/topograph.git .cache/topograph

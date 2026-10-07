@@ -4,7 +4,7 @@
 
 ## Overview
 
-With `scheduler: slurm` in `inventory/group_vars/all.yml` (the default) the lab runs Slurm 23.11 (Ubuntu 24.04 packages) on the emulated hardware: the fake GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Kubernetes (k3s)](kubernetes.md) mode. It is one or the other: in Slurm mode no Kubernetes component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
+With `scheduler: slurm` in `inventory/local.yml` (the default) the lab runs Slurm 23.11 (Ubuntu 24.04 packages) on the emulated hardware: the fake GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Kubernetes (k3s)](kubernetes.md) mode. It is one or the other: in Slurm mode no Kubernetes component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
 
 | Component | Where | Role |
 |---|---|---|

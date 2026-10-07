@@ -54,8 +54,10 @@ def controller_address():
         if inst["name"] == "sched-nvswitch" and inst["status"] == "Running":
             for a in ((inst.get("state") or {}).get("network") or {}).get("eth0", {}).get("addresses", []):
                 if a["family"] == "inet":
-                    port = re.search(r"^nmxc_port:\s*(\d+)", (REPO / "inventory/group_vars/all.yml").read_text(), re.M)
-                    return f"{a['address']}:{port[1] if port else 9370}"
+                    # inventory/local.yml overrides all.yml, as in Ansible.
+                    text = "".join(p.read_text() for p in (REPO / "inventory/group_vars/all.yml", REPO / "inventory/local.yml") if p.exists())
+                    port = re.findall(r"^nmxc_port:\s*(\d+)", text, re.M)
+                    return f"{a['address']}:{port[-1] if port else 9370}"
     fail("sched-nvswitch is not running (make up)")
 
 

@@ -231,9 +231,11 @@ def one(samples, metric, **labels):
 
 
 def _read_vars():
-    """Top-level scalars of inventory/group_vars/all.yml (all the tests need)."""
+    """Top-level scalars of inventory/group_vars/all.yml (all the tests need),
+    overridden by inventory/local.yml as in Ansible."""
     out = {}
-    for line in (REPO / "inventory/group_vars/all.yml").read_text().splitlines():
+    files = [p for p in (REPO / "inventory/group_vars/all.yml", REPO / "inventory/local.yml") if p.exists()]
+    for line in "\n".join(p.read_text() for p in files).splitlines():
         if m := re.match(r"^([a-z_0-9]+):\s*([^#{\[\s]\S*)", line):
             out[m[1]] = m[2].strip("\"'")
     return out

@@ -5,7 +5,7 @@ description: Operate a running ai-lab, the emulated NVIDIA GB200 NVL8 GPU cluste
 
 # Operating ai-lab
 
-The lab runs on the user's machine; commands run from the repository's root (the checkout with `AGENTS.md`). Deploying it is described in `AGENTS.md`. Before acting, find out what the lab runs: `grep '^scheduler:' inventory/group_vars/all.yml` (`slurm` or `k3s`) and whether it is up (`bin/ssh sched-control true`).
+The lab runs on the user's machine; commands run from the repository's root (the checkout with `AGENTS.md`). Deploying it is described in `AGENTS.md`. Before acting, find out what the lab runs: `cat inventory/group_vars/all.yml inventory/local.yml 2>/dev/null | grep '^scheduler:' | tail -1` (`slurm` or `k3s`; `local.yml` holds the user's settings and wins) and whether it is up (`bin/ssh sched-control true`).
 
 ## Rules
 
