@@ -4,17 +4,22 @@
 - name: Frameworks venv on the shared volume
   hosts: login
   tasks:
+    # On the login instance, separately from the venv: the venv lives on the
+    # shared volume and survives make down && make up, uv does not.
+    - name: Install uv
+      ansible.builtin.shell: set -o pipefail; curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+      args:
+        executable: /bin/bash
+        creates: /usr/local/bin/uv
+
     - name: Create the venv with uv
-      ansible.builtin.shell: |
-        set -e
-        command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
-        test -x {{ frameworks_venv }}/bin/python || uv venv --python 3.12 {{ frameworks_venv }}
+      ansible.builtin.command: /usr/local/bin/uv venv --python 3.12 {{ frameworks_venv }}
       args:
         creates: "{{ frameworks_venv }}/bin/python"
 
     - name: Install frameworks
       ansible.builtin.command: >-
-        uv pip install --no-cache --python {{ frameworks_venv }}/bin/python
+        /usr/local/bin/uv pip install --no-cache --python {{ frameworks_venv }}/bin/python
         --index-url {{ torch_index }} --extra-index-url https://pypi.org/simple
         --index-strategy unsafe-best-match
         {{ frameworks_packages | join(' ') }}
