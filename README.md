@@ -27,6 +27,13 @@ What you get:
 
 ## Quickstart
 
+**Using an AI coding agent?** Ask it to set up the lab; agents should follow [AGENTS.md](AGENTS.md), which covers checking the host, the one-time steps that need `sudo` (each with its reason, asked once), the build and the hand-over. To have an agent work with the running lab (jobs, GPUs, NVLink partitions, BMCs, metrics, tests), there is an [ai-lab agent skill](skills/ai-lab/SKILL.md): Claude Code picks it up automatically in this repository (`.claude/skills/ai-lab` links to it); to have it in other projects too:
+
+```
+mkdir -p ~/.claude/skills/ai-lab
+curl -fsSL https://raw.githubusercontent.com/arkady-emelyanov/ai-lab/main/skills/ai-lab/SKILL.md -o ~/.claude/skills/ai-lab/SKILL.md
+```
+
 **Requirements:**
 
 - Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git.
@@ -126,6 +133,8 @@ Each page covers: overview, usage, verification, references (plus configuration 
 ## Repository layout
 
 ```
+AGENTS.md                instructions for AI coding agents (deploying the lab for a user; CLAUDE.md points to it)
+skills/ai-lab/           installable agent skill for operating the lab (jobs, GPUs, partitions, BMCs, metrics)
 Makefile                 entry points (init, up, configure, frameworks, test, down, purge, shell)
 bin/                     ssh / scp / ssh-copy-id wrappers, redfish, nvlink, kubectl and grpcurl helpers
 inventory/               instances and groups (hosts.yml), all tunables (group_vars/all.yml)
@@ -138,6 +147,7 @@ fakeib/                  ibnetdiscover look-alike for the emulated InfiniBand fa
 fakedp/                  Kubernetes GPU device plugin (Go, CDI) for the k3s scheduler
 examples/                the same four jobs (topology, scheduling, DDP, Ray) for slurm/ and kubernetes/
 tests/bmc/               BMC integration tests (pytest)
+tests/fakegpu/           fake GPU library tests on the host, no lab needed (pytest)
 docs/                    component documentation
 .secrets/                generated keys and passwords (git-ignored)
 .cache/                  build tools, topograph checkout, k3s binary (git-ignored)
