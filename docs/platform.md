@@ -54,6 +54,8 @@ All tunables and their defaults live in `inventory/group_vars/all.yml`; your own
 | `bmc/*.crt`, `bmc/*.key`, `bmc/incus-server.crt` | tray BMC Incus client certificates, pinned Incus server certificate |
 | `users/<name>.pass`, `users/<name>.s3` | generated user passwords (when none is set) and S3 secrets |
 
+**Secrets and data volumes belong together.** The data volumes (`/shared`, the object store and its JuiceFS metadata) outlive `make down` and the checkout, while `.secrets/` is regenerated whenever it is missing (a fresh clone, a deleted directory). The object store and JuiceFS only work with the credentials they were created with, so `make provision` records a fingerprint of `rustfs.access`, `rustfs.secret` and `redis.pass` on each data volume (`user.ai-lab.secrets`) and stops, before changing anything, when existing volumes carry another one. Then either put back the `.secrets/` they were created with, or delete them with `make purge` (the lab's data goes with them) and run `make up`. Keep `.secrets/` when you move or re-clone the checkout, and drive a lab from one checkout only: two checkouts have different secrets but the same instances and volumes.
+
 **Playbook order** (`site.yml`): base system (packages, `/etc/hosts`, munge for Slurm) → LDAP → SSSD and SSH → login tools → emulated GPUs → Slurm and accounting, or k3s (server, agents with GPUs, add-ons and users, kubectl) → storage and per-user S3 → JuiceFS and S3 clients → emulated InfiniBand → topograph → monitoring → Grafana → BMCs → switch tray host.
 
 ## Verification
@@ -68,6 +70,7 @@ sg incus-admin -c 'incus list --all-projects -c ns4'   # all instances RUNNING w
 
 | Symptom | Cause and fix |
 |---|---|
+| `make up` stops with "The lab's data volumes … were created with other secrets" | `.secrets/` is not the one the data volumes were created with (a new clone, or a second checkout driving the same lab). Put back the original `.secrets/`, or `make purge` (deletes the lab's data) and `make up`. Labs built before this check have no fingerprint and are adopted as they are: if one shows `Input/output error` on `/pfs` and `InvalidAccessKeyId` in the JuiceFS log, it has this mismatch; `make purge` and `make up` fix it |
 | `make up` or `make configure` stalls for minutes at a package task (e.g. `ssh : Install the SSH server`) | the Ubuntu mirror stopped answering (with `apt_mirror: auto`, after it was chosen; Canonical's mirrors sometimes time out from some networks). Stop the run, delete `.cache/apt-mirror` (or set a fixed `apt_mirror` in `local.yml`, [Configuration](#configuration)) and start it again |
 | `make check`: not in `incus-admin` | `sudo usermod -aG incus-admin $USER` |
 | `make check`: containers get no DNS | Incus' dnsmasq is denied reading NetworkManager's `no-stub-resolv.conf` by AppArmor. `make check` prints the drop-in to add under `/etc/apparmor.d/abstractions/nameservice.d/`. |

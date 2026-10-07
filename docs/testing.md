@@ -32,6 +32,18 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 | Topology | topograph generates a block containing both trays (Slurm) or labels both trays with the NVLink domain and switch tiers (k3s) |
 | Monitoring | every Prometheus target up; power for all 8 GPUs; scheduler GPU (`sched_*`), NVLink fabric and InfiniBand port counter series present; Grafana serves the dashboards |
 
+## Rebuild scenarios
+
+`make up` must give a working lab in one attempt whatever an earlier attempt left behind, or stop at once with the fix. Checked by hand before a release (each scenario ends with `make test`; they delete the lab):
+
+| Scenario | Expected |
+|---|---|
+| Interrupt `make up` during `configure`, run `make up` again | completes; `make test` passes |
+| `make down`, `make up` | completes on the kept volumes; `make test` passes; `make frameworks` reinstalls `uv` and keeps the venv |
+| Interrupt `make up`, delete the checkout (and its `.secrets/`), clone, `make init`, `make up` | stops in `provision` at "Stop if the data volumes were created with other secrets", before changing anything; after `make purge`, `make up` completes and `make test` passes |
+| Same, with the original `.secrets/` copied into the new clone | completes on the kept volumes; `make test` passes |
+| Canonical's mirror unreachable | `apt_mirror: auto` picks another mirror; a mirror that stops answering fails apt within seconds (10 s timeout, 3 retries) instead of hanging |
+
 ## Fake GPU library tests
 
 `make test-fakegpu` builds the fake GPU libraries on this machine and runs `tests/fakegpu` (pytest) without the lab: each NCCL rank is a process on an emulated tray of its own (device directory, sideband with its partition, shared state), and the ranks exchange partitions through a temporary directory. The cost of each operation is read from the GPU's busy time and NIC counters, so the checks are exact: one partition runs at NVLink speed; two partitions cross InfiniBand (2 + 2 ranks: more than 2× slower) and count NIC bytes; GPUs in no partition use only their NICs; `ncclCommSplit` by partition is back on NVLink and `NCCL_SPLIT_NOCOLOR` gets no communicator; `ncclSend` to another partition uses the NIC; a rank whose peers never report falls back to NVLink after the timeout and warns; without an exchange directory ranks share one partition; exchange directories are removed; unique ids are random; `ib-port-counters` publishes the NIC bytes under node_exporter's names.

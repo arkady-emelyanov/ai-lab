@@ -12,9 +12,45 @@
     limits: "{{ instance_limits | combine(instance_limits_k3s if scheduler == 'k3s' else {}) }}"
     # Fixed address of an instance on the bridge (needs `api`, read below).
     address: "{{ api.results[0].stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[item].ip_host }}"
+    # Volumes whose data outlives the instances (make down keeps them).
+    data_volumes: "{{ [shared_volume, rustfs_volume, juicefs_meta_volume] }}"
   tasks:
     - name: Check the settings
       ansible.builtin.include_tasks: tasks/check-settings.yml
+
+    # ---- data volumes belong to these secrets ------------------------------------
+    # The data volumes outlive make down and the checkout; .secrets/ is
+    # regenerated when missing (a new clone, a deleted directory). The object
+    # store and JuiceFS on the volumes only work with the credentials they were
+    # created with, so new secrets on old volumes give a lab that builds but
+    # cannot read /pfs. Each data volume carries a fingerprint of those
+    # secrets; a different one stops the build here, before anything changes.
+
+    - name: Fingerprint the secrets the lab's data depends on
+      ansible.builtin.shell: cat {{ secrets }}/rustfs.access {{ secrets }}/rustfs.secret {{ secrets }}/redis.pass | sha256sum | cut -c1-16
+      register: fingerprint
+      changed_when: false
+
+    - name: Read the fingerprints of existing data volumes
+      ansible.builtin.command: incus storage volume get {{ shared_pool }} {{ item }} user.ai-lab.secrets
+      loop: "{{ data_volumes }}"
+      register: stamps
+      changed_when: false
+      failed_when: stamps.rc != 0 and 'not found' not in stamps.stderr
+
+    - name: Stop if the data volumes were created with other secrets
+      ansible.builtin.assert:
+        that: foreign | length == 0
+        fail_msg: >-
+          The lab's data volumes {{ foreign | join(', ') }} (pool {{ shared_pool }}) were created with other secrets
+          than .secrets/ in this checkout (another checkout, or .secrets/ was regenerated), so the object store and
+          /pfs on them cannot be used. Either put back the .secrets/ directory they were created with, or delete
+          them (and the lab's data) with `make purge`, then run `make up` again.
+        quiet: true
+      vars:
+        foreign: >-
+          {{ stamps.results | selectattr('rc', 'equalto', 0) | rejectattr('stdout', 'in', ['', fingerprint.stdout])
+             | map(attribute='item') | list }}
 
     # ---- GPU trays project and Incus API for BMC power control ------------------
 
@@ -233,6 +269,14 @@
       register: ma
       changed_when: ma.rc == 0
       failed_when: ma.rc != 0 and 'already exists' not in ma.stderr
+
+    # Volumes from before fingerprints existed are adopted as they are.
+    - name: Record the secrets' fingerprint on the data volumes
+      ansible.builtin.command: incus storage volume set {{ shared_pool }} {{ item.item }} user.ai-lab.secrets={{ fingerprint.stdout }}
+      loop: "{{ stamps.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.rc != 0 or item.stdout != fingerprint.stdout
 
     # JuiceFS mounts through FUSE; unprivileged containers get /dev/fuse from Incus.
     - name: Give Slurm nodes /dev/fuse
