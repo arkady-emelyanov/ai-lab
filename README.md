@@ -179,24 +179,6 @@ docs/                    component documentation
 .cache/                  build tools, topograph checkout, k3s binary (git-ignored)
 ```
 
-## Third-party software
-
-| Software | Version | Licence | Used for |
-|---|---|---|---|
-| Slurm | 23.11 (Ubuntu) | GPL-2.0 | scheduler, accounting |
-| OpenLDAP, SSSD, MariaDB, Redis | Ubuntu 24.04 | various OSS | identity, accounting DB, JuiceFS metadata |
-| RustFS, rustfs/cli | 1.0.1, 0.1.36 | Apache-2.0 | S3 object storage, client |
-| JuiceFS | 1.4.1 | Apache-2.0 | shared filesystem |
-| topograph | pinned commit | Apache-2.0 | topology discovery |
-| Prometheus, node_exporter, Grafana | Ubuntu / Grafana APT | Apache-2.0, AGPL-3.0 (Grafana) | monitoring |
-| nvidia_gpu_exporter | 1.15.1 | MIT | GPU metrics |
-| prometheus-slurm-exporter (rivosinc) | 1.8.0 | Apache-2.0 | Slurm metrics |
-| k3s | 1.36 | Apache-2.0 | Kubernetes (k3s mode) |
-| Kueue, JobSet, Node Feature Discovery, kube-state-metrics | pinned charts | Apache-2.0 | queueing and topology-aware scheduling, multi-pod jobs, node labels, cluster metrics (k3s mode) |
-| NVIDIA GPU Feature Discovery (k8s-device-plugin image) | 0.20.1 | Apache-2.0 | GPU node labels (k3s mode) |
-| PyTorch, Ray | latest at install | BSD-3, Apache-2.0 | frameworks |
-| ZLUDA (layouts ported into `fakegpu/dark_api.c`) | | Apache-2.0 | `libcudart` export tables |
-
 ## Disclaimer
 
 This is an independent, personal research and education project. It is not affiliated with, endorsed by, sponsored by or supported by NVIDIA Corporation.
@@ -208,4 +190,4 @@ This is an independent, personal research and education project. It is not affil
 
 ## License
 
-Apache License 2.0, see [LICENSE](LICENSE). Third-party components keep their own licences (see [Third-party software](#third-party-software)).
+Apache License 2.0, see [LICENSE](LICENSE). Third-party software the lab installs keeps its own licence; the code ported from ZLUDA (Apache-2.0) is credited in `fakegpu/dark_api.c`.
