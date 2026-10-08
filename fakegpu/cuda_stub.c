@@ -714,10 +714,21 @@ API CUresult cuLibraryGetModule(void **m, void *lib) { (void)lib; if (m) *m = fa
 
 API CUresult cuKernelGetFunction(void **f, void *k) { (void)k; if (f) *f = fake_handle(); return CUDA_SUCCESS; }
 
+/* CUfunction_attribute values for a kernel compiled for this GPU. CUB (scans,
+ * sorts: torch.cumsum, top-k, sampling) picks its tuning policy from the PTX
+ * version and fails with "invalid device function" when it is 0. */
 API CUresult cuFuncGetAttribute(int *v, int attr, void *f)
 {
     (void)f;
-    if (v) *v = attr == 0 ? 1024 : 0; /* MAX_THREADS_PER_BLOCK */
+    if (!v) return CUDA_ERROR_INVALID_VALUE;
+    switch (attr) {
+    case 0: *v = 1024; break;                          /* MAX_THREADS_PER_BLOCK */
+    case 4: *v = 32; break;                            /* NUM_REGS */
+    case 5: case 6: *v = FG_CC_MAJOR * 10 + FG_CC_MINOR; break; /* PTX_VERSION, BINARY_VERSION */
+    case 8: *v = 49152; break;                         /* MAX_DYNAMIC_SHARED_SIZE_BYTES */
+    case 9: *v = -1; break;                            /* PREFERRED_SHARED_MEMORY_CARVEOUT: default */
+    default: *v = 0;
+    }
     return CUDA_SUCCESS;
 }
 
