@@ -7,15 +7,24 @@
 #   ./submit --wait nvl8-hello.yaml     also wait for it to finish and write
 #                                       its pods' output to <name>.out
 #                                       (exit status: 0 completed, 1 failed)
+#   ./submit --name vllm vllm-serve.yaml   a fixed name instead of <example>-<n>,
+#                                       for services; submitting it again
+#                                       updates it in place
 set -euo pipefail
 
-wait=false
-[[ ${1:-} == --wait ]] && { wait=true; shift; }
-[[ $# -eq 1 && -f $1 ]] || { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+wait=false name= create=create
+while [[ ${1:-} == --* ]]; do
+    case $1 in
+        --wait) wait=true; shift ;;
+        --name) [[ $# -ge 2 ]] || break; name=$2 create=apply; shift 2 ;;
+        *) break ;;
+    esac
+done
+[[ $# -eq 1 && -f $1 ]] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
-name=$(basename "$1" .yaml)-$(date +%s%N | tail -c 7)
+name=${name:-$(basename "$1" .yaml)-$(date +%s%N | tail -c 7)}
 sed -e "s/@NAME@/$name/g" -e "s/@UID@/$(id -u)/g" -e "s/@GID@/$(id -g)/g" -e "s|@HOME@|$HOME|g" "$1" \
-    | kubectl create -f - >/dev/null
+    | kubectl $create -f - >/dev/null
 echo "$name"
 $wait || exit 0
 
