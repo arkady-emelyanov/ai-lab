@@ -40,7 +40,7 @@ AI lab models what the hardware shows to software (APIs, topology, telemetry, ti
 | BMCs | modelled ([Redfish](docs/bmc-redfish.md)) | GB200 resource layout, power actions that stop and start the tray, GPU sensors, firmware inventory | IPMI, BlueField DPUs |
 | InfiniBand | modelled ([topology](docs/topology.md)) | `ibnetdiscover` topology for topograph, NIC byte counters, 400 Gb/s in NCCL timing | packets, subnet manager; one leaf switch |
 | Grace CPUs | modelled (NUMA layout only) | two Grace NUMA nodes per tray in `nvidia-smi topo -m` and `numactl -H` | the trays run on the host's x86-64 cores, not Grace (aarch64): `uname -m` and `scontrol show node` say `x86_64` |
-| Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | LDAP without TLS |
+| Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | the lab runs LDAP without TLS |
 
 **Timing is a behavioural model, not a prediction.** Each operation's duration comes from its size and NVIDIA's published GB200 figures (compute per precision, memory, NVLink and InfiniBand bandwidth). Jobs take plausible time and put plausible load on the GPUs, but the model is not calibrated against hardware and does not predict real GB200 performance. Details: [Emulated GPUs](docs/fake-gpu.md#how-it-works).
 
