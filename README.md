@@ -76,20 +76,7 @@ Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.se
 
 ## Documentation
 
-Every page, grouped by topic: [docs/](docs/README.md). Start with [What is real and what is modelled](docs/real-and-modelled.md).
-
-## Everyday commands
-
-| Command | Purpose |
-|---|---|
-| `make up` | build the lab |
-| `make configure` | apply changed settings (`local.yml`) to the running lab |
-| `make test` | end-to-end checks ([Testing](docs/testing.md) has the rest) |
-| `make down`, `make purge` | delete the instances (volumes kept); delete everything |
-| `bin/ssh login`, `bin/ssh root@<instance>` | log in as joe, or as root anywhere |
-| `bin/kubectl` | kubectl as cluster admin (k3s mode) |
-| `bin/nvlink` | NVLink domain and partitions: list, create, delete, add or remove GPUs |
-| `bin/redfish <tray> <path>` | Redfish request to a tray's BMC |
+Every page, grouped by topic: [docs/](docs/README.md). Start with [What is real and what is modelled](docs/real-and-modelled.md); all commands are in [Commands](docs/commands.md).
 
 ## Disclaimer
 

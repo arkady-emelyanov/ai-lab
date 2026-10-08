@@ -7,6 +7,7 @@
 - [What is real and what is modelled](real-and-modelled.md): what behaves like real hardware and software, what doesn't, and how timing works
 - [Architecture](architecture.md): the instances, the networks and fabrics, and how the pieces connect
 - [Lab endpoints](endpoints.md): addresses and credentials of every service
+- [Commands](commands.md): every `make` target and `bin/` tool
 - [Platform](platform.md): make targets, configuration, CPU placement, secrets, troubleshooting
 
 ## Emulated hardware
