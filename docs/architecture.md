@@ -38,13 +38,11 @@ The BMCs share the bridge too (in a real rack they have a separate out-of-band n
 
 ### Compute fabrics
 
-Two emulated fabrics connect the trays: the InfiniBand scale-out network (what `ibnetdiscover` reports) and the NVLink domain through the switch tray (what NVML, the switch BMC and the partition controller report). topograph reads both.
+Two emulated fabrics connect the GPUs: InfiniBand between the trays (what `ibnetdiscover` reports) and NVLink through the switch tray (what NVML, the switch BMC and the partition controller report). topograph reads both.
 
 ```
-                    InfiniBand (emulated)                          NVLink (emulated)
-
                  ┌──────────────────────────┐
-                 │ spine  LAB-IBSPINE-01    │
+                 │ spine  LAB-IBSPINE-01    │      InfiniBand: between the trays
                  └────────────┬─────────────┘
                               │ 4 uplinks
                  ┌────────────┴─────────────┐
@@ -60,7 +58,7 @@ Two emulated fabrics connect the trays: the InfiniBand scale-out network (what `
                 └──────────────┬─────────────┘
                                │ 8 GPUs × 18 = 144 links
               ┌────────────────┴────────────────────────┐
-              │ NVLink switch tray                      │
+              │ NVLink switch tray                      │      NVLink: inside the domain
               │ NVSwitch_0 (72 ports)  NVSwitch_1 (72)  │
               │ partitions: sched-nvswitch (NMX-C-like) │
               └─────────────────────────────────────────┘
