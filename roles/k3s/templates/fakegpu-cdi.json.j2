@@ -6,6 +6,8 @@
 {%-     set _ = devices.append({'name': name, 'containerEdits': {'deviceNodes': [{'path': '/dev/nvidia' ~ idx}]}}) -%}
 {%-   endfor -%}
 {%- endfor -%}
+{#- EP_SUPPRESS_NCCL_CHECK: DeepEP (in vLLM's image) refuses a second libnccl
+    in the process, the preloaded stub next to the wheel's own copy. -#}
 {%- set ro = ['bind', 'ro'] -%}
 {{ {
   'cdiVersion': '0.6.0',
@@ -13,7 +15,8 @@
   'devices': devices,
   'containerEdits': {
     'deviceNodes': [{'path': '/dev/nvidiactl'}],
-    'env': ['LD_PRELOAD=' ~ preload, 'LD_LIBRARY_PATH=' ~ fakegpu_prefix ~ '/lib/fakegpu'],
+    'env': ['LD_PRELOAD=' ~ preload, 'LD_LIBRARY_PATH=' ~ fakegpu_prefix ~ '/lib/fakegpu',
+            'EP_SUPPRESS_NCCL_CHECK=1'],
     'mounts': [
       {'hostPath': fakegpu_prefix ~ '/lib/fakegpu', 'containerPath': fakegpu_prefix ~ '/lib/fakegpu', 'options': ro},
       {'hostPath': fakegpu_prefix ~ '/bin/nvidia-smi', 'containerPath': '/usr/bin/nvidia-smi', 'options': ro},
