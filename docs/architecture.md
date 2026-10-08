@@ -84,25 +84,17 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 ## How the pieces connect
 
-**Power control.** GPU trays live in the Incus project `trays`. Each tray BMC holds an Incus client certificate restricted to that project and drives the tray's power through the Incus API on the bridge address (`:8443`); it cannot reach any other instance.
+**From a job to the dashboards.** A job's CUDA and NCCL calls take modelled time and load its GPUs:
 
-**Data paths.**
+- NVML reports the load (utilisation, memory, power, temperature) to `nvidia-smi` and the GPU exporter.
+- The partition controller reports each GPU's NVLink traffic as fabric metrics.
+- Prometheus collects both, and Grafana shows them.
 
-```
- job (srun or pod) ─► CUDA/NCCL calls ─► fakegpu: simulated time + occupancy ─► NVML ─► nvidia-smi, GPU exporter ─► Prometheus
-                                                     │
-                                                     └─ NVLink traffic ─► fakenmxc /metrics ─► Prometheus
- Redfish PATCH (BMC) / gRPC (fakenmxc) ─► NVML link state, clique ─► topograph ─► Slurm topology.conf or Kubernetes node labels (Kueue)
-```
+**From a management change to the scheduler.** A link disabled on a BMC (Redfish) or a partition change on the partition controller (gRPC) changes what NVML reports. topograph picks it up and updates Slurm's `topology.conf` or the Kubernetes node labels Kueue uses.
 
-## Storage volumes
+**Power.** Each tray BMC switches its tray on and off through the Incus API. Its certificate only reaches the GPU trays (Incus project `trays`), not the rest of the lab.
 
-| Volume / pool | Mounted at | Purpose |
-|---|---|---|
-| `cluster-shared` (pool `default`) | `/shared` on cluster nodes | homes (`/shared/home/<user>`), frameworks venv |
-| `scratch-<tray>` (pool `local-nvme`, btrfs, 50 GiB quota) | `/scratch` on each tray | node-local scratch, JuiceFS cache |
-| `rustfs-data` (pool `default`) | `/var/lib/rustfs` on `sched-storage` | object data |
-| `juicefs-meta` (pool `default`) | `/var/lib/redis` on `sched-storage` | JuiceFS metadata (Redis), kept with the object data |
+**Storage.** `/shared`, `/pfs`, `/scratch` and S3 live on Incus volumes that survive `make down` ([Storage](storage.md)).
 
 ## Limitations
 
