@@ -40,4 +40,44 @@ joe@sched-login:~/examples/kubernetes$ kubectl get jobsets,workloads      # joe'
 
 From your machine, `bin/kubectl -n joe get jobsets,workloads` shows the same as cluster admin.
 
+**vLLM (Kubernetes only):** `vllm-serve.yaml` runs vLLM's OpenAI-compatible server from the official image, unmodified, on one GPU, as a Deployment and Service queued in Kueue (Qwen2.5-0.5B-Instruct). The emulated GPUs compute nothing, so the model never picks a real token: the sampler's output holds leftover bytes (with this image, id 1065353216, the bit pattern of float 1.0, outside any vocabulary), so every answer is empty text with exactly `max_tokens` tokens and `finish_reason: length`. Everything around the text is real: the API, batching, KV cache and prefix caching, vLLM's `/metrics` and GPU load. The first start downloads the model and pulls the image (~9 GB).
+
+**Limits of vLLM on the emulated GPUs.** vLLM's model runner (V2, the default in this image) keeps part of its per-step bookkeeping on the GPU: how many tokens each request sampled, positions, sequence lengths. No GPU kernel runs, so vLLM reads leftover bytes there too, and depending on them a request can:
+
+- stall: it stays running at 0 tokens/s (seen with 32 concurrent long requests and, occasionally, with a single one)
+- crash the engine: an assertion in vLLM's scheduler fails (seen with `prompt_logprobs` on a repeated prompt) and the pod restarts
+
+Short single requests mostly work, so the example suits trying the deployment, the API and the Kueue queueing; it is not reliable for load tests. Tensor parallelism (`--tensor-parallel-size 4` over a tray's GPUs) starts with `--disable-custom-all-reduce` and `VLLM_ALLREDUCE_USE_SYMM_MEM=0` (vLLM's custom all-reduce needs CUDA IPC, PyTorch's symmetric memory CUDA virtual memory management, which the emulated driver lacks) and trays with more RAM (six processes with PyTorch, ~10 GiB), but runs into the same limits.
+
+Submit as joe on the login node, under the fixed name `vllm` (the Deployment and its Service; submitting again updates it in place):
+
+```
+bin/ssh login 'cd examples/kubernetes && ./submit --name vllm vllm-serve.yaml'
+```
+
+The rest runs on your machine, through `bin/kubectl` (cluster admin). Wait until it is ready (about a minute, longer on the first start):
+
+```
+bin/kubectl -n joe rollout status deploy/vllm
+```
+
+Forward its port, in a second terminal (Ctrl-C ends it):
+
+```
+bin/kubectl -n joe port-forward svc/vllm 8000
+```
+
+Query it; any OpenAI client works against `http://localhost:8000/v1`:
+
+```
+curl -s localhost:8000/v1/completions -H 'Content-Type: application/json' \
+    -d '{"model": "Qwen/Qwen2.5-0.5B-Instruct", "prompt": "Hello", "max_tokens": 64}'
+```
+
+Stop it:
+
+```
+bin/kubectl -n joe delete deploy,svc vllm
+```
+
 More: [Frameworks and examples](../docs/frameworks-and-examples.md), [Slurm](../docs/slurm.md#usage), [Kubernetes (k3s)](../docs/kubernetes.md#usage).

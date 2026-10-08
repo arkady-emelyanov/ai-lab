@@ -1,0 +1,67 @@
+# vLLM's OpenAI-compatible server on one emulated GB200, from the official
+# image, unmodified, queued in Kueue like any GPU workload. The emulated GPUs
+# compute nothing, so every answer is empty text of exactly max_tokens tokens
+# (ids outside the vocabulary): set max_tokens per request to shape the load.
+# Everything around the text (API, batching, KV cache, metrics, GPU load) is
+# real.
+# The model downloads to ~/.cache/huggingface on the first start.
+# Submit: ./submit --name vllm vllm-serve.yaml   (Deployment and Service named vllm)
+# Query from your machine (../README.md):
+#         bin/kubectl -n joe port-forward svc/vllm 8000
+#         curl -s localhost:8000/v1/completions -H 'Content-Type: application/json' \
+#           -d '{"model": "Qwen/Qwen2.5-0.5B-Instruct", "prompt": "Hello", "max_tokens": 64}'
+#         (from a pod: http://vllm:8000)
+# Stop:   kubectl delete deploy,svc vllm
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "@NAME@"
+  labels: {app: "@NAME@", kueue.x-k8s.io/queue-name: gpu}
+spec:
+  replicas: 1
+  # The old pod frees its GPU (and the tray's RAM) before the new one starts.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: "@NAME@"}
+  template:
+    metadata:
+      labels: {app: "@NAME@"}
+    spec:
+      # No <SERVICE>_PORT=tcp://... variables: the Service named vllm would
+      # set VLLM_PORT, which vLLM reads as its own setting and fails on.
+      enableServiceLinks: false
+      securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+      containers:
+        - name: vllm
+          image: docker.io/vllm/vllm-openai:v0.31.0-x86_64
+          args:
+            - Qwen/Qwen2.5-0.5B-Instruct
+            - --enforce-eager           # no torch.compile or CUDA graphs: nothing to gain without real kernels
+            - --max-model-len=4096
+          env:
+            - {name: HOME, value: "@HOME@"}
+            - {name: HF_HOME, value: "@HOME@/.cache/huggingface"}
+          ports:
+            - {name: http, containerPort: 8000}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          # API server and engine with PyTorch loaded, and the weights in host
+          # RAM (the emulated GPU memory): ~3.5 GiB. The limit keeps it from
+          # starving the tray's kubelet.
+          resources:
+            limits: {nvidia.com/gpu: 1, memory: 8Gi}
+            requests: {cpu: "2", memory: 6Gi}
+          volumeMounts:
+            - {name: shared, mountPath: /shared}
+      volumes:
+        - {name: shared, hostPath: {path: /shared, type: Directory}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "@NAME@"
+spec:
+  selector: {app: "@NAME@"}
+  ports:
+    - {name: http, port: 8000, targetPort: http}
