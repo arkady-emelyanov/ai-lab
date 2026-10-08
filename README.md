@@ -76,12 +76,7 @@ Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.se
 
 ## Documentation
 
-- **What the lab models:** [What is real and what is modelled](docs/real-and-modelled.md)
-- **Infrastructure:** [Platform](docs/platform.md) (make targets, configuration, troubleshooting) · [Architecture](docs/architecture.md) · [Lab endpoints](docs/endpoints.md) (addresses and credentials)
-- **Emulated hardware:** [Emulated GPUs](docs/fake-gpu.md) · [BMCs](docs/bmc-redfish.md) · [NVLink partitions](docs/nvlink-partitions.md) · [Topology discovery](docs/topology.md)
-- **Platform services:** [Identity and access](docs/identity-and-access.md) · [Storage](docs/storage.md) · [Monitoring](docs/monitoring.md)
-- **Scheduling:** [Slurm](docs/slurm.md) · [Kubernetes (k3s)](docs/kubernetes.md)
-- **Applications and tests:** [Frameworks and examples](docs/frameworks-and-examples.md) · [Testing](docs/testing.md)
+Every page, grouped by topic: [docs/](docs/README.md). Start with [What is real and what is modelled](docs/real-and-modelled.md).
 
 ## Everyday commands
 
