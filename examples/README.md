@@ -74,7 +74,7 @@ curl -s localhost:8000/v1/completions -H 'Content-Type: application/json' \
     -d '{"model": "Qwen/Qwen2.5-0.5B-Instruct", "prompt": "Hello", "max_tokens": 64}'
 ```
 
-Stop it:
+Stop it (it holds a GPU while it runs, and jobs that need all eight, such as `make test`'s, wait in Kueue until it is gone):
 
 ```
 bin/kubectl -n joe delete deploy,svc vllm
