@@ -4,7 +4,7 @@
 
 > **Independent research project, not affiliated with or endorsed by NVIDIA.** It emulates NVIDIA hardware and software interfaces in software, for personal research and education. See [Disclaimer](#disclaimer).
 
-A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It is modelled on NVIDIA GB200 NVL72, scaled down to two compute trays: one NVLink domain the lab calls **NVL8** (its own name, not an NVIDIA product), with two GPU trays of four GPUs each, an NVLink switch tray, BMCs and an InfiniBand fabric. Around it runs the real software stack: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
+A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs.
 
 It is software-in-the-loop: real, unmodified software (schedulers, frameworks, tools) runs against a behavioural model of the hardware. PyTorch, NCCL and Ray jobs start, run and report GPU load, memory, power and temperature as on real GPUs, but GPU kernels never actually execute: there is no real GPU math. Details in [What is real and what is modelled](#what-is-real-and-what-is-modelled).
 
@@ -42,9 +42,9 @@ AI lab models what the hardware shows to software (APIs, topology, telemetry, ti
 | Grace CPUs | modelled (NUMA layout only) | two Grace NUMA nodes per tray in `nvidia-smi topo -m` and `numactl -H` | the trays run on the host's x86-64 cores, not Grace (aarch64): `uname -m` and `scontrol show node` say `x86_64` |
 | Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | the lab runs LDAP without TLS |
 
-**Timing is a behavioural model, not a prediction.** Each operation's duration comes from its size and NVIDIA's published GB200 figures (compute per precision, memory, NVLink and InfiniBand bandwidth). Jobs take plausible time and put plausible load on the GPUs, but the model is not calibrated against hardware and does not predict real GB200 performance. Details: [Emulated GPUs](docs/fake-gpu.md#how-it-works).
+**Timing is a behavioural model.** Each operation's duration comes from its size and NVIDIA's published GB200 figures (compute per precision, memory, NVLink and InfiniBand bandwidth). Jobs take plausible time and put plausible load on the GPUs. The model is not calibrated and does not predict real GB200 performance. Details: [Emulated GPUs](docs/fake-gpu.md#how-it-works).
 
-Details are in each component page and in [Architecture](docs/architecture.md#limitations).
+Each component page lists its own limitations ([Documentation](#documentation)).
 
 ## Quickstart
 
@@ -158,7 +158,11 @@ docs/                    component documentation
 
 This is an independent, personal research and education project. It is not affiliated with, endorsed by, sponsored by or supported by NVIDIA Corporation.
 
-- **Emulation, not NVIDIA software.** The lab imitates the interfaces of NVIDIA hardware and software (CUDA, NVML, NCCL, cuBLAS, cuDNN and `nvidia-smi` behaviour, GB200 BMC Redfish resources, NMX-C partition semantics) so that other software can be exercised without GPUs. It contains no NVIDIA source code, binaries, firmware or proprietary specifications: the stub libraries are the lab's own code exporting the same function names as NVIDIA's libraries (so programs link and load; `fakegpu/symbols/*.syms` are those names, read from the libraries' public dynamic symbol tables, and the CUDA runtime's undocumented export-table layouts come from the open-source [ZLUDA](https://github.com/vosen/ZLUDA) project), the partition controller uses its own `.proto` rather than NVIDIA's, and the behaviour modelled comes from NVIDIA's public documentation and open-source reference implementations cited in each component page.
+- **Emulation, not NVIDIA software.** The lab imitates the interfaces of NVIDIA hardware and software (CUDA, NVML, NCCL, cuBLAS, cuDNN, `nvidia-smi`, GB200 BMC Redfish resources, NMX-C partitions) so that other software can be exercised without GPUs. It contains no NVIDIA source code, binaries, firmware or proprietary specifications:
+  - The stub libraries are the lab's own code. They export the same function names as NVIDIA's libraries, so programs link and load; `fakegpu/symbols/*.syms` lists those names, read from the libraries' public symbol tables.
+  - The CUDA runtime's undocumented export-table layouts come from the open-source [ZLUDA](https://github.com/vosen/ZLUDA) project.
+  - The partition controller uses its own `.proto`, not NVIDIA's.
+  - The behaviour modelled comes from NVIDIA's public documentation and open-source reference implementations, cited in each component page.
 - **Not a substitute for real hardware.** GPU kernels never actually execute (no real GPU math), and timings, telemetry and failure behaviour are approximations. Results obtained on the lab say nothing about the performance or correctness of real NVIDIA systems, and must not be presented as if they did.
 - **Intended use.** The project is meant for personal research, learning and experimentation with cluster software. It is not intended, tested or supported for production or commercial use, and comes with no warranty of any kind (see the licence).
 - **Trademarks.** NVIDIA, CUDA, NVLink, NVSwitch, Grace, Blackwell, GB200, BlueField, ConnectX, NCCL, NVML and other NVIDIA marks are trademarks or registered trademarks of NVIDIA Corporation in the U.S. and other countries. Slurm, Kubernetes, k3s and the other names used here are trademarks of their respective owners. They are used only to describe what is being emulated or integrated with.

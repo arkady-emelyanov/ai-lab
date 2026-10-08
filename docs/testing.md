@@ -46,7 +46,14 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 
 ## Fake GPU library tests
 
-`make test-fakegpu` builds the fake GPU libraries on this machine and runs `tests/fakegpu` (pytest) without the lab: each NCCL rank is a process on an emulated tray of its own (device directory, sideband with its partition, shared state), and the ranks exchange partitions through a temporary directory. The cost of each operation is read from the GPU's busy time and NIC counters, so the checks are exact: one partition runs at NVLink speed; two partitions cross InfiniBand (2 + 2 ranks: more than 2× slower) and count NIC bytes; GPUs in no partition use only their NICs; `ncclCommSplit` by partition is back on NVLink and `NCCL_SPLIT_NOCOLOR` gets no communicator; `ncclSend` to another partition uses the NIC; a rank whose peers never report falls back to NVLink after the timeout and warns; without an exchange directory ranks share one partition; exchange directories are removed; unique ids are random; `ib-port-counters` publishes the NIC bytes under node_exporter's names.
+`make test-fakegpu` builds the lab's GPU libraries on this machine and tests them without the lab (`tests/fakegpu`, pytest). Each NCCL rank runs as a process on an emulated tray of its own. The tests read each operation's cost from the GPUs' busy time and InfiniBand counters, so they are exact. They check that:
+
+- one partition runs at NVLink speed; two partitions cross InfiniBand (more than 2× slower) and count its bytes
+- GPUs in no partition use only InfiniBand
+- `ncclCommSplit` by partition is back on NVLink, and `ncclSend` to another partition uses InfiniBand
+- a rank whose peers never report warns and falls back to NVLink after the timeout
+- each GEMM precision runs at its rate, and the NUMA layout and CPU affinity match GB200's
+- the InfiniBand byte counters appear under node_exporter's names
 
 ## BMC integration tests
 

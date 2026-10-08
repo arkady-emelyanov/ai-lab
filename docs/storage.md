@@ -11,7 +11,14 @@
 | `/scratch` (`$SCRATCH`) | btrfs volume per tray, 50 GiB quota | each tray | node-local data, caches, spill files; JuiceFS read cache |
 | `http://sched-storage:9000` | RustFS (S3) | cluster network and host | object storage with per-user buckets |
 
-`sched-storage` (10.107.111.12) runs RustFS (S3 API on `:9000`, web console on `:9001`, data on the Incus volume `rustfs-data`) and Redis (JuiceFS metadata, password-protected, append-only, data on the Incus volume `juicefs-meta`). Both volumes survive `make down`, so `/pfs` is kept across rebuilds; if the metadata is lost while the bucket still holds data, `make up` restores it from the newest metadata backup JuiceFS keeps in the bucket (`pfs/meta/dump-*.json.gz`) instead of formatting. JuiceFS is mounted through FUSE (Incus provides `/dev/fuse`) on every cluster node. In k3s mode pods mount `/shared`, `/pfs` and `/scratch` from their tray (`hostPath`) and reach S3 by name (`sched-storage` resolves in pods).
+`sched-storage` (10.107.111.12) runs:
+
+- RustFS: the S3 API on `:9000`, a web console on `:9001`, data on the Incus volume `rustfs-data`
+- Redis: JuiceFS' metadata, password-protected, data on the Incus volume `juicefs-meta`
+
+Both volumes survive `make down`, so `/pfs` is kept across rebuilds. If the metadata is lost while the bucket still holds data, `make up` restores it from JuiceFS' newest backup in the bucket instead of formatting.
+
+Every cluster node mounts JuiceFS through FUSE. In k3s mode, pods mount `/shared`, `/pfs` and `/scratch` from their tray and reach S3 by name.
 
 ## Usage
 

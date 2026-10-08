@@ -4,13 +4,20 @@
 
 ## Overview
 
-The lab is a set of Incus system containers on a single Linux host, configured by Ansible into a GPU cluster that is modelled on NVIDIA GB200 NVL72, scaled down to two compute trays: one NVLink domain the lab calls **NVL8** (its own name, not an NVIDIA product), with two GPU compute trays with four GPUs each, an NVLink switch tray, management controllers (BMCs) and the services around a production GPU cluster, scheduled by Slurm or by Kubernetes (k3s): `scheduler` in `inventory/group_vars/all.yml` picks one, never both. The GPUs, the NVLink fabric and the InfiniBand network are emulated; everything else (Slurm or k3s, LDAP, storage, monitoring) is real software.
+The lab is a set of Incus system containers on one Linux host, configured by Ansible into a GPU cluster. It is modelled on NVIDIA GB200 NVL72, scaled down to two compute trays: one NVLink domain the lab calls **NVL8** (its own name, not an NVIDIA product). It has:
+
+- two GPU trays with four GPUs each, an NVLink switch tray and their BMCs
+- the services around a production GPU cluster, scheduled by Slurm or by Kubernetes (k3s), one or the other
+
+The GPUs, the NVLink fabric and the InfiniBand network are emulated; everything else (Slurm or k3s, LDAP, storage, monitoring) is real software.
 
 Device nodes, NVML and CUDA behaviour, Redfish resources, partition semantics and metrics are modelled on NVIDIA hardware and its management stack; emulation shortcuts are listed under [Limitations](#limitations).
 
 ## Topology
 
-**Hosts and the management network.** Every instance sits on the Incus bridge; your machine reaches them through the `bin/` wrappers and a browser. The scheduler daemons are Slurm's or k3s', never both.
+### Hosts and the management network
+
+Every instance sits on the Incus bridge; your machine reaches them through the `bin/` wrappers and a browser. The scheduler daemons are Slurm's or k3s', never both.
 
 ```
  your machine (Incus host): bin/ssh · bin/kubectl · bin/redfish · bin/nvlink · browser (Grafana, Prometheus)
@@ -29,7 +36,9 @@ Device nodes, NVML and CUDA behaviour, Redfish resources, partition semantics an
    sched-worker2-bmc .32, sched-nvswitch-bmc .33
 ```
 
-**Compute fabrics.** Two emulated fabrics connect the trays: the InfiniBand scale-out network (what `ibnetdiscover` reports) and the NVLink domain through the switch tray (what NVML, the switch BMC and the partition controller report). topograph reads both.
+### Compute fabrics
+
+Two emulated fabrics connect the trays: the InfiniBand scale-out network (what `ibnetdiscover` reports) and the NVLink domain through the switch tray (what NVML, the switch BMC and the partition controller report). topograph reads both.
 
 ```
                     InfiniBand (emulated)                          NVLink (emulated)
@@ -59,7 +68,9 @@ Device nodes, NVML and CUDA behaviour, Redfish resources, partition semantics an
 
 A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one link per NVSwitch chip); the lab models one switch tray, so each GPU uses 9 ports on each of its two chips.
 
-**Out-of-band management.** BMCs control their tray and see its state; the switch tray's BMC and host change link and partition state. The out-of-band links (I2C/MCTP, NVLink management) are Incus volumes shared between the parties:
+### Out-of-band management
+
+BMCs control their tray and see its state; the switch tray's BMC and host change link and partition state. The out-of-band links (I2C/MCTP, NVLink management) are Incus volumes shared between the parties:
 
 ```
  bin/redfish (HTTPS, Redfish) ─────┐
@@ -72,24 +83,6 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
  sched-nvswitch   ── fabric-clique ──────────┘
  CUDA processes   ── occupancy ────────────────► telemetry-<tray> ─┬─► sched-nvswitch (fabric metrics)
                                                                   └─► tray BMC (GPU sensors, read-only)
-```
-
-## Layers
-
-```
- ┌─ Users & applications ────────────────────────────────────────────────────┐
- │  joe (LDAP) · bin/ssh · sbatch/srun or kubectl · PyTorch DDP · Ray · S3    │
- ├─ Scheduling (one of) ─────────────────────────────────────────────────────┤
- │  Slurm 23.11 (slurmctld, slurmd, slurmdbd+MariaDB) · topology/block        │
- │  k3s · fakedp+CDI · GPU Feature Discovery · Kueue (TAS) · JobSet           │
- ├─ Platform services ───────────────────────────────────────────────────────┤
- │  OpenLDAP+SSSD · JuiceFS /pfs · RustFS S3 · Prometheus+Grafana · topograph │
- ├─ Emulated hardware ───────────────────────────────────────────────────────┤
- │  fakegpu (CUDA/NVML/libs) · NVSwitch tray (fakenmxc) · BMCs (fakebmc)      │
- │  InfiniBand fabric (fake ibnetdiscover)                                    │
- ├─ Infrastructure ──────────────────────────────────────────────────────────┤
- │  Incus containers, volumes, bridge · Ansible playbooks · make targets      │
- └───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Instances
@@ -106,7 +99,7 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
 
 Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; the last octet comes from `ip_host` in `inventory/hosts.yml`). Every instance has the others in `/etc/hosts`. The instance name is also the hostname, the Slurm or Kubernetes node name and the `bin/ssh` alias.
 
-**Host cores.** Each GPU tray is pinned to whole physical cores of its own (both hyperthreads), enough for its CPU limit; all other instances share the remaining cores. The placement is worked out from the host's topology at `make provision`; on this lab's 6-core, 12-thread host the trays get cores 0–1 and 2–3 and the rest share cores 4–5. A tray therefore never competes with the controller, the BMCs or the other tray for a core, so both trays feed their GPUs at the same rate ([Platform](platform.md#configuration)).
+**Host cores.** Each GPU tray gets whole physical cores of its own, so the trays never compete with the rest of the lab for a core ([Platform: CPU placement](platform.md#configuration)).
 
 ## How the pieces connect
 
@@ -140,13 +133,7 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 ## Limitations
 
-- GPU kernels do not compute; tensors computed on the GPU hold zeros or garbage. Copies above `fakegpu_copy_max_mb` (64 MiB) are timed but not performed, so large GPU buffers cost no host RAM. See [Emulated GPUs](fake-gpu.md#limitations).
-- Containers share the host kernel: Slurm tracks jobs by process (`proctrack/linuxproc`) without cgroup confinement or CPU binding.
-- Fake NCCL ranks exchange only their NVLink partitions (for the cost of collectives): a failed link or rank does not fail its peers' collectives.
-- k3s mode: GPUs come from the lab's own device plugin and CDI specification, not NVIDIA's container toolkit or device plugin; users may mount host paths in their pods ([Kubernetes](kubernetes.md#limitations)).
-- Slurm is the Ubuntu 24.04 package (23.11): no `--segment`, no `BlockSizes`.
-- LDAP runs without TLS inside the lab network.
-- One NVLink domain, one switch tray, one InfiniBand leaf: enough to exercise every interface, not a scale model.
+What the lab models and what it does not is in the README's [What is real and what is modelled](../README.md#what-is-real-and-what-is-modelled); each component page lists its own limitations.
 
 ## References
 

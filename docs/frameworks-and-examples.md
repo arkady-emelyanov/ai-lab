@@ -4,7 +4,7 @@
 
 ## Overview
 
-`make frameworks` installs a Python venv on the shared volume (`/shared/venv`) with PyTorch (CUDA 13 build), Ray, NumPy and boto3, activated automatically in login shells. Because the fake GPU stack implements the CUDA runtime, cuBLAS, cuDNN and NCCL paths these frameworks use, they run unmodified on the emulated GPUs with simulated timing ([Emulated GPUs](fake-gpu.md)).
+`make frameworks` installs a Python venv on the shared volume (`/shared/venv`) with PyTorch (CUDA 13 build), Ray, NumPy and boto3; login shells activate it. The frameworks run unmodified on the emulated GPUs, with modelled timing ([Emulated GPUs](fake-gpu.md)).
 
 ## Usage
 
@@ -41,7 +41,9 @@ Expected `ddp-train` results (Slurm, the defaults `--batch 64 --width 8192 --lay
 | All 8 GPUs in one NVLink partition | ~4.2 ms, ~123k samples/s, 50 TFLOP/s/GPU | 1:18–1:19 | 85–87 % utilisation, 850–890 W, ~56 °C |
 | Split across two partitions (one per tray) | ~9.5 ms, ~54k samples/s, 22 TFLOP/s/GPU | 2:39–2:41 | ~93 % utilisation, 925–945 W, ~67 °C |
 
-The step time is mostly NCCL and launch overhead: the model's BF16 GEMMs take a small share of it, so the GEMM rates barely change it. Split across partitions, the gradient all-reduce crosses InfiniBand between them: the step takes over twice as long, and the GPUs count the longer collectives as busy time, so utilisation and power rise ([NVLink partitions](nvlink-partitions.md)).
+The step time is mostly NCCL and launch overhead; the model's BF16 GEMMs are a small share of it.
+
+Split across partitions, the gradient all-reduce crosses InfiniBand, so the step takes more than twice as long. The GPUs count the longer collectives as busy time, so utilisation and power go up ([NVLink partitions](nvlink-partitions.md)).
 
 **Writing your own jobs:** build models directly on the GPU (`with torch.device("cuda")`): GPU memory is lazily backed, while a model built on the CPU first occupies the tray's host RAM (8 GiB per tray; 10 GiB in k3s mode). Timing reacts to sizes as on real hardware: larger GEMMs take longer, all-reduce time grows with gradient size.
 

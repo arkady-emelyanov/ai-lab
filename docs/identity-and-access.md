@@ -4,7 +4,11 @@
 
 ## Overview
 
-Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolves them through SSSD: no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`). Users log in to the login node with their lab SSH key (one per user, generated into `.secrets/ssh/users/` and used by `bin/ssh`), their own key or their LDAP password; root logs in with the lab's admin key only. The same user list also creates each user's S3 identity and, depending on the scheduler, their Slurm association or their Kubernetes namespace, queue and credentials ([Kubernetes](kubernetes.md#how-it-works)).
+Users exist once, in OpenLDAP on `sched-control`; every node resolves them through SSSD, and no node has local user accounts. Homes are on the shared volume (`/shared/home/<user>`).
+
+- Users log in to the login node with their lab SSH key (one per user, in `.secrets/ssh/users/`, used by `bin/ssh`), their own key or their LDAP password.
+- Root logs in with the lab's admin key only.
+- The same user list also creates each user's S3 identity and, depending on the scheduler, their Slurm association or their Kubernetes namespace and credentials ([Kubernetes](kubernetes.md#how-it-works)).
 
 | Piece | Where | Notes |
 |---|---|---|
@@ -26,7 +30,7 @@ Users exist once, in OpenLDAP on `sched-control`, and every cluster node resolve
 | `bin/scp file login:` | login node | copies files |
 | `make shell`, `make shell-root`, `make shell-<instance>` | via `incus exec`, no SSH | joe / root / root |
 
-The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. `make configure` creates a lab key per directory user and authorises it in their home on `/shared`, so it works on every node; `bin/ssh` picks it by user name. Plain `ssh` from elsewhere uses your own key (`bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub login`) or the LDAP password.
+The aliases exist only inside the wrappers; nothing is added to `~/.ssh/config`. Each user's lab key is authorised in their home on `/shared`, so it works on every node, and `bin/ssh` picks it by user name. Plain `ssh` from elsewhere uses your own key (`bin/ssh-copy-id -i ~/.ssh/id_ed25519.pub login`) or the LDAP password.
 
 **Add a user:** append an entry to `cluster_users` (copy the list from `inventory/group_vars/all.yml` to `local.yml`) and run `make configure`:
 

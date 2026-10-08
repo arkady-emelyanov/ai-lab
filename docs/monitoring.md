@@ -35,7 +35,11 @@ Prometheus on `sched-control` scrapes every layer; Grafana on the same host pres
 | `sched_jobs` | `state` | jobs by state (`RUNNING`, `PENDING`, ...; k3s: Jobs in user namespaces, pending = suspended by Kueue) |
 | `sched_nodes` | `state` | trays by scheduler state (k3s: `READY`, `NOT_READY`) |
 
-**Out of band.** The `redfish` job polls the BMCs, not the trays, so it keeps reporting when a tray's OS is down: the exporter takes the BMC as `target` (as blackbox_exporter does) and the series carry a `tray` label. A tray powered off through its BMC reads `idrac_system_power_on 0` with `up{job="redfish"} 1`; a tray whose GPU exporter stopped reads `up{job="gpu"} 0` with power still on; an unreachable BMC reads `up{job="redfish"} 0`.
+**Out of band.** The `redfish` job polls the BMCs, not the trays, so it keeps reporting while a tray's OS is down. Its series carry a `tray` label:
+
+- tray powered off through its BMC: `idrac_system_power_on 0`, with `up{job="redfish"} 1`
+- tray's GPU exporter stopped: `up{job="gpu"} 0`, with power still on
+- BMC unreachable: `up{job="redfish"} 0`
 
 | Metric | Labels | Meaning |
 |---|---|---|

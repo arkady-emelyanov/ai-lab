@@ -12,18 +12,32 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 | `libnvidia-ml.so.1` | NVML | identity, PCIe, NVLink (18 links to NVSwitch), fabric cluster UUID and clique, telemetry, processes, events |
 | `libcublas`, `libcublasLt` (`.so.13` and `.so.12`), `libnccl.so.2`, `libcudnn.so.9` | CUDA libraries bundled with frameworks | preloaded through `/etc/ld.so.preload` so they win over the copies in pip wheels |
 | `nvidia-smi` | `nvidia-smi` | Python over NVML: table, `-L`, `-q`, `topo -m`, `nvlink`, `dmon`, `--query-gpu`, `--query-compute-apps`, `-l` |
-| `numactl` | `numactl` (on the trays) | Python, numactl 2.0.18's options and output on the GB200 NUMA layout: `-H` and `-s` show it, `--cpunodebind` and `--physcpubind` pin the command to the tray CPUs of those Grace nodes, memory policies (`--membind`, `--preferred`, `--interleave`, ...) are checked and shown by a nested `numactl -s` but not applied; shared memory policies (`--shm`, `--file`) and device node specifiers (`netdev:`, `pci:`, ...) fail with a message |
+| `numactl` | `numactl` (on the trays) | Python; shows the GB200 NUMA layout (`-H`, `-s`) and pins commands to a Grace node's CPUs (`--cpunodebind`, `--physcpubind`); memory policies are accepted but not applied ([Limitations](#limitations)) |
 | `/dev/nvidia0-3`, `/dev/nvidiactl` | device nodes | character devices (major 195) created by Incus |
 
-**The emulation boundary:** an application launched through Slurm or as a Kubernetes pod starts, initialises its framework (PyTorch, Ray, NCCL, ...), every call succeeds and takes modelled time, and the GPUs report modelled load; GPU kernels never actually execute, so there is no real GPU math. An application that does not check numerical results believes everything worked.
+**The emulation boundary:** an application launched through Slurm or Kubernetes starts, initialises PyTorch, Ray or NCCL, and runs: every call succeeds and takes modelled time, and the GPUs report modelled load. GPU kernels never actually execute, so there is no real GPU math.
+
+An application that does not check its numbers believes everything worked.
 
 ## How it works
 
-**Every symbol exists.** `symbols/*.syms` list every function the real libraries export (taken from real NVIDIA binaries). Each gets a weak "return success" definition placed in its own ELF section; hand-written implementations override them for calls whose outputs matter. `cuGetProcAddress` prefers hand-written implementations over generated no-ops.
+**Unmodified programs run.** The libraries offer every function NVIDIA's do, so CUDA programs load and run without changes.
 
-**Simulated time.** Every CUDA stream has a timeline. Asynchronous work (kernels, copies, cuBLAS/cuDNN calls, NCCL collectives) is appended and returns at once; `cudaStreamSynchronize`, `cudaDeviceSynchronize`, events and blocking copies wait until the timeline catches up. A stream holds at most 1024 pending operations, like the hardware's push buffer, so tight launch loops block the CPU. `cudaEventElapsedTime` reports simulated durations.
+What frameworks rely on (devices, memory, streams, GEMMs, NCCL, NVML) behaves like the real thing, except that there is no real GPU math. Rarely used functions only report success, without doing anything ([Limitations](#limitations)).
 
-Rates follow NVIDIA's published GB200 figures per GPU (dense): 2.5 PFLOP/s BF16/FP16, 1.25 PFLOP/s TF32, 5 PFLOP/s FP8 and 40 TFLOP/s FP64 on tensor cores; NVIDIA publishes no FP32 figure without tensor cores, so ~60 TFLOP/s is an estimate. Memory-bound work uses half the published 8 TB/s HBM bandwidth, since a copy reads and writes. All are configurable ([Configuration](#configuration)).
+**Simulated time.** Each CUDA stream has its own timeline:
+
+- GPU work (kernels, copies, cuBLAS and cuDNN calls, NCCL collectives) is added to the timeline and the call returns at once.
+- Synchronising calls (`cudaStreamSynchronize`, `cudaDeviceSynchronize`, events, blocking copies) wait until the timeline catches up.
+- A stream holds at most 1024 pending operations, like the hardware's queue, so a tight launch loop eventually waits.
+- `cudaEventElapsedTime` reports the simulated durations.
+
+The rates are NVIDIA's published GB200 figures per GPU (dense): 2.5 PFLOP/s BF16/FP16, 1.25 PFLOP/s TF32, 5 PFLOP/s FP8, 40 TFLOP/s FP64. Two are the lab's own:
+
+- FP32 without tensor cores: about 60 TFLOP/s, an estimate (NVIDIA publishes no figure).
+- Memory-bound work: half the published 8 TB/s, since a copy both reads and writes.
+
+All of them are settings ([Configuration](#configuration)).
 
 | Operation | Cost (GB200-like, × `latency_scale`) |
 |---|---|
@@ -35,13 +49,42 @@ Rates follow NVIDIA's published GB200 figures per GPU (dense): 2.5 PFLOP/s BF16/
 | NCCL send/recv | 10 µs + bytes at ~900 GB/s to a peer in the same partition, 50 GB/s otherwise |
 | cuDNN convolution or graph | 40 µs |
 
-**Occupancy.** Every CUDA process registers in a shared table (`state_path`, on the tray's telemetry volume): its PID and memory per GPU, each GPU's busy time and NVLink bytes. Processes in containers (Kubernetes pods) use the same table: each slot records its owner's PID namespace and is held by a file lock the kernel drops when the process exits, so liveness is judged correctly from any namespace, and NVML lists each process under the PID the caller can see. NVML derives utilisation from busy time, power from utilisation (140 W idle to ~1 kW), energy, temperature (32 °C idle towards ~75 °C with a 20 s thermal lag), clocks and P-state, and lists processes. The tray's BMC reads the same table and applies the same model, so its sensors agree with NVML ([BMCs](bmc-redfish.md#how-it-works)). GPU memory is accounted against the 186 GB capacity (allocations beyond it fail with out-of-memory) but is lazily backed, so large GPU buffers cost no host RAM.
+**GPU load.** Every CUDA process on a tray records what it uses in a shared file (`state_path`): its memory on each GPU, and each GPU's busy time and NVLink traffic. From that, NVML reports:
 
-**Management inputs.** NVML reads the tray's sideband (written by the BMCs and the partition controller): NVLinks disabled by the tray BMC or switch BMC report inactive (`nvidia-smi topo -m` shows e.g. `NV16`), and each GPU reports the clique of its NVLink partition as of its last reset.
+- utilisation: the share of time the GPU was busy
+- power: from 140 W idle to about 1 kW at full load
+- temperature: from 32 °C idle towards about 75 °C, following the load with a 20 s lag
+- clocks, P-state, energy, and the processes on each GPU, under the PIDs the caller sees (also inside a pod)
 
-**GPU reset.** `nvidia-smi --gpu-reset` (`-r`, optionally `-i`) needs root and refuses a GPU any process still uses, like the real one. A reset returns the GPU to idle (utilisation, temperature) and applies a pending NVLink partition change: as on GB200, a GPU takes its new partition's clique only at a reset or a node reboot, and until then the lab shows `GPU Recovery Action : GPU_RESET` in `nvidia-smi -q` (NVML field `NVML_FI_DEV_GET_GPU_RECOVERY_ACTION`; the lab's modelling, NVIDIA documents the field for faults). Each tray resets its GPUs at boot (`fakegpu-boot-reset.service`), and in Slurm mode the epilog resets a job's GPUs when it ends ([Slurm](slurm.md#how-it-works)). There is no memory to scrub: "GPU memory" is the allocating process's own memory, which the kernel zeroes for every new allocation and reclaims at exit; on real hardware the reset is what clears GPU memory between tenants (GB200 NVL Partition User's Guide, §4.1).
+The tray's BMC reads the same file, so its sensors match `nvidia-smi` ([BMCs](bmc-redfish.md#how-it-works)).
 
-**Visible GPUs.** As with the real driver, a process sees only the GPUs whose device node `/dev/nvidia<n>` exists in its mount namespace: all of them on the tray, only the allocated ones in a Kubernetes pod (CDI injects one node per GPU). On top of that, CUDA honours `CUDA_VISIBLE_DEVICES` (indices and UUIDs), so a Slurm job's CUDA programs see exactly the GPUs Slurm gave it. NVML, and therefore `nvidia-smi`, ignores `CUDA_VISIBLE_DEVICES`, as the real one does: inside a Slurm job it lists all four GPUs of the tray. Real clusters hide the others from `nvidia-smi` with device cgroups (`ConstrainDevices=yes`), which unprivileged containers cannot use; in a Kubernetes pod only the allocated device nodes exist, so `nvidia-smi` lists only those. GPU identities (UUID, serial, PCI address) derive from the tray name in `/etc/fakegpu.conf` (`host`), so a container, whose hostname differs, sees the tray's GPUs.
+**GPU memory** counts against the GPU's 186 GB: an allocation beyond it fails with out-of-memory. Allocations are reserved, not filled, so large GPU buffers cost no host RAM.
+
+**Management inputs.** The BMCs and the partition controller tell the GPUs about changes through shared files (the tray's sideband):
+
+- An NVLink disabled on the tray BMC or the switch BMC shows as inactive (`nvidia-smi topo -m` shows e.g. `NV16`).
+- Each GPU reports the NVLink partition (clique) it had at its last reset.
+
+**GPU reset.** `nvidia-smi --gpu-reset` works like the real one: it needs root and refuses a GPU that a process still uses (`-i` picks GPUs). A reset:
+
+- returns the GPU to idle (utilisation, temperature)
+- applies a pending NVLink partition change: as on GB200, a GPU joins its new partition only at a reset or a reboot
+
+Until the reset, `nvidia-smi -q` shows `GPU Recovery Action : GPU_RESET`. That is the lab's choice: NVIDIA documents this field for faults, not for partition changes.
+
+Trays reset their GPUs at every boot and, in Slurm mode, when a job ends ([Slurm](slurm.md#how-it-works)).
+
+There is no GPU memory to clear: the lab keeps "GPU memory" in the process's own RAM, which the kernel zeroes for each new allocation. On real hardware, the reset is what clears GPU memory between tenants (GB200 NVL Partition User's Guide, §4.1).
+
+**Visible GPUs.** As with the real driver, a process sees the GPUs whose device files (`/dev/nvidia<n>`) it has:
+
+- on the tray: all four
+- in a Kubernetes pod: only the ones allocated to it
+- in a Slurm job: all four files, but CUDA uses only the GPUs in `CUDA_VISIBLE_DEVICES`, which Slurm sets to the job's GPUs
+
+`nvidia-smi` ignores `CUDA_VISIBLE_DEVICES`, like the real one, so inside a Slurm job it lists all four GPUs. Real clusters hide the others with device cgroups (`ConstrainDevices=yes`), which the lab's containers cannot use.
+
+A GPU's identity (UUID, serial, PCI address) comes from the tray's name, so a pod sees the same GPUs as its tray.
 
 ## Usage
 
@@ -61,7 +104,19 @@ numactl -N 1 -m 1 python train.py   # rank of GPU 2 or 3 on its Grace CPU's core
 
 PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks-and-examples.md)).
 
-**NCCL topology.** Like real NCCL at initialisation, every rank learns where its peers' GPUs are: each finds its own GPU's NVLink partition through NVML (PCI bus id, then fabric info: cluster UUID and clique, as of the GPU's last reset), and the ranks of a communicator exchange them through files in `fakegpu_nccl_dir` on `/shared`, keyed by the communicator's unique id (`ncclCommSplit` exchanges colours the same way, so split communicators know their members). Collectives inside one partition run over NVLink; across partitions they are hierarchical, as NCCL does across nodes: NVLink inside each partition and InfiniBand between them, so a job split across partitions slows down and its traffic shows on the trays' NIC counters ([Monitoring](monitoring.md)). A GPU in no partition (clique 0) has no NVLink peer. If a peer does not report within `nccl_timeout_s` (60 s), the rank warns once on stderr and assumes one partition; NCCL calls never fail. The link rates are documented figures (NVLink5 per GPU, NDR 400 per NIC), not measurements; message sizes, NCCL's algorithm choice and overlap with computation make real ratios vary.
+**NCCL topology.** As in real NCCL, the ranks of a job first find out which NVLink partition each GPU is in:
+
+- Each rank asks NVML for its GPU's partition (cluster UUID and clique).
+- The ranks swap that information through files on `/shared` (`fakegpu_nccl_dir`). Split communicators (`ncclCommSplit`) do the same.
+- If a rank's peers do not report within 60 s (`nccl_timeout_s`), it warns once and assumes they share its partition. NCCL calls never fail.
+
+Then the collectives are timed:
+
+- Inside one partition, over NVLink.
+- Across partitions, as NCCL does across nodes: NVLink inside each partition and InfiniBand between them. A job split across partitions slows down, and its traffic shows on the trays' InfiniBand counters ([Monitoring](monitoring.md)).
+- A GPU in no partition (clique 0) has no NVLink peers.
+
+The link rates are published figures (NVLink5 per GPU, NDR 400 per NIC), not measurements. On real hardware, message sizes, NCCL's algorithm choice and overlap with computation make the results vary.
 
 ## Configuration
 
@@ -79,7 +134,7 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 | `fakegpu_sm_count` | 148 | multiprocessor count (CUDA device attribute), kernel duration (waves of blocks) |
 | `fakegpu_tensor_tflops`, `fakegpu_tf32_tflops`, `fakegpu_fp8_tflops`, `fakegpu_fp32_tflops`, `fakegpu_fp64_tflops` | 2500, 1250, 5000, 60, 40 | dense GEMM throughput per precision (cuBLAS, cuBLASLt): BF16/FP16 and other 16-bit types, TF32, FP8 on tensor cores; FP32 without tensor cores; FP64 |
 | `fakegpu_host_link_gbs`, `fakegpu_hbm_gbs` | 400, 4000 | host-to-GPU copies (NVLink-C2C) and device-to-device copies |
-| `fakegpu_coherent_gpu_memory` | `os` | like the driver option `NVreg_CoherentGPUMemoryMode`: `os` (the driver's default) has each GPU's coherent memory as a NUMA node, as on GB200: GPUs on nodes 2, 10, 18, 26 after the Grace CPUs' nodes 0 and 1 (`nvidia-smi topo -m` "GPU NUMA ID", `topo -gnid`, `nvmlDeviceGetNumaNodeId`, `numactl -H`); `driver` is CDMM (driver-managed GPU memory, which NVIDIA recommends for Kubernetes): GPU NUMA ID N/A, `nvmlDeviceGetNumaNodeId` not supported. Either way "NUMA Affinity" (`nvmlDeviceGetMemoryAffinity`) is the GPU's Grace CPU: 0 for GPUs 0–1, 1 for GPUs 2–3 |
+| `fakegpu_coherent_gpu_memory` | `os` | whether GPU memory is a NUMA node, like the driver option `NVreg_CoherentGPUMemoryMode`. `os` (the driver's default): yes, as on GB200, GPUs on nodes 2, 10, 18, 26 after the Grace CPUs' 0 and 1 (`nvidia-smi topo -m`, `numactl -H`). `driver` (CDMM, which NVIDIA recommends for Kubernetes): no, GPU NUMA ID N/A. Either way each GPU's NUMA affinity is its Grace CPU: 0 for GPUs 0–1, 1 for GPUs 2–3 |
 | `fakegpu_driver_version` | `580.95.05` | `nvidia-smi` "Driver Version", NVML (`nvmlSystemGetDriverVersion`, `nvmlSystemGetNVMLVersion`), GFD's `nvidia.com/cuda.driver-version.*` labels |
 | `fakegpu_cuda_version` | `13.0` | highest CUDA version the driver supports (`MAJOR.MINOR`): `nvidia-smi` "CUDA Version", `cuDriverGetVersion`, `nvmlSystemGetCudaDriverVersion`, GFD's `nvidia.com/cuda.runtime-version.*` labels |
 | `fakegpu_vbios_version` | `97.00.82.00.0F` | GPU VBIOS: `nvidia-smi` "VBIOS Version", NVML, the tray BMC's firmware inventory (`HGX_FW_GPU_<n>`); can be set per tray ([BMCs](bmc-redfish.md#configuration)) |
@@ -89,9 +144,17 @@ PyTorch, Ray and NCCL code runs unmodified ([Frameworks and examples](frameworks
 | `fakegpu_copy_max_mb` | 64 | copies above this are timed but not performed |
 | `fakegpu_nccl_dir` | `/shared/.fakegpu/nccl` | where NCCL ranks exchange their NVLink partitions (empty: no exchange, one partition assumed) |
 
-**Changing them** needs only `make configure`: it rewrites `/etc/fakegpu.conf`, the BMCs' and the partition controller's configuration and `/etc/fakeib.json`, restarts the BMCs, the partition controller, the GPU exporter and, in k3s mode, GPU Feature Discovery. Processes read `/etc/fakegpu.conf` when they start, so running jobs keep the values they started with. The cuBLAS and cuDNN stubs keep reporting the CUDA 13 runtime they mimic.
+**Changing them** needs only `make configure`. It rewrites the configuration of the GPUs, BMCs, partition controller and InfiniBand fabric, and restarts the services that read it.
 
-**Validation.** `make up` and `make configure` first check the settings (`playbooks/tasks/check-settings.yml`) and stop with a message if they are inconsistent: `fakegpu_nvlinks` must be 1–64 and a multiple of `nvswitch_count`, and trays × GPUs × links must fit `nvswitch_count` × `nvswitch_ports` (every GPU link is cabled to a switch port); idle power below maximum power, maximum power not above the limit; rates and counts positive; `fakegpu_cuda_version` `MAJOR.MINOR`; `nvl_cluster_uuid` a lower-case UUID, `nvl_clique_id` 1–32765; `ib_link_rate` one of `ib_link_gbps`. The lab's size (trays, GPUs per tray, switch trays, InfiniBand switches) is fixed.
+Running jobs keep the values they started with: processes read `/etc/fakegpu.conf` when they start.
+
+**Validation.** `make up` and `make configure` check the settings first and stop with a message if they don't fit together:
+
+- `fakegpu_nvlinks` is 1–64 and a multiple of `nvswitch_count`, and every GPU link fits a switch port (trays × GPUs × links ≤ `nvswitch_count` × `nvswitch_ports`).
+- Idle power is below maximum power, and maximum power is not above the limit.
+- Rates and counts are positive; `fakegpu_cuda_version` is `MAJOR.MINOR`.
+- `nvl_cluster_uuid` is a lower-case UUID, and `nvl_clique_id` is 1–32765.
+- `ib_link_rate` is one of `ib_link_gbps`.
 
 `/etc/fakegpu.conf` also gets `host`, the tray's name, which GPU identities derive from. Debugging: `FAKEGPU_DEBUG=1` logs CUDA entry points resolved to no-ops and unknown export tables.
 
@@ -111,7 +174,11 @@ While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, 
 
 - Kernels do not run: tensors computed on the GPU hold zeros or garbage; NCCL collectives behave as if every rank contributed the same data (so cross-rank consistency checks pass); ranks exchange only their NVLink partitions at initialisation, so a failed link or rank does not fail its peers' collectives.
 - Data larger than `fakegpu_copy_max_mb` does not round-trip between host and GPU.
-- The GB200 NUMA layout exists only in what the fake driver and `numactl` report: the tray's kernel has the host's NUMA layout, so `numactl` splits the tray's own CPUs and memory between the two Grace nodes, binds CPUs but not memory, and is not in pods (on real clusters it comes with the container image). Tools reading `/sys/devices/system/node` directly (`lscpu`, `hwloc`) see the host. `nvidia-smi topo -m`'s "CPU Affinity" (`nvmlDeviceGetCpuAffinity`) lists the cores of the GPU's Grace node in that split: the first half of the tray's own cores for GPUs 0–1, the second half for GPUs 2–3. CUDA's device attributes for NUMA (`cudaDeviceProp.deviceNumaId`) are not reported.
+- The GB200 NUMA layout exists only in what the lab's driver and `numactl` report. The tray's kernel has the host's NUMA layout, so:
+  - `numactl` splits the tray's own CPUs and memory between the two Grace nodes; it pins CPUs but not memory, and is not in pods (on real clusters it comes with the container image).
+  - `nvidia-smi topo -m` shows the same split as "CPU Affinity": the first half of the tray's cores for GPUs 0–1, the second half for GPUs 2–3.
+  - Tools that read the kernel's NUMA layout directly (`lscpu`, `hwloc`) see the host's.
+  - CUDA's NUMA device attribute (`cudaDeviceProp.deviceNumaId`) is not reported.
 - Unusual APIs reach generated no-ops that return success without filling outputs; mainstream PyTorch, Ray, NCCL and NVML paths are implemented.
 - Only x86-64; the stubs mimic CUDA 13 (and the CUDA 12 SONAMEs for cuBLAS).
 

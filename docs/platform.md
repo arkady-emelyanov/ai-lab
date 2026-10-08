@@ -27,7 +27,11 @@ Commands that need the Incus socket run under `sg incus-admin`, so a group membe
 
 ## Configuration
 
-All tunables and their defaults live in `inventory/group_vars/all.yml`; your own values go in `local.yml` (created by `make init`, not in git), which overrides it (Ansible extra vars). The instance list, groups, static addresses (`ip_host`) and tray numbers in `inventory/hosts.yml`. Change a value and run `make configure` (or `make provision` for instance-level settings such as limits and devices). The exception is `scheduler` (`slurm` or `k3s`): it decides what is installed and how instances are created, so changing it on a built cluster takes `make down` and `make up` (volumes are kept).
+- `inventory/group_vars/all.yml`: every setting and its default.
+- `local.yml`: your own values (created by `make init`, git-ignored); it overrides `all.yml`.
+- `inventory/hosts.yml`: the instances, groups, static addresses (`ip_host`) and tray numbers.
+
+After a change, run `make configure`, or `make provision` for instance settings such as limits and devices. The exception is `scheduler` (`slurm` or `k3s`): it decides what is installed, so changing it takes `make down` and `make up` (volumes are kept).
 
 | Group | Instances |
 |---|---|
@@ -36,11 +40,27 @@ All tunables and their defaults live in `inventory/group_vars/all.yml`; your own
 | `nvswitch` | `sched-nvswitch` |
 | `bmc` (`tray_bmc`, `nvswitch_bmc`) | the three BMCs |
 
-**Package mirror.** Every instance installs Ubuntu packages from `apt_mirror` (archive and security pockets), with short apt timeouts so an unresponsive mirror address fails in seconds. The default, `auto`, picks the fastest mirror from this machine: the host checks `apt_mirror_candidates` (well-connected mirrors on every continent) and the mirrors Ubuntu suggests for its location, keeps those that serve the release, times a download from the quickest few and uses the fastest. The choice is cached for a day in `.cache/apt-mirror` (delete it to choose again). To use a fixed mirror, set its URL in `local.yml`, e.g. `apt_mirror: http://mirrors.edge.kernel.org/ubuntu` (list: [Ubuntu archive mirrors](https://launchpad.net/ubuntu/+archivemirrors)); to let `auto` consider one near you, add it to `apt_mirror_candidates`.
+**Package mirror.** Instances install Ubuntu packages from `apt_mirror`, with short apt timeouts so an unresponsive mirror fails in seconds.
 
-**Hardware parameters.** The emulated hardware is described by variables, each defaulting to GB200 values: the GPU profile, driver, CUDA and VBIOS versions, NVLink domain and InfiniBand link rate in [Emulated GPUs](fake-gpu.md#configuration), BMC firmware (per tray if needed) in [BMCs](bmc-redfish.md#configuration), switch chips and ports in [NVLink partitions](nvlink-partitions.md#configuration), the InfiniBand fabric in [Topology](topology.md#configuration). `make configure` applies a change; `make up` and `make configure` reject inconsistent values first. The lab's size (trays, GPUs per tray, switch trays, InfiniBand switches) is fixed.
+- `auto` (the default) picks the fastest mirror from this machine: among `apt_mirror_candidates` (well-connected mirrors on every continent) and the mirrors Ubuntu suggests for your location. The choice is cached for a day in `.cache/apt-mirror`; delete it to choose again.
+- A URL fixes the mirror, e.g. `apt_mirror: http://mirrors.edge.kernel.org/ubuntu` in `local.yml` ([list of Ubuntu mirrors](https://launchpad.net/ubuntu/+archivemirrors)).
+- To let `auto` consider a mirror near you, add it to `apt_mirror_candidates`.
 
-**CPU placement.** `instance_limits` gives each instance a memory limit and a CPU count; `make provision` turns the CPU count of the GPU trays into whole physical cores of their own, from the host's topology (`lscpu`), and pins every other instance to the remaining cores (`playbooks/files/cpu-placement`; on this lab's 6-core, 12-thread host: trays on cores 0–1 and 2–3, everything else on 4–5). With a plain count Incus places and rebalances containers itself and lets them overlap: a tray then shares cores with the controller, and in k3s mode its pods keep only the CPUs the tray had when the kubelet started (the kubelet copies them into the pod cgroup once), so a long-running tray's GPUs slowed down. A tray whose pinning changes gets its kubelet restarted. Processes on the host itself are not confined: heavy work on the host can still slow a tray. If the host has too few cores, the count-based limits stay.
+**Hardware parameters.** The emulated hardware is described by settings that default to GB200 values:
+
+- GPU profile, driver, CUDA and VBIOS versions, NVLink and InfiniBand rates: [Emulated GPUs](fake-gpu.md#configuration)
+- BMC firmware, per tray if needed: [BMCs](bmc-redfish.md#configuration)
+- switch chips and ports: [NVLink partitions](nvlink-partitions.md#configuration)
+- the InfiniBand fabric: [Topology](topology.md#configuration)
+
+`make configure` applies a change and rejects inconsistent values first. The lab's size (trays, GPUs per tray, switches) is fixed.
+
+**CPU placement.** `instance_limits` gives each instance a memory limit and a CPU count. `make provision` then gives each GPU tray whole physical cores of its own and pins every other instance to the remaining cores. On a 6-core, 12-thread host, for example, the trays get cores 0–1 and 2–3, everything else 4–5.
+
+Without pinning, Incus moves containers between cores, so a tray shares cores with the controller and its GPUs slow down (in k3s mode, pods also keep only the CPUs the tray had when the kubelet started). Two limits remain:
+
+- Processes on the host itself are not confined, so heavy work on the host can still slow a tray.
+- On a host with too few cores, the instances keep plain CPU counts.
 
 **Secrets** (`.secrets/`, git-ignored, owner-only, created by `make init` or on first use):
 
@@ -54,9 +74,24 @@ All tunables and their defaults live in `inventory/group_vars/all.yml`; your own
 | `bmc/*.crt`, `bmc/*.key`, `bmc/incus-server.crt` | tray BMC Incus client certificates, pinned Incus server certificate |
 | `users/<name>.pass`, `users/<name>.s3` | generated user passwords (when none is set) and S3 secrets |
 
-**Secrets and data volumes belong together.** The data volumes (`/shared`, the object store and its JuiceFS metadata) outlive `make down` and the checkout, while `.secrets/` is regenerated whenever it is missing (a fresh clone, a deleted directory). The object store and JuiceFS only work with the credentials they were created with, so `make provision` records a fingerprint of `rustfs.access`, `rustfs.secret` and `redis.pass` on each data volume (`user.ai-lab.secrets`) and stops, before changing anything, when existing volumes carry another one. Then either put back the `.secrets/` they were created with, or delete them with `make purge` (the lab's data goes with them) and run `make up`. Keep `.secrets/` when you move or re-clone the checkout, and drive a lab from one checkout only: two checkouts have different secrets but the same instances and volumes.
+**Secrets and data volumes belong together.** The data volumes (`/shared`, the object store, the JuiceFS metadata) outlive `make down` and even the checkout, while `.secrets/` is regenerated whenever it is missing. The object store and JuiceFS only work with the credentials they were created with.
 
-**Playbook order** (`site.yml`): base system (packages, `/etc/hosts`, munge for Slurm) → LDAP → SSSD and SSH → login tools → emulated GPUs → Slurm and accounting, or k3s (server, agents with GPUs, add-ons and users, kubectl) → storage and per-user S3 → JuiceFS and S3 clients → emulated InfiniBand → topograph → monitoring → Grafana → BMCs → switch tray host.
+So `make provision` marks each data volume with a fingerprint of those secrets, and stops before changing anything if existing volumes carry another one. Then either:
+
+- put back the `.secrets/` the volumes were created with, or
+- delete the volumes with `make purge` (the lab's data goes with them) and run `make up`.
+
+Keep `.secrets/` when you move or re-clone the checkout, and drive a lab from one checkout only.
+
+**Playbook order** (`site.yml`):
+
+1. base system, LDAP, SSSD and SSH, login tools
+2. emulated GPUs
+3. Slurm and accounting, or k3s
+4. storage, per-user S3, JuiceFS and S3 clients
+5. emulated InfiniBand, topograph
+6. monitoring and Grafana
+7. BMCs and the switch tray host
 
 ## Verification
 

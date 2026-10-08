@@ -11,14 +11,26 @@ On GB200-class systems the NVLink domain is managed from the switch trays: NVIDI
 | gRPC (`nmxlab.v1.NMXController`, server reflection) | 9370 | partitions, domain/GPU/switch/topology inventory |
 | HTTP `/metrics` (Prometheus text) | 9372 | partitions, per-GPU NVLink state and traffic, per-switch port state and throughput |
 
-The API is modelled on NMX-C's public documentation (Hello handshake, default partition 32766, partition ids 1–32765, GPUs addressed by UID or location) but uses its own `.proto` (`fakenmxc/proto/nmxc.proto`); NVIDIA's `.proto` is proprietary and not reused: it ships with the switch tray firmware ("the NMX-Controller gRPC API Guide, which is a part of the Switch Tray firmware package", [GB200 NVL Partition User's Guide](https://docs.nvidia.com/multi-node-nvlink-systems/partition-guide-v1-2.pdf) §4), and the copy in NVIDIA's open-source infra-controller is marked [`LicenseRef-NvidiaProprietary`](https://github.com/dsx-ai-factory/infra-controller/blob/755d11644ce46ef3a7244830b6bef8fe3b386110/crates/rpc/proto/nmx_c.proto#L2-L10) (use or redistribution without an NVIDIA licence agreement prohibited). Clients written against NVIDIA's NMX-C therefore cannot talk to the lab's controller.
+The API follows NMX-C's public documentation: the Hello handshake, the default partition 32766, partition ids 1–32765, GPUs addressed by UID or location.
+
+It uses its own `.proto` (`fakenmxc/proto/nmxc.proto`), because NVIDIA's is proprietary:
+
+- it ships with the switch tray firmware ([GB200 NVL Partition User's Guide](https://docs.nvidia.com/multi-node-nvlink-systems/partition-guide-v1-2.pdf) §4)
+- the copy in NVIDIA's open-source infra-controller is marked [`LicenseRef-NvidiaProprietary`](https://github.com/dsx-ai-factory/infra-controller/blob/755d11644ce46ef3a7244830b6bef8fe3b386110/crates/rpc/proto/nmx_c.proto#L2-L10)
+
+So clients written for NVIDIA's NMX-C cannot talk to the lab's controller.
 
 ## How it works
 
 - All GPUs start in the **default partition 32766**; user partitions use ids 1–32765 and a GPU belongs to at most one partition.
 - Partition membership is published to each tray's sideband (`fabric-clique`) and becomes the **clique** the GPU reports through NVML (`nvidia-smi --query-gpu=fabric.cliqueId`): the configured default clique for the default partition, the partition id for user partitions, 0 for GPUs in no partition.
-- **A GPU takes a new partition at a GPU reset**, as on GB200 ("We need to reset the GPUs (or reboot the nodes) in order for the Clique ID to update", Mission Control). Until then it reports its previous clique; in the lab, `nvidia-smi -q` also shows `GPU Recovery Action : GPU_RESET` (the lab's modelling: NVIDIA documents that a reset is needed, not that a partition change sets this field), and the controller reports `reset_pending` (`bin/nvlink gpus`, metric `nvlink_gpu_reset_pending`). A reset (`nvidia-smi --gpu-reset`, root, only GPUs no process uses), a tray reboot, or the Slurm epilog after a job applies it ([Emulated GPUs](fake-gpu.md#how-it-works), [Slurm](slurm.md#how-it-works)). topograph turns cliques into Slurm blocks or, in k3s mode, node labels for Kueue ([Topology](topology.md)); there GPU Feature Discovery also publishes each tray's clique as `nvidia.com/gpu.clique`.
-- **Health** comes from the sideband link state written by the BMCs. As in NVIDIA's GB200 NVL Partition User's Guide (§6.2), a GPU with an access link down (GPU to NVSwitch, disabled on either BMC) is `NMX_GPU_HEALTH_NO_NVLINK`, and its partition's health is unchanged. The guide's other states are in the API but never reported. For a GPU with some links down, the guide is ambiguous: §4.1.2.4 calls it `DEGRADED`, while §6.2 makes an access-link failure `NO_NVLINK`; the lab follows §6.2. `DEGRADED_BW` and the partition states (`DEGRADED_BANDWIDTH`, `DEGRADED`, `UNHEALTHY`) come with trunk-link failures between switch trays (§6.3) and fabric faults the lab does not model; a single switch tray has no trunk links.
+- **A GPU takes a new partition at a GPU reset**, as on GB200 ("We need to reset the GPUs (or reboot the nodes) in order for the Clique ID to update", Mission Control).
+  - Until then, the GPU reports its previous clique, and the controller reports `reset_pending` (`bin/nvlink gpus`, metric `nvlink_gpu_reset_pending`). The lab also shows `GPU Recovery Action : GPU_RESET` in `nvidia-smi -q`; that is the lab's choice, as NVIDIA documents the reset, not this field.
+  - A reset (`nvidia-smi --gpu-reset`, as root, on idle GPUs), a tray reboot or the Slurm epilog after a job applies it ([Emulated GPUs](fake-gpu.md#how-it-works), [Slurm](slurm.md#how-it-works)).
+  - topograph then turns the cliques into Slurm blocks or Kubernetes node labels ([Topology](topology.md)); in k3s mode GPU Feature Discovery also labels each tray with its clique (`nvidia.com/gpu.clique`).
+- **Health** comes from the link state the BMCs report. As in the partition guide (§6.2), a GPU with a link to its switch down is `NMX_GPU_HEALTH_NO_NVLINK`, and its partition's health does not change.
+  - The guide is ambiguous here: §4.1.2.4 calls a GPU with some links down `DEGRADED`, §6.2 makes it `NO_NVLINK`. The lab follows §6.2.
+  - The other states (`DEGRADED_BW`, and the partition states `DEGRADED_BANDWIDTH`, `DEGRADED`, `UNHEALTHY`) are in the API but never reported: they come with failures between switch trays (§6.3) and other faults the lab does not model.
 - **Telemetry** reads each tray's occupancy file through a read-only telemetry volume: busy time and NVLink bytes per GPU, counted by the fake CUDA stack (NCCL collectives and GPU-to-GPU copies). Per-switch throughput attributes each GPU's traffic to its active links on that switch.
 - Partition state is persisted in `/var/lib/fakenmxc/partitions.json`.
 
@@ -94,7 +106,7 @@ bin/ssh sched-worker1 nvidia-smi --query-gpu=fabric.clusterUuid,fabric.cliqueId 
 
 ## Limitations
 
-- Not wire-compatible with NVIDIA NMX-C clients: NVIDIA's `.proto` is proprietary, though its RPCs and return codes are publicly documented ([NMX-C gRPC API](https://networking-docs.nvidia.com/nmxcswum/130/grpc-api)). The lab uses the same RPC names and NVIDIA's names for the return codes it produces, in its own `.proto` (`fakenmxc/proto/nmxc.proto`) with its own numbers.
+- Not wire-compatible with NVIDIA's NMX-C clients. NVIDIA's `.proto` is proprietary, though its RPCs and return codes are documented ([NMX-C gRPC API](https://networking-docs.nvidia.com/nmxcswum/130/grpc-api)). The lab uses the same RPC names and return code names, in its own `.proto` with its own numbers.
 - No authentication or TLS on the gRPC and metrics ports.
 - A partition change does not stop running jobs: the GPUs of a running job keep their clique until the job ends and the epilog resets them, or until someone resets them; the lab does not tear down NVLink traffic of a GPU leaving a partition.
 

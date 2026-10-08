@@ -4,7 +4,9 @@
 
 ## Overview
 
-With `scheduler: k3s` in `local.yml` the lab runs Kubernetes (k3s 1.36) on the emulated hardware: the GPUs, BMCs, NVLink partition controller, InfiniBand fabric, storage, identity and monitoring are shared with the [Slurm](slurm.md) mode. It is one or the other: in k3s mode no Slurm component is installed. Switching on a built cluster: `make down`, change `scheduler`, `make up` (volumes, homes and the frameworks venv are kept).
+With `scheduler: k3s` in `local.yml`, the lab runs Kubernetes (k3s 1.36) on the emulated hardware. Everything except the scheduler is shared with [Slurm](slurm.md) mode, and in k3s mode no Slurm component is installed.
+
+To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, homes and the frameworks venv are kept.
 
 | Component | Where | Role |
 |---|---|---|
@@ -22,13 +24,39 @@ Add-ons are installed by k3s' Helm controller from `HelmChart` manifests (`roles
 
 ## How it works
 
-- **GPUs in pods.** NVIDIA's container toolkit and device plugin expect a real driver install (versioned libraries, `nvidia-cdi-hook`), so the lab supplies its own CDI specification and device plugin (`fakedp`). A pod asking for `nvidia.com/gpu: 2` gets two `/dev/nvidia<n>` nodes and the fake driver; fakegpu shows a process only the GPUs whose device node exists, as the real driver does, so the pod sees exactly its two GPUs, with the tray's UUIDs (the tray name comes from `/etc/fakegpu.conf`, not the pod's hostname). GPU activity in pods reaches NVML, the GPU exporters and the fabric telemetry as on the tray: utilisation, power and GPU memory everywhere; processes with their tray PIDs on the tray (as `nvidia-smi` on a Kubernetes node shows container processes) and with the pod's PIDs inside the pod.
-- **Topology.** GFD publishes the NVLink clique from NVML fabric info; topograph's `k8s` engine publishes the NVLink domain and the InfiniBand switch tiers. Kueue's `Topology` `nvl` orders them spine → leaf → NVLink domain → node; jobs annotated `kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain` are placed inside one NVLink domain or not at all. A partition change through the partition controller relabels the trays within a minute.
-- **topograph outside the cluster.** Its Kubernetes engine only uses in-cluster credentials; the unit sets the service address and stages a service-account token where client-go reads it, so topograph keeps running on the controller and reaching the trays over pdsh like in Slurm mode.
-- **Users.** Each directory user has a namespace of the same name, a client certificate (`O=lab-users`) and `~/.kube/config` on `/shared`, `edit` rights in their namespace plus JobSets and Kueue read access, and read access to nodes, ClusterQueues and topology cluster-wide.
-- **Unprivileged containers.** k3s runs in the same unprivileged Incus containers as everything else: `/dev/kmsg` is passed in, kubelet runs with `KubeletInUserNamespace`, containerd does not set the unprivileged-port and ICMP sysctls (runc cannot from a nested user namespace), and the host's kernel keyring quota is raised (`make check`).
-- **Names.** Pods resolve the lab's hostnames (`sched-storage`, ...) through CoreDNS (`coredns-custom`), so S3, JuiceFS and LDAP work from pods by name.
-- **Images.** Anonymous Docker Hub pulls are rate-limited, so containerd pulls `docker.io` images (the pod image, k3s' own) through `mirror.gcr.io`, Google's public Docker Hub cache, and falls back to Docker Hub (`k3s_registry_mirrors`, written to `/etc/rancher/k3s/registries.yaml`).
+### GPUs in pods
+
+NVIDIA's device plugin and container toolkit need a real driver install, so the lab has its own device plugin (`fakedp`) and CDI specification.
+
+- A pod asking for `nvidia.com/gpu: 2` gets two GPU device files and the lab's driver.
+- As with the real driver, the pod sees only the GPUs whose device files it has, with the tray's UUIDs.
+- Its GPU activity shows in `nvidia-smi`, the GPU exporter and the fabric telemetry, as on the tray. Processes appear with the tray's PIDs on the tray and with the pod's PIDs inside the pod.
+
+### Topology
+
+- GPU Feature Discovery labels each tray with its NVLink clique.
+- topograph labels the trays with their NVLink domain and InfiniBand switches.
+- Kueue's `nvl` topology orders them spine → leaf → NVLink domain → node. A job annotated `kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain` runs inside one NVLink domain or waits.
+- After a partition change, the labels update within a minute.
+
+topograph runs on the controller, outside the cluster, as in Slurm mode; it is given a service-account token so it can still label the nodes.
+
+### Users
+
+Each directory user has:
+
+- a namespace of the same name, with `edit` rights in it (plus JobSets and Kueue)
+- a client certificate and `~/.kube/config` on `/shared`
+- read access to nodes, ClusterQueues and the topology
+
+### Running in containers
+
+k3s runs in the same unprivileged Incus containers as everything else. A few settings make that work: the kernel log is passed in, kubelet runs in user-namespace mode, and the host's kernel keyring quota is raised (`make check` reports it).
+
+### Names and images
+
+- Pods resolve the lab's hostnames (`sched-storage`, ...), so S3, JuiceFS and LDAP work from pods by name.
+- Docker Hub limits anonymous pulls, so images come through `mirror.gcr.io` (Google's cache of popular Docker Hub images), with Docker Hub as the fallback (`k3s_registry_mirrors`).
 
 ## Usage
 
@@ -75,7 +103,16 @@ bin/kubectl get nodes -o custom-columns='NODE:.metadata.name,GPU:.status.allocat
 bin/ssh sched-control update-topology --dry-run     # trays with their NVLink domain and IB switches
 ```
 
-`make test` in k3s mode checks that both trays are ready with 4 GPUs and their clique and topology labels, runs the four examples as `joe` and checks their output, that the 8 single-GPU pods got 8 different GPUs, that `joe` can read nodes and queues but not `kube-system`, S3 access from a pod, topograph's labels, and the scheduler-neutral metrics. `make test-bmc-disruptive` cordons a tray, power-cycles it through its BMC and checks it comes back ready with its GPUs.
+`make test` in k3s mode checks that:
+
+- both trays are ready, with 4 GPUs and their clique and topology labels
+- the four examples run as `joe` and print the expected output
+- the 8 single-GPU pods of `nvl8-hello` get 8 different GPUs
+- `joe` can read nodes and queues, but not `kube-system`
+- a pod can reach S3
+- topograph's labels and the scheduler metrics are in place
+
+`make test-bmc-disruptive` cordons a tray, power-cycles it through its BMC and checks that it comes back ready with its GPUs.
 
 ## Limitations
 
@@ -84,7 +121,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 - No NVIDIA DRA driver or ComputeDomains (IMEX); NVLink placement is through Kueue topology-aware scheduling only.
 - Kubernetes users authenticate with client certificates, not LDAP.
 - Fake NCCL ranks exchange only their NVLink partitions, so a pod failing does not fail its peers' collectives ([Emulated GPUs](fake-gpu.md)).
-- No GPU handover between pods: the device-plugin API the lab uses has no node-side hook after a pod ends that could reset its GPUs (DRA drivers have one, `NodeUnprepareResources`; the lab does not use DRA) (Slurm mode uses an epilog). GPUs are reset at tray boot; after an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) for the new clique to reach GFD's and topograph's labels.
+- No GPU handover between pods. The device-plugin API the lab uses has no hook on the node after a pod ends that could reset its GPUs (DRA drivers have one; the lab does not use DRA). GPUs are reset at tray boot. After an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) so the labels pick up the new clique.
 
 ## References
 
