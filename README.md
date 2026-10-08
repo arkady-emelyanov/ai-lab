@@ -8,6 +8,8 @@ It is software-in-the-loop: real, unmodified software (schedulers, frameworks, t
 
 A blog series walks through the lab, starting with [AI lab, part 1: a GB200 NVL72-style cluster, scaled down to your laptop](https://blog.emelianov.cloud/ai-lab/01-intro/).
 
+The [documentation](docs/README.md) covers every component, with the commands in [Commands](docs/commands.md).
+
 ## Use cases
 
 - **Cluster software and self-service:** develop job portals, scheduler plugins, quota and accounting tools, or user-facing CLIs against a real Slurm or Kubernetes, LDAP and S3 stack with GPU nodes.
@@ -73,10 +75,6 @@ kubectl get nodes -L nvidia.com/gpu.clique      # two trays, 4 GPUs and an NVLin
 ```
 
 Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.secrets/grafana.pass`) and watch the **Lab overview** while a job runs, for example `ddp-train` from the [examples](examples/README.md).
-
-## Documentation
-
-Every page, grouped by topic: [docs/](docs/README.md). Start with [What is real and what is modelled](docs/real-and-modelled.md); all commands are in [Commands](docs/commands.md).
 
 ## Disclaimer
 

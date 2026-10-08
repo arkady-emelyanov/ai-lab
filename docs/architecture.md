@@ -104,4 +104,4 @@ What the lab models and what it does not is in [What is real and what is modelle
 
 - [Incus documentation](https://linuxcontainers.org/incus/docs/main/): instances, projects, storage volumes, restricted certificates
 - [NVIDIA GB200 NVL72](https://www.nvidia.com/en-us/data-center/gb200-nvl72/): the system family the lab models
-- Component pages linked from the [README](../README.md#documentation)
+- Component pages: [Documentation](README.md)

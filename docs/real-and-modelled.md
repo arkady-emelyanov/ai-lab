@@ -19,4 +19,4 @@ AI lab models what the hardware shows to software (APIs, topology, telemetry, ti
 
 **Timing is a behavioural model.** Each operation's duration comes from its size and NVIDIA's published GB200 figures (compute per precision, memory, NVLink and InfiniBand bandwidth). Jobs take plausible time and put plausible load on the GPUs. The model is not calibrated and does not predict real GB200 performance. Details: [Emulated GPUs](fake-gpu.md#how-it-works).
 
-Each component page lists its own limitations ([README: Documentation](../README.md#documentation)).
+Each component page lists its own limitations ([Documentation](README.md)).
