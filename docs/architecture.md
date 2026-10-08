@@ -32,9 +32,9 @@ Every instance sits on the Incus bridge; your machine reaches them through the `
  │ or kubectl   │ │ Prometheus, Gra- │ │ metadata)      │ │ slurmd or k3s      │ │ fabric telemetry   │
  │              │ │ fana, topograph  │ │                │ │ agent, GPU exporter│ │                    │
  └──────────────┘ └──────────────────┘ └────────────────┘ └────────────────────┘ └────────────────────┘
-   BMCs on the same bridge (out-of-band network in a real rack): sched-worker1-bmc .31,
-   sched-worker2-bmc .32, sched-nvswitch-bmc .33
 ```
+
+The BMCs share the bridge too (in a real rack they have a separate out-of-band network): `sched-worker1-bmc` .31, `sched-worker2-bmc` .32 and `sched-nvswitch-bmc` .33. They power their trays and switch NVLink ports on and off; `bin/redfish` and the Redfish exporter on `sched-control` talk to them.
 
 ### Compute fabrics
 
@@ -68,23 +68,6 @@ Two emulated fabrics connect the trays: the InfiniBand scale-out network (what `
 
 A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one link per NVSwitch chip); the lab models one switch tray, so each GPU uses 9 ports on each of its two chips.
 
-### Out-of-band management
-
-BMCs control their tray and see its state; the switch tray's BMC and host change link and partition state. The out-of-band links (I2C/MCTP, NVLink management) are Incus volumes shared between the parties:
-
-```
- bin/redfish (HTTPS, Redfish) ─────┐
- Redfish exporter on sched-control ┼─► sched-worker1-bmc .31 ── power (Incus API, project trays) ──► sched-worker1
- (polled by Prometheus)            ├─► sched-worker2-bmc .32 ── power ───────────────────────────► sched-worker2
-                                   └─► sched-nvswitch-bmc .33   (switch ports, isolation, config upload)
-
- tray BMC         ── nvlink-disabled ────────┐
- switch BMC       ── nvlink-disabled-switch ─┼─► sideband-<tray> ─► the tray's fake NVML (link state, clique)
- sched-nvswitch   ── fabric-clique ──────────┘
- CUDA processes   ── occupancy ────────────────► telemetry-<tray> ─┬─► sched-nvswitch (fabric metrics)
-                                                                  └─► tray BMC (GPU sensors, read-only)
-```
-
 ## Instances
 
 | Instance | Address | Role | Incus project | Host cores | Docs |
@@ -103,13 +86,6 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 ## How the pieces connect
 
-**Sideband and telemetry volumes.** Real BMCs and switch trays talk to GPUs over out-of-band links (I2C/MCTP, NVLink management). The lab stands these in with small Incus volumes:
-
-| Volume (per tray) | Writers | Readers | Content |
-|---|---|---|---|
-| `sideband-<tray>` | tray BMC (`nvlink-disabled`), switch BMC (`nvlink-disabled-switch`), partition controller (`fabric-clique`) | the tray's fake NVML (read-only mount) | NVLink port state, partition (clique) per GPU |
-| `telemetry-<tray>` | every CUDA process on the tray (`occupancy`) | partition controller on `sched-nvswitch` (read-only) | GPU processes, memory, busy time, NVLink traffic |
-
 **Power control.** GPU trays live in the Incus project `trays`. Each tray BMC holds an Incus client certificate restricted to that project and drives the tray's power through the Incus API on the bridge address (`:8443`); it cannot reach any other instance.
 
 **Data paths.**
@@ -117,8 +93,8 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 ```
  job (srun or pod) ─► CUDA/NCCL calls ─► fakegpu: simulated time + occupancy ─► NVML ─► nvidia-smi, GPU exporter ─► Prometheus
                                                      │
-                                                     └─ telemetry volume ─► fakenmxc /metrics ─► Prometheus
- Redfish PATCH (BMC) / gRPC (fakenmxc) ─► sideband volume ─► NVML link state, clique ─► topograph ─► Slurm topology.conf or Kubernetes node labels (Kueue)
+                                                     └─ NVLink traffic ─► fakenmxc /metrics ─► Prometheus
+ Redfish PATCH (BMC) / gRPC (fakenmxc) ─► NVML link state, clique ─► topograph ─► Slurm topology.conf or Kubernetes node labels (Kueue)
 ```
 
 ## Storage volumes
@@ -129,7 +105,6 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 | `scratch-<tray>` (pool `local-nvme`, btrfs, 50 GiB quota) | `/scratch` on each tray | node-local scratch, JuiceFS cache |
 | `rustfs-data` (pool `default`) | `/var/lib/rustfs` on `sched-storage` | object data |
 | `juicefs-meta` (pool `default`) | `/var/lib/redis` on `sched-storage` | JuiceFS metadata (Redis), kept with the object data |
-| `sideband-<tray>`, `telemetry-<tray>` | see above | emulated out-of-band links |
 
 ## Limitations
 
