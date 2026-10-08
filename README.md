@@ -4,9 +4,7 @@
 
 > **Independent research project, not affiliated with or endorsed by NVIDIA.** It emulates NVIDIA hardware and software interfaces in software, for personal research and education. See [Disclaimer](#disclaimer).
 
-A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs.
-
-It is software-in-the-loop: real, unmodified software (schedulers, frameworks, tools) runs against a behavioural model of the hardware. PyTorch, NCCL and Ray jobs start, run and report GPU load, memory, power and temperature as on real GPUs, but GPU kernels never actually execute: there is no real GPU math. Details in [What is real and what is modelled](#what-is-real-and-what-is-modelled).
+It is software-in-the-loop: real, unmodified software (schedulers, frameworks, tools) runs against a behavioural model of the hardware. PyTorch, NCCL and Ray jobs start, run and report GPU load, memory, power and temperature as on real GPUs, but GPU kernels never actually execute: there is no real GPU math. Details in [What is real and what is modelled](docs/real-and-modelled.md).
 
 A blog series walks through the lab, starting with [AI lab, part 1: a GB200 NVL72-style cluster, scaled down to your laptop](https://blog.emelianov.cloud/ai-lab/01-intro/).
 
@@ -20,31 +18,10 @@ A blog series walks through the lab, starting with [AI lab, part 1: a GB200 NVL7
 
 **Not for:**
 
-- benchmarking or capacity planning from the lab's timings
+- benchmarking or capacity planning
 - checking numerical results or model accuracy
 - developing or tuning CUDA kernels
-- rehearsing hardware failures the lab does not model ([What is real and what is modelled](#what-is-real-and-what-is-modelled))
-
-## What is real and what is modelled
-
-AI lab models what the hardware shows to software (APIs, topology, telemetry, timing, failures), not the silicon. Everything above that boundary is real software, unmodified.
-
-| Component | Real or modelled | Faithful | Not modelled |
-|---|---|---|---|
-| Slurm, k3s, Kueue, JobSet, topograph, GPU Feature Discovery | real | configuration, scheduling, accounting, topology-aware placement | Slurm jobs are not confined by cgroups (containers share the host kernel); Slurm is 23.11, without `--segment` and `BlockSizes`; k3s gets its GPUs from the lab's own device plugin, not NVIDIA's, and users may mount host paths in their pods |
-| PyTorch, Ray, your applications | real, unmodified | initialisation, process groups, control flow, the errors the APIs below return | numerical results |
-| CUDA driver and runtime, cuBLAS, cuDNN | modelled ([`fakegpu`](docs/fake-gpu.md)) | device properties, contexts, streams, events, allocations up to the GPU's memory (out-of-memory beyond it), timing | kernels do not run; copies over 64 MiB are timed, not performed |
-| NVML, `nvidia-smi` | modelled ([`fakegpu`](docs/fake-gpu.md)) | identity, PCIe, NVLink state, fabric clique, NUMA layout, processes, GPU reset; utilisation, power and temperature from the load | power and thermals follow a model of load, not measured curves |
-| NCCL | modelled ([`fakegpu`](docs/fake-gpu.md)) | communicators and splits, collectives timed over NVLink inside a partition and InfiniBand across partitions | data is not exchanged; a failed peer or link does not fail collectives |
-| NVLink and NVSwitch | modelled ([partition controller](docs/nvlink-partitions.md), BMCs) | 18 links per GPU to two 72-port switches, partitions and cliques applied at GPU reset, disabled links, fabric telemetry | NMX-C's wire protocol; one NVL8 domain only |
-| BMCs | modelled ([Redfish](docs/bmc-redfish.md)) | GB200 resource layout, power actions that stop and start the tray, GPU sensors, firmware inventory | IPMI, BlueField DPUs |
-| InfiniBand | modelled ([topology](docs/topology.md)) | `ibnetdiscover` topology for topograph, NIC byte counters, 400 Gb/s in NCCL timing | packets, subnet manager; one leaf switch |
-| Grace CPUs | modelled (NUMA layout only) | two Grace NUMA nodes per tray in `nvidia-smi topo -m` and `numactl -H` | the trays run on the host's x86-64 cores, not Grace (aarch64): `uname -m` and `scontrol show node` say `x86_64` |
-| Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | the lab runs LDAP without TLS |
-
-**Timing is a behavioural model.** Each operation's duration comes from its size and NVIDIA's published GB200 figures (compute per precision, memory, NVLink and InfiniBand bandwidth). Jobs take plausible time and put plausible load on the GPUs. The model is not calibrated and does not predict real GB200 performance. Details: [Emulated GPUs](docs/fake-gpu.md#how-it-works).
-
-Each component page lists its own limitations ([Documentation](#documentation)).
+- rehearsing hardware failures the lab does not model
 
 ## Quickstart
 
@@ -53,10 +30,6 @@ Each component page lists its own limitations ([Documentation](#documentation)).
 >
 > To work with the running lab (jobs, GPUs, NVLink partitions, BMCs, metrics), agents use the [ai-lab skill](skills/ai-lab/SKILL.md). Claude Code picks it up in this repository; to have it in other projects too:
 >
-> ```
-> mkdir -p ~/.claude/skills/ai-lab
-> curl -fsSL https://raw.githubusercontent.com/arkady-emelyanov/ai-lab/main/skills/ai-lab/SKILL.md -o ~/.claude/skills/ai-lab/SKILL.md
-> ```
 
 **Requirements:**
 
@@ -73,11 +46,7 @@ make frameworks    # PyTorch + Ray on the cluster (optional, several GB)
 make test          # end-to-end checks
 ```
 
-`make init` prints the exact command for anything the host still needs (group membership, an AppArmor rule for Incus DNS, the inotify and kernel keyring limits); see [Platform](docs/platform.md#troubleshooting).
-
-**Your settings:** `make init` creates `local.yml` (git-ignored). It overrides `inventory/group_vars/all.yml`: put anything you change there.
-
-**Kubernetes instead of Slurm:** set `scheduler: k3s` in `local.yml` before `make up` (on a built cluster: `make down`, change it, `make up`; volumes are kept). See [Kubernetes (k3s)](docs/kubernetes.md).
+`make init` prints the exact fix for anything the host still needs ([Platform](docs/platform.md#troubleshooting)) and creates `local.yml`, your git-ignored settings, which override `inventory/group_vars/all.yml`. The lab runs Slurm by default, for Kubernetes, set `scheduler: k3s` before `make up` ([Kubernetes](docs/kubernetes.md)).
 
 **First steps:**
 
@@ -107,6 +76,7 @@ Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.se
 
 ## Documentation
 
+- **What the lab models:** [What is real and what is modelled](docs/real-and-modelled.md)
 - **Infrastructure:** [Platform](docs/platform.md) (make targets, configuration, troubleshooting) · [Architecture](docs/architecture.md) · [Lab endpoints](docs/endpoints.md) (addresses and credentials)
 - **Emulated hardware:** [Emulated GPUs](docs/fake-gpu.md) · [BMCs](docs/bmc-redfish.md) · [NVLink partitions](docs/nvlink-partitions.md) · [Topology discovery](docs/topology.md)
 - **Platform services:** [Identity and access](docs/identity-and-access.md) · [Storage](docs/storage.md) · [Monitoring](docs/monitoring.md)
@@ -117,42 +87,14 @@ Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.se
 
 | Command | Purpose |
 |---|---|
-| `make up`, `make configure` | build the cluster; re-apply configuration after changing `local.yml` |
-| `make test` | end-to-end checks |
-| `make test-fakegpu` | fake GPU library tests on this machine, no lab needed |
-| `make test-bmc` | BMC integration tests (`-disruptive`, `-conformance` tiers) |
-| `make down`, `make purge` | delete instances (keep volumes); delete everything |
-| `bin/ssh login`, `bin/ssh root@<instance>` | SSH as joe / root; `bin/scp`, `bin/ssh-copy-id` likewise |
-| `bin/kubectl <args>` | kubectl as cluster admin (k3s mode) |
-| `bin/nvlink <command>` | NVLink domain and partitions: `domain`, `gpus`, `topology`, `partitions`, `create`, `delete`, `add`, `remove` |
-| `bin/grpcurl <args>` | grpcurl for the NVLink partition controller's raw API (built on first use) |
-| `make shell`, `make shell-<instance>` | shells through `incus exec` |
-| `bin/redfish <tray> <path> [curl args]` | Redfish requests to a BMC |
-| `bin/ssh sched-control update-topology` | regenerate the scheduler's topology now (a timer does it every minute) |
-
-## Repository layout
-
-```
-AGENTS.md                instructions for AI coding agents (deploying the lab for a user; CLAUDE.md points to it)
-skills/ai-lab/           installable agent skill for operating the lab (jobs, GPUs, partitions, BMCs, metrics)
-local.yml                your settings, overriding inventory/group_vars/all.yml (created by make init, not in git)
-Makefile                 entry points (init, up, configure, frameworks, test, down, purge, shell)
-bin/                     ssh / scp / ssh-copy-id wrappers, redfish, nvlink, kubectl and grpcurl helpers
-inventory/               instances and groups (hosts.yml), all tunables and their defaults (group_vars/all.yml)
-playbooks/               provision (Incus), site (configuration), frameworks, test, destroy
-roles/                   one role per component (see the component pages)
-fakegpu/                 fake NVIDIA userspace: C stubs, symbol lists, nvidia-smi
-fakebmc/                 Redfish BMC service (Go): GPU tray and switch tray roles
-fakenmxc/                NVLink partition controller and fabric telemetry (Go, gRPC)
-fakeib/                  ibnetdiscover look-alike for the emulated InfiniBand fabric
-fakedp/                  Kubernetes GPU device plugin (Go, CDI) for the k3s scheduler
-examples/                the same four jobs (topology, scheduling, DDP, Ray) for slurm/ and kubernetes/
-tests/bmc/               BMC integration tests (pytest)
-tests/fakegpu/           fake GPU library tests on the host, no lab needed (pytest)
-docs/                    component documentation
-.secrets/                generated keys and passwords (git-ignored)
-.cache/                  build tools, topograph checkout, k3s binary (git-ignored)
-```
+| `make up` | build the lab |
+| `make configure` | apply changed settings (`local.yml`) to the running lab |
+| `make test` | end-to-end checks ([Testing](docs/testing.md) has the rest) |
+| `make down`, `make purge` | delete the instances (volumes kept); delete everything |
+| `bin/ssh login`, `bin/ssh root@<instance>` | log in as joe, or as root anywhere |
+| `bin/kubectl` | kubectl as cluster admin (k3s mode) |
+| `bin/nvlink` | NVLink domain and partitions: list, create, delete, add or remove GPUs |
+| `bin/redfish <tray> <path>` | Redfish request to a tray's BMC |
 
 ## Disclaimer
 

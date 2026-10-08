@@ -56,7 +56,30 @@ Tell the user what they have and how to use it, from the README's [Quickstart](R
 
 ## Working on the repository
 
-- Layout and components: [README](README.md#repository-layout), [Architecture](docs/architecture.md).
+- Components and how they connect: [Architecture](docs/architecture.md). Repository layout:
+
+```
+AGENTS.md                instructions for AI coding agents (deploying the lab for a user; CLAUDE.md points to it)
+skills/ai-lab/           installable agent skill for operating the lab (jobs, GPUs, partitions, BMCs, metrics)
+local.yml                your settings, overriding inventory/group_vars/all.yml (created by make init, not in git)
+Makefile                 entry points (init, up, configure, frameworks, test, down, purge, shell)
+bin/                     ssh / scp / ssh-copy-id wrappers, redfish, nvlink, kubectl and grpcurl helpers
+inventory/               instances and groups (hosts.yml), all tunables and their defaults (group_vars/all.yml)
+playbooks/               provision (Incus), site (configuration), frameworks, test, destroy
+roles/                   one role per component (see the component pages)
+fakegpu/                 fake NVIDIA userspace: C stubs, symbol lists, nvidia-smi
+fakebmc/                 Redfish BMC service (Go): GPU tray and switch tray roles
+fakenmxc/                NVLink partition controller and fabric telemetry (Go, gRPC)
+fakeib/                  ibnetdiscover look-alike for the emulated InfiniBand fabric
+fakedp/                  Kubernetes GPU device plugin (Go, CDI) for the k3s scheduler
+examples/                the same four jobs (topology, scheduling, DDP, Ray) for slurm/ and kubernetes/
+tests/bmc/               BMC integration tests (pytest)
+tests/fakegpu/           fake GPU library tests on the host, no lab needed (pytest)
+docs/                    component documentation
+.secrets/                generated keys and passwords (git-ignored)
+.cache/                  build tools, topograph checkout, k3s binary (git-ignored)
+```
+
 - Tests: `make test-fakegpu` (fake GPU libraries, on the host, no lab), `make test-bmc` (BMC integration tests against the running lab; `-disruptive` power-cycles a tray), `make test` (end to end). See [Testing](docs/testing.md).
 - Commits keep `inventory/group_vars/all.yml` at the shared defaults (`scheduler: slurm`); local choices belong in the uncommitted `local.yml`. Tools that read settings without Ansible (`bin/redfish`, `bin/nvlink`, `tests/bmc`, the Makefile) read `all.yml` and then `local.yml`, last value wins; new ones must do the same.
 - Changes to roles or playbooks apply to a running lab with `make configure`; it keeps data and monitoring history, unlike `make down` + `make up`.

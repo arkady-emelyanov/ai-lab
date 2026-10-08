@@ -98,7 +98,7 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 ## Limitations
 
-What the lab models and what it does not is in the README's [What is real and what is modelled](../README.md#what-is-real-and-what-is-modelled); each component page lists its own limitations.
+What the lab models and what it does not is in [What is real and what is modelled](real-and-modelled.md); each component page lists its own limitations.
 
 ## References
 
