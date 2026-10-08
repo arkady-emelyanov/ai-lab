@@ -84,7 +84,7 @@ There is no GPU memory to clear: the lab keeps "GPU memory" in the process's own
 
 `nvidia-smi` ignores `CUDA_VISIBLE_DEVICES`, like the real one, so inside a Slurm job it lists all four GPUs. Real clusters hide the others with device cgroups (`ConstrainDevices=yes`), which the lab's containers cannot use.
 
-A GPU's identity (UUID, serial, PCI address) comes from the tray's name, so a pod sees the same GPUs as its tray.
+A GPU's UUID and serial come from the tray's name, so a pod sees the same GPUs as its tray. The PCI identity is a GB200 compute tray's (public `lspci` output from real trays): device `10de:2941`, subsystem `10de:2046`, each GPU in a PCI domain of its own on bus 1, `0008:01:00.0`, `0009:01:00.0` (on Grace 0), `0018:01:00.0`, `0019:01:00.0` (on Grace 1).
 
 ## Usage
 

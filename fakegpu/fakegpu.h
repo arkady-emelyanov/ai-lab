@@ -66,8 +66,15 @@
 #define FG_CC_MAJOR 10
 #define FG_CC_MINOR 0
 #define FG_PCI_DEVICE_ID 0x294110DE
+#define FG_PCI_SUBSYSTEM_ID 0x204610DE
 
-static const unsigned fg_pci_bus[FG_MAX_GPUS] = {0x18, 0x2A, 0x3A, 0x5D, 0x9A, 0xAB, 0xBA, 0xDB};
+/* As on a GB200 compute tray (lspci in NVIDIA/mig-parted#227 and
+ * NVIDIA/kubevirt-gpu-device-plugin#154): each GPU in a PCI domain of its
+ * own, behind its root port at <domain>:00:00.0, as 0008:01:00.0,
+ * 0009:01:00.0 (Grace 0), 0018:01:00.0, 0019:01:00.0 (Grace 1). A tray has
+ * four GPUs; the domains of GPUs 4-7 continue the pattern and are the lab's. */
+#define FG_PCI_BUS 0x01
+static const unsigned fg_pci_domain[FG_MAX_GPUS] = {0x0008, 0x0009, 0x0018, 0x0019, 0x0028, 0x0029, 0x0038, 0x0039};
 
 static struct {
     int count;
@@ -349,7 +356,7 @@ static inline void fg_uuid_str(int idx, char *buf, size_t len)
 
 static inline void fg_pci_str(int idx, char *buf, size_t len, int legacy)
 {
-    snprintf(buf, len, legacy ? "%04X:%02X:00.0" : "%08X:%02X:00.0", 0, fg_pci_bus[idx]);
+    snprintf(buf, len, legacy ? "%04X:%02X:00.0" : "%08X:%02X:00.0", fg_pci_domain[idx], FG_PCI_BUS);
 }
 
 #endif

@@ -238,21 +238,22 @@ typedef struct {
     char busId[32];
 } nvmlPciInfo_t;
 
-static void fill_pci(nvmlPciInfo_t *p, unsigned bus, unsigned devid)
+static void fill_pci(nvmlPciInfo_t *p, unsigned domain, unsigned bus, unsigned devid, unsigned subsys)
 {
     memset(p, 0, sizeof *p);
+    p->domain = domain;
     p->bus = bus;
     p->pciDeviceId = devid;
-    p->pciSubSystemId = 0x20E610DE;
-    snprintf(p->busIdLegacy, sizeof p->busIdLegacy, "%04X:%02X:00.0", 0, bus);
-    snprintf(p->busId, sizeof p->busId, "%08X:%02X:00.0", 0, bus);
+    p->pciSubSystemId = subsys;
+    snprintf(p->busIdLegacy, sizeof p->busIdLegacy, "%04X:%02X:00.0", domain, bus);
+    snprintf(p->busId, sizeof p->busId, "%08X:%02X:00.0", domain, bus);
 }
 
 API nvmlReturn_t nvmlDeviceGetPciInfo_v3(nvmlDevice_t d, nvmlPciInfo_t *p)
 {
     CHECK_DEV(d);
     if (!p) return NVML_ERROR_INVALID_ARGUMENT;
-    fill_pci(p, fg_pci_bus[idx], FG_PCI_DEVICE_ID);
+    fill_pci(p, fg_pci_domain[idx], FG_PCI_BUS, FG_PCI_DEVICE_ID, FG_PCI_SUBSYSTEM_ID);
     return NVML_SUCCESS;
 }
 
@@ -672,6 +673,10 @@ API nvmlReturn_t nvmlDeviceGetNumaNodeId(nvmlDevice_t d, unsigned *node)
 /* ---- NVLink / fabric --------------------------------------------------- */
 
 #define NVML_TOPOLOGY_SYSTEM 50
+/* The NVLink peer's PCI info. Unverified: 22A3 is the H100 baseboard
+ * NVSwitch; GB200's switches sit in the switch trays, off the compute tray's
+ * PCI bus (NVIDIA/k8s-test-infra#882), and what NVML reports for them there
+ * is not public. */
 #define NVSWITCH_PCI_BUS 0x05
 #define NVSWITCH_PCI_DEVICE_ID 0x22A310DE
 
@@ -706,7 +711,7 @@ API nvmlReturn_t nvmlDeviceGetNvLinkRemotePciInfo_v2(nvmlDevice_t d, unsigned li
 {
     CHECK_DEV(d);
     if (!p || link >= FG_NVLINKS) return NVML_ERROR_INVALID_ARGUMENT;
-    fill_pci(p, NVSWITCH_PCI_BUS, NVSWITCH_PCI_DEVICE_ID);
+    fill_pci(p, 0, NVSWITCH_PCI_BUS, NVSWITCH_PCI_DEVICE_ID, FG_PCI_SUBSYSTEM_ID);
     return NVML_SUCCESS;
 }
 

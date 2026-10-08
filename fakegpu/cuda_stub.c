@@ -273,7 +273,7 @@ static int attribute(int attr, int p)
     case 20: return 0;                       /* COMPUTE_MODE default */
     case 31: return 1;                       /* CONCURRENT_KERNELS */
     case 32: return 1;                       /* ECC_ENABLED */
-    case 33: return (int)fg_pci_bus[p];      /* PCI_BUS_ID */
+    case 33: return FG_PCI_BUS;              /* PCI_BUS_ID */
     case 34: return 0;                       /* PCI_DEVICE_ID */
     case 35: return 0;                       /* TCC_DRIVER */
     case 36: return 3996000;                 /* MEMORY_CLOCK_RATE kHz */
@@ -282,7 +282,7 @@ static int attribute(int attr, int p)
     case 39: return 2048;                    /* MAX_THREADS_PER_MULTIPROCESSOR */
     case 40: return 4;                       /* ASYNC_ENGINE_COUNT */
     case 41: return 1;                       /* UNIFIED_ADDRESSING */
-    case 50: return 0;                       /* PCI_DOMAIN_ID */
+    case 50: return (int)fg_pci_domain[p];   /* PCI_DOMAIN_ID */
     case 75: return FG_CC_MAJOR;             /* COMPUTE_CAPABILITY_MAJOR */
     case 76: return FG_CC_MINOR;             /* COMPUTE_CAPABILITY_MINOR */
     case 81: return 233472;                  /* MAX_SHARED_MEMORY_PER_MULTIPROCESSOR */
