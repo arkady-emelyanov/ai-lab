@@ -46,7 +46,7 @@ make test          # end-to-end checks, ~10 minutes
 
 ### 4. Hand over
 
-Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and [Lab endpoints](README.md#lab-endpoints): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, `make test` to re-check.
+Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and [Lab endpoints](docs/endpoints.md): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, `make test` to re-check.
 
 ### Rules
 

@@ -65,4 +65,4 @@ Idempotency is checked separately: a second `make configure` must report `change
 ## References
 
 - `playbooks/test.yml`, `tests/bmc/`
-- Per-component verification steps: see the *Verification* section of each page linked from the [README](../README.md#layers-and-components)
+- Per-component verification steps: see the *Verification* section of each page linked from the [README](../README.md#documentation)

@@ -6,16 +6,9 @@
 
 A complete GPU cluster on a single Linux machine, for building and testing cluster software, self-service tooling and operations without GPUs. It is modelled on NVIDIA GB200 NVL72, scaled down to two compute trays: one NVLink domain the lab calls **NVL8** (its own name, not an NVIDIA product), with two GPU trays of four GPUs each, an NVLink switch tray, BMCs and an InfiniBand fabric. Around it runs the real software stack: Slurm with accounting or Kubernetes (k3s) with Kueue, LDAP identity, shared and object storage, Prometheus and Grafana.
 
-It is software-in-the-loop: the scheduler, frameworks and tools are the real software, unmodified, running against a behavioural model of the hardware. Applications launched through Slurm or Kubernetes initialise PyTorch, NCCL or Ray, every call succeeds and takes modelled time, and the GPUs report modelled load, memory, power and temperature; the BMCs and the NVLink partition controller change what the GPUs report and where the scheduler places jobs. GPU kernels never actually execute, so there is no real GPU math: see [What is real and what is modelled](#what-is-real-and-what-is-modelled).
+It is software-in-the-loop: real, unmodified software (schedulers, frameworks, tools) runs against a behavioural model of the hardware. PyTorch, NCCL and Ray jobs start, run and report GPU load, memory, power and temperature as on real GPUs, but GPU kernels never actually execute: there is no real GPU math. Details in [What is real and what is modelled](#what-is-real-and-what-is-modelled).
 
 A blog series walks through the lab, starting with [AI lab, part 1: a GB200 NVL72-style cluster, scaled down to your laptop](https://blog.emelianov.cloud/ai-lab/01-intro/).
-
-What you get:
-
-- **Users and jobs:** LDAP users with SSH access and one scheduler of your choice (`scheduler: slurm | k3s`): Slurm with GPU scheduling, accounting and NVLink-aware block topology, or k3s with GPU pods, NVIDIA GPU Feature Discovery labels, Kueue gang and NVLink-topology-aware scheduling and JobSets; PyTorch DDP and Ray examples on 8 GPUs for both.
-- **Hardware management:** Redfish BMCs per tray (power, NVLink ports) and for the switch tray (144 ports), an NMX-C-style partition controller, topology discovery with topograph.
-- **Platform:** shared filesystem (JuiceFS on RustFS), per-user S3 buckets, node-local scratch, Prometheus with GPU, scheduler and NVLink fabric metrics, Grafana dashboards.
-- **Operations:** one command to build, one to test, everything in Ansible.
 
 ## Use cases
 
@@ -25,7 +18,12 @@ What you get:
 - **AI pipelines:** run PyTorch DDP and Ray jobs end to end on 8 GPUs with modelled timing and memory accounting, to test orchestration, data movement and failure handling rather than numerics.
 - **CI for infrastructure code:** `make up && make test` builds and verifies the whole cluster from scratch on one machine.
 
-**Not for:** benchmarking or capacity planning from the lab's timings, checking numerical results or model accuracy, developing or tuning CUDA kernels, or rehearsing hardware failures the lab does not model ([What is real and what is modelled](#what-is-real-and-what-is-modelled)).
+**Not for:**
+
+- benchmarking or capacity planning from the lab's timings
+- checking numerical results or model accuracy
+- developing or tuning CUDA kernels
+- rehearsing hardware failures the lab does not model ([What is real and what is modelled](#what-is-real-and-what-is-modelled))
 
 ## What is real and what is modelled
 
@@ -44,22 +42,25 @@ AI lab models what the hardware shows to software (APIs, topology, telemetry, ti
 | Grace CPUs | modelled (NUMA layout only) | two Grace NUMA nodes per tray in `nvidia-smi topo -m` and `numactl -H` | the trays run on the host's x86-64 cores, not Grace (aarch64): `uname -m` and `scontrol show node` say `x86_64` |
 | Prometheus, Grafana, LDAP, JuiceFS, RustFS (S3) | real | everything | LDAP without TLS |
 
-**Timing is a behavioural model, not a prediction.** Durations come from NVIDIA's published GB200 figures (dense compute rates per precision, memory, NVLink and InfiniBand bandwidth) applied to each operation's size; the FP32 rate without tensor cores, which NVIDIA does not publish, is an estimate ([Emulated GPUs](docs/fake-gpu.md#how-it-works)). Jobs take plausible time and put plausible load on the GPUs and links, jobs take plausible time and put plausible load on the GPUs and links, but the figures are not calibrated against hardware and do not predict real GB200 performance.
+**Timing is a behavioural model, not a prediction.** Each operation's duration comes from its size and NVIDIA's published GB200 figures (compute per precision, memory, NVLink and InfiniBand bandwidth). Jobs take plausible time and put plausible load on the GPUs, but the model is not calibrated against hardware and does not predict real GB200 performance. Details: [Emulated GPUs](docs/fake-gpu.md#how-it-works).
 
 Details are in each component page and in [Architecture](docs/architecture.md#limitations).
 
 ## Quickstart
 
-**Using an AI coding agent?** Ask it to set up the lab; agents should follow [AGENTS.md](AGENTS.md), which covers checking the host, the one-time steps that need `sudo` (each with its reason, asked once), the build and the hand-over. To have an agent work with the running lab (jobs, GPUs, NVLink partitions, BMCs, metrics, tests), there is an [ai-lab agent skill](skills/ai-lab/SKILL.md): Claude Code picks it up automatically in this repository (`.claude/skills/ai-lab` links to it); to have it in other projects too:
-
-```
-mkdir -p ~/.claude/skills/ai-lab
-curl -fsSL https://raw.githubusercontent.com/arkady-emelyanov/ai-lab/main/skills/ai-lab/SKILL.md -o ~/.claude/skills/ai-lab/SKILL.md
-```
+> [!TIP]
+> **Using an AI coding agent?** Ask it to set up the lab: [AGENTS.md](AGENTS.md) tells it how (host checks, the `sudo` steps with their reasons, build, hand-over).
+>
+> To work with the running lab (jobs, GPUs, NVLink partitions, BMCs, metrics), agents use the [ai-lab skill](skills/ai-lab/SKILL.md). Claude Code picks it up in this repository; to have it in other projects too:
+>
+> ```
+> mkdir -p ~/.claude/skills/ai-lab
+> curl -fsSL https://raw.githubusercontent.com/arkady-emelyanov/ai-lab/main/skills/ai-lab/SKILL.md -o ~/.claude/skills/ai-lab/SKILL.md
+> ```
 
 **Requirements:**
 
-- x86-64 Linux (not arm64 or macOS) with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git.
+- x86-64 Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git.
 - Your user in the `incus-admin` group.
 - RAM: the running cluster uses about 10 GiB; 16 GiB free recommended. Container memory limits add up to 27 GiB (32 GiB with k3s).
 - CPU: 4 or more cores.
@@ -74,7 +75,7 @@ make test          # end-to-end checks
 
 `make init` prints the exact command for anything the host still needs (group membership, an AppArmor rule for Incus DNS, the inotify and kernel keyring limits); see [Platform](docs/platform.md#troubleshooting).
 
-**Your settings:** `make init` creates `local.yml` (from `local.example.yml`, not in git). Put anything you change there rather than in `inventory/group_vars/all.yml`: every `make` target passes it to Ansible as extra vars, so its values win over `all.yml` and the roles' defaults, and `git pull` never conflicts with it.
+**Your settings:** `make init` creates `local.yml` (git-ignored). It overrides `inventory/group_vars/all.yml`: put anything you change there.
 
 **Kubernetes instead of Slurm:** set `scheduler: k3s` in `local.yml` before `make up` (on a built cluster: `make down`, change it, `make up`; volumes are kept). See [Kubernetes (k3s)](docs/kubernetes.md).
 
@@ -83,60 +84,34 @@ make test          # end-to-end checks
 ```
 bin/scp -r examples login:                      # copy the example jobs to joe's home
 bin/ssh login                                   # login node as joe (joe's lab key, no password)
+```
+
+With Slurm ([Slurm](docs/slurm.md#usage)):
+
+```
 cd examples/slurm
 sinfo -N -o "%N %G %T"                          # two trays, gpu:gb200:4 each
 srun -N2 --gpus-per-node=4 nvidia-smi -L        # all 8 GPUs
 sbatch nvl8-hello.sbatch                        # one task per GPU across the domain
 ```
 
-With k3s: `bin/ssh login`, then `kubectl get nodes -L nvidia.com/gpu.clique`, `cd examples/kubernetes && ./submit --wait nvl8-hello.yaml` ([Kubernetes](docs/kubernetes.md#usage)).
+With Kubernetes ([Kubernetes](docs/kubernetes.md#usage)):
+
+```
+cd examples/kubernetes
+kubectl get nodes -L nvidia.com/gpu.clique      # two trays, 4 GPUs and an NVLink clique each
+./submit --wait nvl8-hello.yaml                 # one pod per GPU across the domain
+```
 
 Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.secrets/grafana.pass`) and watch the **Lab overview** while a job runs, for example `ddp-train` from the [examples](examples/README.md).
 
-## Lab endpoints
+## Documentation
 
-Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.0/24` here; yours may differ, see `incus network get incusbr0 ipv4.address`).
-
-| Service | Endpoint | Credentials | Docs |
-|---|---|---|---|
-| Login node (SSH) | `bin/ssh login` (10.107.111.11:22) | `joe` / `joe`, or your key | [Identity and access](docs/identity-and-access.md) |
-| Any instance as root (SSH) | `bin/ssh root@<instance>` | `.secrets/ssh/id_ed25519` | [Identity and access](docs/identity-and-access.md) |
-| Grafana | http://10.107.111.10:3000 | `admin` / `.secrets/grafana.pass` | [Monitoring](docs/monitoring.md) |
-| Prometheus | http://10.107.111.10:9090 | none | [Monitoring](docs/monitoring.md) |
-| Slurm exporter (Slurm mode) | http://10.107.111.10:9092/metrics | none | [Monitoring](docs/monitoring.md) |
-| Kubernetes API (k3s mode) | https://10.107.111.10:6443 (`bin/kubectl`) | admin: `.secrets/kubeconfig`; users: `~/.kube/config` | [Kubernetes](docs/kubernetes.md) |
-| kube-state-metrics (k3s mode) | http://10.107.111.10:30808/metrics | none | [Monitoring](docs/monitoring.md) |
-| topograph API | http://10.107.111.10:49021 | none | [Topology discovery](docs/topology.md) |
-| RustFS S3 API | http://10.107.111.12:9000 | admin: `.secrets/rustfs.access` / `.secrets/rustfs.secret`; users: `<name>` / `.secrets/users/<name>.s3` | [Storage](docs/storage.md) |
-| RustFS console | http://10.107.111.12:9001/rustfs/console/ | as S3 API | [Storage](docs/storage.md) |
-| GPU tray BMCs (Redfish) | https://10.107.111.31, https://10.107.111.32 (`bin/redfish sched-worker1 …`) | `root` / `0penBmc` | [BMCs](docs/bmc-redfish.md) |
-| NVLink switch tray BMC (Redfish) | https://10.107.111.33 (`bin/redfish sched-nvswitch …`) | `root` / `0penBmc` | [BMCs](docs/bmc-redfish.md) |
-| NVLink partition controller (gRPC) | 10.107.111.34:9370 (plaintext, reflection) | none | [NVLink partitions](docs/nvlink-partitions.md) |
-| Fabric telemetry | http://10.107.111.34:9372/metrics | none | [NVLink partitions](docs/nvlink-partitions.md) |
-| GPU exporters | http://10.107.111.21:9835/metrics, http://10.107.111.22:9835/metrics | none | [Monitoring](docs/monitoring.md) |
-| node_exporter, JuiceFS metrics | `<cluster node>:9100/metrics`, `<cluster node>:9567/metrics` | none | [Monitoring](docs/monitoring.md) |
-
-The BMCs use self-signed certificates (`curl -k`).
-
-## Layers and components
-
-Each page covers: overview, usage, verification, references (plus configuration and limitations where relevant).
-
-| Layer | Component | Page |
-|---|---|---|
-| Infrastructure | Incus containers, volumes, Ansible, `make` targets, secrets, host troubleshooting | [Platform](docs/platform.md) |
-| | Instances, addresses, wiring between layers | [Architecture](docs/architecture.md) |
-| Emulated hardware | NVIDIA software stack, modelled: CUDA, NVML, cuBLAS, NCCL, cuDNN, `nvidia-smi`; simulated timing and GPU occupancy | [Emulated GPUs](docs/fake-gpu.md) |
-| | Redfish BMCs for the GPU trays and the NVLink switch tray | [BMCs](docs/bmc-redfish.md) |
-| | NVLink partition controller (NMX-C-like, gRPC) and fabric telemetry | [NVLink partitions](docs/nvlink-partitions.md) |
-| | Emulated InfiniBand fabric and topograph-generated scheduler topology | [Topology discovery](docs/topology.md) |
-| Platform services | OpenLDAP, SSSD, SSH, users, `bin/ssh` | [Identity and access](docs/identity-and-access.md) |
-| | `/shared`, `/pfs` (JuiceFS), `/scratch`, RustFS S3 with per-user buckets | [Storage](docs/storage.md) |
-| | Prometheus, exporters (node, GPU, Slurm or kube-state-metrics, NVLink, JuiceFS), Grafana | [Monitoring](docs/monitoring.md) |
-| Scheduling (one of) | Slurm, accounting, GPU GRES, block topology, scratch | [Slurm](docs/slurm.md) |
-| | k3s, GPU device plugin and CDI, GPU Feature Discovery, Kueue, JobSet | [Kubernetes (k3s)](docs/kubernetes.md) |
-| Applications | PyTorch and Ray venv, example jobs | [Frameworks and examples](docs/frameworks-and-examples.md) |
-| Quality | `make test` coverage, BMC integration tests | [Testing](docs/testing.md) |
+- **Infrastructure:** [Platform](docs/platform.md) (make targets, configuration, troubleshooting) · [Architecture](docs/architecture.md) · [Lab endpoints](docs/endpoints.md) (addresses and credentials)
+- **Emulated hardware:** [Emulated GPUs](docs/fake-gpu.md) · [BMCs](docs/bmc-redfish.md) · [NVLink partitions](docs/nvlink-partitions.md) · [Topology discovery](docs/topology.md)
+- **Platform services:** [Identity and access](docs/identity-and-access.md) · [Storage](docs/storage.md) · [Monitoring](docs/monitoring.md)
+- **Scheduling:** [Slurm](docs/slurm.md) · [Kubernetes (k3s)](docs/kubernetes.md)
+- **Applications and tests:** [Frameworks and examples](docs/frameworks-and-examples.md) · [Testing](docs/testing.md)
 
 ## Everyday commands
 

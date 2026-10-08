@@ -152,4 +152,4 @@ Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; th
 
 - [Incus documentation](https://linuxcontainers.org/incus/docs/main/): instances, projects, storage volumes, restricted certificates
 - [NVIDIA GB200 NVL72](https://www.nvidia.com/en-us/data-center/gb200-nvl72/): the system family the lab models
-- Component pages linked from the [README](../README.md#layers-and-components)
+- Component pages linked from the [README](../README.md#documentation)

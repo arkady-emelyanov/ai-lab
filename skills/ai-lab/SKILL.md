@@ -108,7 +108,7 @@ idrac_system_power_on                                       # tray power from th
 
 ## More
 
-`docs/` in the repository: `slurm.md`, `kubernetes.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
+`docs/` in the repository: `endpoints.md` (addresses and credentials), `slurm.md`, `kubernetes.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
 
 ## Installing this skill
 
