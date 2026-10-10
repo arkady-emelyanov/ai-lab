@@ -24,6 +24,12 @@
  *                 partition at init; empty: no exchange, all ranks are
  *                 assumed to share one partition
  *   nccl_timeout_s  how long a rank waits for its peers there (default 60)
+ *   fabric_dir    directory every tray of the NVLink domain can reach, where
+ *                 memory exported as a fabric handle lives (cuMemCreate with
+ *                 CU_MEM_HANDLE_TYPE_FABRIC); empty: no fabric handles
+ *   ipc_dir       directory every GPU process on the tray can reach (also in
+ *                 pods), where GPU memory shared through CUDA IPC lives
+ *                 (default /dev/shm/fakegpu-ipc)
  *   ib_gbps       InfiniBand bandwidth per GPU (one NIC each, default 400)
  *   driver_version  driver version NVML and nvidia-smi report (580.95.05)
  *   cuda_version  highest CUDA version the driver supports, MAJOR.MINOR
@@ -90,6 +96,8 @@ static struct {
     char host[128];
     char dev_dir[200];
     char nccl_dir[200];
+    char fabric_dir[200];
+    char ipc_dir[200];
     double nccl_timeout_s;
     double ib_gbps;
     char driver_version[32];
@@ -125,6 +133,8 @@ static void fg_set(const char *key, const char *val)
     else if (!strcmp(key, "host")) snprintf(fg_cfg.host, sizeof fg_cfg.host, "%s", val);
     else if (!strcmp(key, "dev_dir")) snprintf(fg_cfg.dev_dir, sizeof fg_cfg.dev_dir, "%s", val);
     else if (!strcmp(key, "nccl_dir")) snprintf(fg_cfg.nccl_dir, sizeof fg_cfg.nccl_dir, "%s", val);
+    else if (!strcmp(key, "fabric_dir")) snprintf(fg_cfg.fabric_dir, sizeof fg_cfg.fabric_dir, "%s", val);
+    else if (!strcmp(key, "ipc_dir")) snprintf(fg_cfg.ipc_dir, sizeof fg_cfg.ipc_dir, "%s", val);
     else if (!strcmp(key, "nccl_timeout_s")) fg_cfg.nccl_timeout_s = strtod(val, NULL);
     else if (!strcmp(key, "ib_gbps")) fg_cfg.ib_gbps = strtod(val, NULL);
     else if (!strcmp(key, "driver_version")) snprintf(fg_cfg.driver_version, sizeof fg_cfg.driver_version, "%s", val);
@@ -149,7 +159,7 @@ static void fg_set(const char *key, const char *val)
 static void fg_load(void)
 {
     static const char *keys[] = {"count", "name", "mem_mb", "cluster_uuid", "clique_id", "sideband_dir",
-                                 "latency_scale", "copy_max_mb", "state_path", "host", "dev_dir", "nccl_dir",
+                                 "latency_scale", "copy_max_mb", "state_path", "host", "dev_dir", "nccl_dir", "fabric_dir", "ipc_dir",
                                  "nccl_timeout_s", "ib_gbps", "driver_version", "cuda_version", "vbios_version", "nvlinks", "sm_count",
                                  "nvlink_link_gbs", "power_limit_w", "idle_power_w", "max_power_w", "tensor_tflops",
                                  "tf32_tflops", "fp8_tflops", "fp32_tflops", "fp64_tflops", "host_link_gbs", "hbm_gbs", "coherent_gpu_memory"};
@@ -161,6 +171,7 @@ static void fg_load(void)
     fg_cfg.latency_scale = 1.0;
     fg_cfg.copy_max_mb = 64;
     snprintf(fg_cfg.state_path, sizeof fg_cfg.state_path, "/dev/shm/fakegpu");
+    snprintf(fg_cfg.ipc_dir, sizeof fg_cfg.ipc_dir, "/dev/shm/fakegpu-ipc");
     snprintf(fg_cfg.dev_dir, sizeof fg_cfg.dev_dir, "/dev");
     fg_cfg.nccl_timeout_s = 60;
     fg_cfg.ib_gbps = 400;

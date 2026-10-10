@@ -214,6 +214,14 @@ telemetry_bmc_path: /var/lib/fakebmc/telemetry
 # (on the shared volume, reachable from every job and pod); collectives
 # between partitions cross InfiniBand at this rate per GPU (one NIC each).
 fakegpu_nccl_dir: "{{ shared_mount }}/.fakegpu/nccl"
+# GPU memory shared as fabric handles (MNNVL: cuMemCreate with
+# CU_MEM_HANDLE_TYPE_FABRIC, multicast objects) lives here, where every tray of
+# the NVLink domain reaches it; empty: no fabric handles.
+fakegpu_fabric_dir: "{{ shared_mount }}/.fakegpu/fabric"
+# GPU memory shared through CUDA IPC (cudaIpcGetMemHandle) lives here, on
+# each tray, mounted into every GPU pod: any process on the tray opens a
+# handle, as on real GPUs (same node, any container).
+fakegpu_ipc_dir: /var/lib/fakegpu/ipc
 ib_gbps_per_gpu: "{{ ib_link_gbps[ib_link_rate] }}"
 
 # NVLink switch tray: switch chips and ports per chip (8 GPUs x 18 links fill

@@ -13,6 +13,8 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <pthread.h>
+#include <sys/file.h>
+#include <sys/random.h>
 #include "occupancy.h"
 
 typedef int CUresult;
@@ -295,6 +297,11 @@ static int attribute(int attr, int p)
     case 97: return 232448;                  /* MAX_SHARED_MEMORY_PER_BLOCK_OPTIN */
     case 106: return 32;                     /* MAX_BLOCKS_PER_MULTIPROCESSOR */
     case 115: return 1;                      /* MEMORY_POOLS_SUPPORTED */
+    case 102: return 1;                      /* VIRTUAL_MEMORY_MANAGEMENT_SUPPORTED (vmm.c) */
+    case 103: return 1;                      /* HANDLE_TYPE_POSIX_FILE_DESCRIPTOR_SUPPORTED */
+    case 110: return 1;                      /* GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED */
+    case 128: fg_init(); return fg_cfg.fabric_dir[0] != 0; /* HANDLE_TYPE_FABRIC_SUPPORTED */
+    case 132: return 1;                      /* MULTICAST_SUPPORTED (NVSwitch) */
     default: return 0;
     }
 }
@@ -435,17 +442,24 @@ API CUresult cuMemGetInfo_v2(size_t *free_b, size_t *total_b)
 
 /* Allocations are tracked so pointer queries (range, owning device, memory
  * type) answer the way the real driver would, and device allocations are
- * accounted per process and GPU in the tray's occupancy state. Buffers of
- * 1 MiB and more are lazily backed mmaps: untouched "GPU memory" costs no
- * host RAM. */
+ * accounted per process and GPU in the tray's occupancy state. Device
+ * buffers are lazily backed, page-aligned mmaps: untouched "GPU memory"
+ * costs no host RAM, and any of them can be shared through CUDA IPC. */
 enum { MEM_DEVICE = 2, MEM_HOST = 1 };
-#define MMAP_MIN (1UL << 20)
+enum {
+    MAPPED_NO = 0,   /* calloc'ed (host memory) */
+    MAPPED_OWN = 1,  /* our mmap */
+    MAPPED_VMM = 2,  /* a cuMemMap'ed range: vmm.c owns its pages */
+    MAPPED_IPC = 3,  /* another process' allocation, opened through CUDA IPC */
+};
 struct alloc_rec {
     uintptr_t base;
     size_t size;
     int type, dev, phys, mapped;
     unsigned long long id;
     struct alloc_rec *next;
+    int ipc_fd; /* MAPPED_OWN shared through CUDA IPC: the file behind it, else -1 */
+    char ipc_name[24];
 };
 static struct alloc_rec *allocs;
 static unsigned long long alloc_seq;
@@ -476,7 +490,7 @@ static void *track(size_t n, int type)
         fg_proc_cleanup(0);
         if (fg_gpu_mem_used(phys) + n > fg_mem_bytes()) return NULL; /* out of GPU memory */
     }
-    int mapped = type == MEM_DEVICE && n >= MMAP_MIN;
+    int mapped = type == MEM_DEVICE ? MAPPED_OWN : MAPPED_NO;
     void *m = mapped ? mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0)
                      : calloc(1, n);
     if (m == MAP_FAILED || !m) return NULL;
@@ -486,7 +500,8 @@ static void *track(size_t n, int type)
         return NULL;
     }
     pthread_mutex_lock(&alloc_lock);
-    *r = (struct alloc_rec){(uintptr_t)m, n, type, current_dev(), phys, mapped, ++alloc_seq, allocs};
+    *r = (struct alloc_rec){.base = (uintptr_t)m, .size = n, .type = type, .dev = current_dev(), .phys = phys,
+                            .mapped = mapped, .id = ++alloc_seq, .next = allocs, .ipc_fd = -1};
     allocs = r;
     pthread_mutex_unlock(&alloc_lock);
     if (type == MEM_DEVICE) account(phys, (int64_t)n);
@@ -506,8 +521,23 @@ static void untrack(void *m)
     }
     pthread_mutex_unlock(&alloc_lock);
     if (!dead) return;
+    if (dead->mapped == MAPPED_VMM) { /* vmm.c owns the pages and the accounting */
+        free(dead);
+        return;
+    }
+    if (dead->mapped == MAPPED_IPC) { /* another process' memory: only our mapping goes */
+        munmap(m, dead->size);
+        free(dead);
+        return;
+    }
     if (dead->type == MEM_DEVICE) account(dead->phys, -(int64_t)dead->size);
     if (dead->mapped) munmap(m, dead->size); else free(m);
+    if (dead->ipc_fd >= 0) {
+        char path[sizeof fg_cfg.ipc_dir + 32];
+        snprintf(path, sizeof path, "%s/%s", fg_cfg.ipc_dir, dead->ipc_name);
+        unlink(path);
+        close(dead->ipc_fd);
+    }
     free(dead);
 }
 
@@ -521,6 +551,174 @@ static int lookup(uintptr_t p, struct alloc_rec *out)
     }
     pthread_mutex_unlock(&alloc_lock);
     return found;
+}
+
+/* For vmm.c: ranges mapped with cuMemMap are device memory to copies and
+ * pointer queries. phys -1 marks memory of another GPU (imported). */
+void fg_vmm_track(uintptr_t base, size_t n, int dev, int phys)
+{
+    struct alloc_rec *r = malloc(sizeof *r);
+    if (!r) return;
+    pthread_mutex_lock(&alloc_lock);
+    *r = (struct alloc_rec){.base = base, .size = n, .type = MEM_DEVICE, .dev = dev, .phys = phys,
+                            .mapped = MAPPED_VMM, .id = ++alloc_seq, .next = allocs, .ipc_fd = -1};
+    allocs = r;
+    pthread_mutex_unlock(&alloc_lock);
+}
+
+void fg_vmm_untrack(uintptr_t base) { untrack((void *)base); }
+void fg_vmm_account(int phys, int64_t delta) { account(phys, delta); }
+int fg_vmm_phys(CUdevice dev) { return phys(dev); }
+int fg_vmm_current_dev(void) { return current_dev(); }
+
+/* ---- legacy CUDA IPC (cudaIpcGetMemHandle / cudaIpcOpenMemHandle) ------ */
+
+/* An allocation shared through IPC moves, in place, onto a file in ipc_dir:
+ * the same address now maps shared pages, which any process on the tray
+ * maps too, whatever container it runs in (ipc_dir is mounted into every
+ * GPU pod), as with the real driver, which needs only the same node. A
+ * process on another tray has no such file, so the handle does not open
+ * there. The exporter holds a lock on the file until it frees the
+ * allocation or exits; files nobody holds are swept (fg_collect_unheld).
+ * CUipcMemHandle is 64 opaque bytes; ours: */
+#define CUDA_ERROR_INVALID_CONTEXT 201
+#define CUDA_ERROR_INVALID_HANDLE 400
+typedef struct { char reserved[64]; } CUipcMemHandle;
+struct ipc_handle {
+    char magic[8];
+    char name[24];
+    uint64_t size, ino, devno;
+    char pad[8];
+};
+_Static_assert(sizeof(struct ipc_handle) == sizeof(CUipcMemHandle), "CUipcMemHandle is 64 bytes");
+static const char IPC_MAGIC[8] = "FGIPCMEM";
+void fg_collect_unheld(const char *dir); /* vmm.c */
+
+/* Copies the allocation's contents into fd, leaving zero chunks as holes so
+ * a large, mostly untouched buffer stays sparse. */
+static int fill_file(int fd, const char *base, size_t n)
+{
+    static const char zero[1 << 16];
+    for (size_t off = 0; off < n; off += sizeof zero) {
+        size_t len = n - off < sizeof zero ? n - off : sizeof zero;
+        if (memcmp(base + off, zero, len) && pwrite(fd, base + off, len, (off_t)off) != (ssize_t)len) return -1;
+    }
+    return 0;
+}
+
+/* Under alloc_lock: puts allocation r on a new file in ipc_dir. */
+static CUresult ipc_share(struct alloc_rec *r)
+{
+    static unsigned long long n;
+    unsigned rnd = 0;
+    if (getrandom(&rnd, sizeof rnd, 0) != sizeof rnd) rnd = (unsigned)getpid();
+    fg_init();
+    mkdir(fg_cfg.ipc_dir, 01777);
+    fg_collect_unheld(fg_cfg.ipc_dir);
+    char path[sizeof fg_cfg.ipc_dir + 32];
+    snprintf(r->ipc_name, sizeof r->ipc_name, "%08x.%x.%llx", rnd, (unsigned)getpid(), ++n);
+    snprintf(path, sizeof path, "%s/%s", fg_cfg.ipc_dir, r->ipc_name);
+    int fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (fd < 0) return CUDA_ERROR_OUT_OF_MEMORY;
+    flock(fd, LOCK_SH);
+    if (ftruncate(fd, (off_t)r->size) || fill_file(fd, (const char *)r->base, r->size) ||
+        mmap((void *)r->base, r->size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) == MAP_FAILED) {
+        unlink(path);
+        close(fd);
+        return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    r->ipc_fd = fd;
+    return CUDA_SUCCESS;
+}
+
+API CUresult cuIpcGetMemHandle(CUipcMemHandle *out, CUdeviceptr p)
+{
+    if (!out) return CUDA_ERROR_INVALID_VALUE;
+    pthread_mutex_lock(&alloc_lock);
+    struct alloc_rec *r = allocs;
+    for (; r; r = r->next)
+        if (p >= r->base && p < r->base + r->size) break;
+    CUresult rc = !r || r->mapped != MAPPED_OWN ? CUDA_ERROR_INVALID_VALUE : CUDA_SUCCESS;
+    if (rc == CUDA_SUCCESS && r->ipc_fd < 0) rc = ipc_share(r);
+    struct stat st;
+    if (rc == CUDA_SUCCESS && fstat(r->ipc_fd, &st)) rc = CUDA_ERROR_OUT_OF_MEMORY;
+    if (rc == CUDA_SUCCESS) {
+        struct ipc_handle h = {.size = r->size, .ino = (uint64_t)st.st_ino, .devno = (uint64_t)st.st_dev};
+        memcpy(h.magic, IPC_MAGIC, sizeof h.magic);
+        memcpy(h.name, r->ipc_name, sizeof h.name);
+        memcpy(out, &h, sizeof h);
+    }
+    pthread_mutex_unlock(&alloc_lock);
+    return rc;
+}
+
+API CUresult cuIpcOpenMemHandle_v2(CUdeviceptr *p, CUipcMemHandle handle, unsigned flags)
+{
+    (void)flags;
+    struct ipc_handle h;
+    memcpy(&h, &handle, sizeof h);
+    if (!p || memcmp(h.magic, IPC_MAGIC, sizeof h.magic) || !memchr(h.name, 0, sizeof h.name) || strchr(h.name, '/'))
+        return CUDA_ERROR_INVALID_VALUE;
+    int own = 0;
+    pthread_mutex_lock(&alloc_lock);
+    for (struct alloc_rec *r = allocs; r && !own; r = r->next)
+        own = r->ipc_fd >= 0 && !strcmp(r->ipc_name, h.name);
+    pthread_mutex_unlock(&alloc_lock);
+    if (own) return CUDA_ERROR_INVALID_CONTEXT; /* as the driver: not in its own process */
+    char path[sizeof fg_cfg.ipc_dir + 32];
+    struct stat st;
+    fg_init();
+    snprintf(path, sizeof path, "%s/%s", fg_cfg.ipc_dir, h.name);
+    int fd = open(path, O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return CUDA_ERROR_INVALID_HANDLE; /* another node, or freed */
+    void *m = MAP_FAILED;
+    if (!fstat(fd, &st) && (uint64_t)st.st_ino == h.ino && (uint64_t)st.st_dev == h.devno)
+        m = mmap(NULL, h.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return CUDA_ERROR_INVALID_HANDLE;
+    struct alloc_rec *r = malloc(sizeof *r);
+    if (!r) {
+        munmap(m, h.size);
+        return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    pthread_mutex_lock(&alloc_lock);
+    *r = (struct alloc_rec){.base = (uintptr_t)m, .size = h.size, .type = MEM_DEVICE, .dev = current_dev(), .phys = -1,
+                            .mapped = MAPPED_IPC, .id = ++alloc_seq, .next = allocs, .ipc_fd = -1};
+    allocs = r;
+    pthread_mutex_unlock(&alloc_lock);
+    *p = (CUdeviceptr)(uintptr_t)m;
+    return CUDA_SUCCESS;
+}
+
+API CUresult cuIpcOpenMemHandle(CUdeviceptr *p, CUipcMemHandle handle, unsigned flags)
+{
+    return cuIpcOpenMemHandle_v2(p, handle, flags);
+}
+
+API CUresult cuIpcCloseMemHandle(CUdeviceptr p)
+{
+    struct alloc_rec r;
+    if (!lookup((uintptr_t)p, &r) || r.base != p || r.mapped != MAPPED_IPC) return CUDA_ERROR_INVALID_VALUE;
+    untrack((void *)(uintptr_t)p);
+    return CUDA_SUCCESS;
+}
+
+/* Events carry no data here: an opened event handle is a new event. */
+typedef struct { char reserved[64]; } CUipcEventHandle;
+CUresult cuEventCreate(void **out, unsigned flags); /* timing.c */
+
+API CUresult cuIpcGetEventHandle(CUipcEventHandle *out, void *event)
+{
+    if (!out || !event) return CUDA_ERROR_INVALID_VALUE;
+    memset(out, 0, sizeof *out);
+    memcpy(out->reserved, "FGIPCEVT", 8);
+    return CUDA_SUCCESS;
+}
+
+API CUresult cuIpcOpenEventHandle(void **event, CUipcEventHandle handle)
+{
+    if (!event || memcmp(handle.reserved, "FGIPCEVT", 8)) return CUDA_ERROR_INVALID_VALUE;
+    return cuEventCreate(event, 0x2 /* CU_EVENT_DISABLE_TIMING, as IPC events are */);
 }
 
 static CUresult alloc(CUdeviceptr *p, size_t n)

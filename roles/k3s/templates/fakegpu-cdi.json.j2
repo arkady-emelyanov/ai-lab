@@ -23,6 +23,7 @@
       {'hostPath': '/etc/fakegpu.conf', 'containerPath': '/etc/fakegpu.conf', 'options': ro},
       {'hostPath': sideband_tray_path, 'containerPath': sideband_tray_path, 'options': ro},
       {'hostPath': telemetry_tray_path, 'containerPath': telemetry_tray_path, 'options': ['bind', 'rw']},
+      {'hostPath': fakegpu_ipc_dir, 'containerPath': fakegpu_ipc_dir, 'options': ['bind', 'rw']},
     ],
   },
 } | to_nice_json }}

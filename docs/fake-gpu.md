@@ -8,7 +8,7 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 
 | Library / tool | Replaces | Notes |
 |---|---|---|
-| `libcuda.so.1` | CUDA driver | devices, contexts, memory, streams, events, launches; the undocumented "export tables" `libcudart` requires (ported from [ZLUDA](https://github.com/vosen/ZLUDA)) |
+| `libcuda.so.1` | CUDA driver | devices, contexts, memory, streams, events, launches; virtual memory management, shareable handles (POSIX fd, fabric) and multicast objects; the undocumented "export tables" `libcudart` requires (ported from [ZLUDA](https://github.com/vosen/ZLUDA), plus one CUDA 13.4 runtimes need) |
 | `libnvidia-ml.so.1` | NVML | identity, PCIe, NVLink (18 links to NVSwitch), fabric cluster UUID and clique, telemetry, processes, events |
 | `libcublas`, `libcublasLt` (`.so.13` and `.so.12`), `libnccl.so.2`, `libcudnn.so.9` | CUDA libraries bundled with frameworks | preloaded through `/etc/ld.so.preload` so they win over the copies in pip wheels |
 | `nvidia-smi` | `nvidia-smi` | Python over NVML: table, `-L`, `-q`, `topo -m`, `nvlink`, `dmon`, `--query-gpu`, `--query-compute-apps`, `-l` |
@@ -59,6 +59,15 @@ All of them are settings ([Configuration](#configuration)).
 The tray's BMC reads the same file, so its sensors match `nvidia-smi` ([BMCs](bmc-redfish.md#how-it-works)).
 
 **GPU memory** counts against the GPU's 186 GB: an allocation beyond it fails with out-of-memory. Allocations are reserved, not filled, so large GPU buffers cost no host RAM.
+
+**Shared GPU memory (MNNVL, CUDA IPC).** The driver's virtual memory management and CUDA IPC work as on GB200, so NCCL's NVLS, PyTorch's symmetric memory, FlashInfer's MNNVL all-reduce and vLLM's custom all-reduce (which vLLM uses for tensor parallelism) set up their buffers instead of falling back:
+
+- `cuMemCreate` makes an allocation, `cuMemAddressReserve` and `cuMemMap` place it at an address. Mapped ranges are GPU memory to copies and pointer queries, and count against the GPU's memory.
+- An allocation shared as a POSIX file descriptor is shared memory (a memfd): the process that imports the descriptor maps the same bytes.
+- An allocation shared as a fabric handle is a file in `fakegpu_fabric_dir` on `/shared`, so another tray maps the same bytes. As with IMEX on GB200, fabric memory belongs to the NVLink partition it was created in: only GPUs in that partition, at their last reset, can import it (`CUDA_ERROR_NOT_PERMITTED` otherwise), and a GPU in no partition has none.
+- Multicast objects (`cuMulticastCreate`, `cuMulticastAddDevice`, `cuMulticastBindMem`) follow the same partition rule; their address maps a buffer of their own.
+- The memory goes when its last user releases it or exits: processes hold a lock on each fabric file, and files no live process holds are deleted the next time fabric memory is created.
+- Legacy CUDA IPC (`cudaIpcGetMemHandle`, `cudaIpcOpenMemHandle`) shares any `cudaMalloc` allocation with another process on the same tray, in any pod or Slurm job, as the real driver does on one node: when first shared, the allocation moves in place onto a file in `fakegpu_ipc_dir`, which every GPU process on the tray reaches, and the other process maps it. A handle from another tray does not open. vLLM's custom all-reduce (and its P2P check) and PyTorch's CUDA tensor sharing (`torch.multiprocessing`) use it; as on real GPUs, PyTorch shares tensors only with its caching allocator on (not with `PYTORCH_NO_CUDA_MEMORY_CACHING=1`).
 
 **Management inputs.** The BMCs and the partition controller tell the GPUs about changes through shared files (the tray's sideband):
 
@@ -143,6 +152,8 @@ The link rates are published figures (NVLink5 per GPU, NDR 400 per NIC), not mea
 | `fakegpu_latency_scale` | 1.0 | multiplier for all simulated times; 0 disables delays |
 | `fakegpu_copy_max_mb` | 64 | copies above this are timed but not performed |
 | `fakegpu_nccl_dir` | `/shared/.fakegpu/nccl` | where NCCL ranks exchange their NVLink partitions (empty: no exchange, one partition assumed) |
+| `fakegpu_fabric_dir` | `/shared/.fakegpu/fabric` | where GPU memory shared as fabric handles lives, reachable from every tray (empty: no fabric handles) |
+| `fakegpu_ipc_dir` | `/var/lib/fakegpu/ipc` | where GPU memory shared through CUDA IPC lives, on each tray and mounted into every GPU pod |
 
 **Changing them** needs only `make configure`. It rewrites the configuration of the GPUs, BMCs, partition controller and InfiniBand fabric, and restarts the services that read it.
 
@@ -174,6 +185,7 @@ While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, 
 
 - Kernels do not run: tensors computed on the GPU hold zeros or garbage; NCCL collectives behave as if every rank contributed the same data (so cross-rank consistency checks pass); ranks exchange only their NVLink partitions at initialisation, so a failed link or rank does not fail its peers' collectives.
 - Data larger than `fakegpu_copy_max_mb` does not round-trip between host and GPU.
+- Multicast and peer mappings move no data on their own: a write through a multicast address reaches the object's own buffer, not every bound GPU's memory, and only kernels (which do not run) would use either. FlashInfer's all-reduce runs as its own kernels, not NCCL calls, so its NVLink traffic is not modelled.
 - The GB200 NUMA layout exists only in what the lab's driver and `numactl` report. The tray's kernel has the host's NUMA layout, so:
   - `numactl` splits the tray's own CPUs and memory between the two Grace nodes; it pins CPUs but not memory, and is not in pods (on real clusters it comes with the container image).
   - `nvidia-smi topo -m` shows the same split as "CPU Affinity": the first half of the tray's cores for GPUs 0–1, the second half for GPUs 2–3.

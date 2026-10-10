@@ -29,8 +29,8 @@ build/%_weak.c: symbols/%.syms
 	@mkdir -p build
 	awk '{ printf "__attribute__((weak, visibility(\"default\"), section(\"fg_weak\"))) int %s(void) { return 0; }\n", $$1 }' $< > $@
 
-libcuda.so.1: cuda_stub.c dark_api.c timing.c build/cuda_weak.c fakegpu.h occupancy.h
-	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ cuda_stub.c dark_api.c timing.c build/cuda_weak.c -ldl -lpthread
+libcuda.so.1: cuda_stub.c dark_api.c timing.c vmm.c build/cuda_weak.c fakegpu.h occupancy.h
+	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ cuda_stub.c dark_api.c timing.c vmm.c build/cuda_weak.c -ldl -lpthread
 
 libnvidia-ml.so.1: nvml_stub.c build/nvml_weak.c fakegpu.h occupancy.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ nvml_stub.c build/nvml_weak.c -lpthread -lm

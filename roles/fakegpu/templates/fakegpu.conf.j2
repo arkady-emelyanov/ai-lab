@@ -32,4 +32,8 @@ coherent_gpu_memory = {{ fakegpu_coherent_gpu_memory }}
 # NCCL communicators exchange each rank's NVLink partition here (every Slurm
 # job and pod mounts {{ shared_mount }}).
 nccl_dir = {{ fakegpu_nccl_dir }}
+# GPU memory exported as fabric handles (across trays of an NVLink partition).
+fabric_dir = {{ fakegpu_fabric_dir }}
+# GPU memory shared through CUDA IPC, on this tray (also mounted in pods).
+ipc_dir = {{ fakegpu_ipc_dir }}
 ib_gbps = {{ ib_gbps_per_gpu }}

@@ -33,16 +33,21 @@
   when: fakegpu_src.changed
   notify: Restart fakegpu users
 
-# Every CUDA process creates/updates the occupancy file here.
-- name: Make the telemetry directory writable by all users
+# Every CUDA process creates/updates the occupancy file here, and puts GPU
+# memory it shares through CUDA IPC in the IPC directory.
+- name: Make the telemetry and CUDA IPC directories writable by all users
   ansible.builtin.file:
-    path: "{{ telemetry_tray_path }}"
+    path: "{{ item }}"
     state: directory
     mode: "1777"
+  loop:
+    - "{{ telemetry_tray_path }}"
+    - "{{ fakegpu_ipc_dir }}"
 
 # On the shared volume: every rank of a job (Slurm or pod) writes its NVLink
-# partition here when NCCL creates a communicator.
-- name: Create the NCCL topology exchange directory
+# partition here when NCCL creates a communicator, and GPU memory shared as
+# fabric handles lives in the fabric directory.
+- name: Create the NCCL topology exchange and fabric memory directories
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
@@ -50,6 +55,7 @@
   loop:
     - { path: "{{ fakegpu_nccl_dir | dirname }}", mode: "0755" }
     - { path: "{{ fakegpu_nccl_dir }}", mode: "1777" }
+    - { path: "{{ fakegpu_fabric_dir }}", mode: "1777" }
   run_once: true
 
 # Processes read it once: the GPU exporter and GFD restart when it changes
