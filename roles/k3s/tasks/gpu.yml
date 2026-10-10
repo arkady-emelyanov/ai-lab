@@ -27,7 +27,9 @@
   vars:
     gpu_list: "{{ gpus.stdout_lines | map('split', ', ') | list }}"
     preload: "{{ preload_list.content | b64decode | split | join(':') }}"
-  notify: Restart fakedp
+  # containerd reads CDI specifications when it starts: new mounts or env
+  # reach pods only after the agent restarts (running pods keep going).
+  notify: [Restart fakedp, Restart k3s]
 
 - name: Install the device plugin
   ansible.builtin.copy:
