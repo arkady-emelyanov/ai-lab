@@ -1,0 +1,76 @@
+# SGLang's OpenAI-compatible server on emulated GB200s, from the official
+# image, unmodified, queued in Kueue like any GPU workload. The emulated GPUs
+# compute nothing: every answer is "!!!..." (token 0) of exactly max_tokens
+# tokens, so set max_tokens per request to shape the load. Everything around
+# the text (API, batching, radix cache, tensor parallelism, metrics, GPU load)
+# is real.
+# Tensor parallelism inside one tray: set --tp to 2 or 4 and nvidia.com/gpu to
+# the same number (memory: 20Gi limit, 14Gi request for 4). Across both trays:
+# sglang-tp8.yaml.
+# The model downloads to ~/.cache/huggingface on the first start.
+# Submit: ./submit --name sglang sglang-serve.yaml   (Deployment and Service named sglang)
+# Query from your machine (../README.md):
+#         bin/kubectl -n joe port-forward svc/sglang 30000
+#         curl -s localhost:30000/v1/completions -H 'Content-Type: application/json' \
+#           -d '{"model": "Qwen/Qwen3-0.6B", "prompt": "Hello", "max_tokens": 64}'
+# Stop:   kubectl delete deploy,svc sglang
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "@NAME@"
+  labels: {app: "@NAME@", kueue.x-k8s.io/queue-name: gpu}
+spec:
+  replicas: 1
+  # The old pod frees its GPUs (and the tray's RAM) before the new one starts.
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: "@NAME@"}
+  template:
+    metadata:
+      labels: {app: "@NAME@"}
+    spec:
+      enableServiceLinks: false
+      securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+      containers:
+        - name: sglang
+          image: docker.io/lmsysorg/sglang:v0.5.21-cu130-runtime
+          command: [python3, -m, sglang.launch_server]
+          args:
+            - --model-path=Qwen/Qwen3-0.6B   # 16 heads: splits 1, 2, 4 or 8 ways
+            - --host=0.0.0.0
+            - --port=30000
+            - --tp=1
+            - --disable-cuda-graph         # nothing to capture: kernels don't run
+            - --context-length=4096
+          env:
+            - {name: HOME, value: "@HOME@"}
+            - {name: HF_HOME, value: "@HOME@/.cache/huggingface"}
+            # Each tensor is a fresh, zeroed driver allocation instead of a
+            # recycled block: outputs no kernel computed read as token 0.
+            - {name: PYTORCH_NO_CUDA_MEMORY_CACHING, value: "1"}
+          ports:
+            - {name: http, containerPort: 30000}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+            timeoutSeconds: 10   # /health goes through the scheduler: slow under load
+          # Server, scheduler and detokenizer processes with PyTorch, plus the
+          # weights in host RAM (the emulated GPU memory).
+          resources:
+            limits: {nvidia.com/gpu: 1, memory: 12Gi}
+            requests: {cpu: "2", memory: 6Gi}
+          volumeMounts:
+            - {name: shared, mountPath: /shared}
+            - {name: dshm, mountPath: /dev/shm}
+      volumes:
+        - {name: shared, hostPath: {path: /shared, type: Directory}}
+        - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 2Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "@NAME@"
+spec:
+  selector: {app: "@NAME@"}
+  ports:
+    - {name: http, port: 30000, targetPort: http}

@@ -1,0 +1,60 @@
+# SGLang tensor parallelism across the whole NVL8 domain: TP=8, one pod per
+# tray (4 GPUs each). Pod 0 (node rank 0) serves the API; pod 1 (rank 1) runs
+# the other four TP workers. They meet at pod 0 through the JobSet's DNS name.
+# The all-reduces cross trays over NVLink while both trays are in one NVLink
+# partition, and over InfiniBand when they are split (../README.md).
+# Submit: ./submit --name sglang-tp8 sglang-tp8.yaml
+# Query from your machine, through pod 0:
+#         bin/kubectl -n joe port-forward $(bin/kubectl -n joe get pod -o name \
+#           -l jobset.sigs.k8s.io/jobset-name=sglang-tp8,batch.kubernetes.io/job-completion-index=0) 30000
+# Stop:   kubectl delete jobset sglang-tp8
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: "@NAME@"
+  labels: {kueue.x-k8s.io/queue-name: gpu}
+spec:
+  replicatedJobs:
+    - name: node
+      template:
+        spec:
+          parallelism: 2
+          completions: 2
+          completionMode: Indexed
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+            spec:
+              restartPolicy: Never
+              enableServiceLinks: false
+              securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+              containers:
+                - name: sglang
+                  image: docker.io/lmsysorg/sglang:v0.5.21-cu130-runtime
+                  env:
+                    - {name: HOME, value: "@HOME@"}
+                    - {name: HF_HOME, value: "@HOME@/.cache/huggingface"}
+                    - {name: PYTORCH_NO_CUDA_MEMORY_CACHING, value: "1"}
+                    - name: JOBSET
+                      valueFrom: {fieldRef: {fieldPath: "metadata.labels['jobset.sigs.k8s.io/jobset-name']"}}
+                    - name: RANK
+                      valueFrom: {fieldRef: {fieldPath: "metadata.annotations['batch.kubernetes.io/job-completion-index']"}}
+                  command: [bash, -c]
+                  args:
+                    - |
+                      exec python3 -m sglang.launch_server --model-path Qwen/Qwen3-0.6B \
+                          --host 0.0.0.0 --port 30000 --tp 8 --disable-cuda-graph --context-length 4096 \
+                          --nnodes 2 --node-rank "$RANK" --dist-init-addr "$JOBSET-node-0-0.$JOBSET:5000"
+                  ports:
+                    - {name: http, containerPort: 30000}
+                  resources:
+                    limits: {nvidia.com/gpu: 4, memory: 20Gi}
+                    requests: {cpu: "4", memory: 14Gi}
+                  volumeMounts:
+                    - {name: shared, mountPath: /shared}
+                    - {name: dshm, mountPath: /dev/shm}
+              volumes:
+                - {name: shared, hostPath: {path: /shared, type: Directory}}
+                - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 2Gi}}

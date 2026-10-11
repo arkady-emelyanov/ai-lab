@@ -80,4 +80,33 @@ Stop it (it holds a GPU while it runs, and jobs that need all eight, such as `ma
 bin/kubectl -n joe delete deploy,svc vllm
 ```
 
+**SGLang (Kubernetes only):** `sglang-serve.yaml` runs SGLang's OpenAI-compatible server from the official image (`lmsysorg/sglang:v0.5.21-cu130-runtime`), unmodified, as a Deployment and Service queued in Kueue (Qwen3-0.6B), on one GPU or, with `--tp` and `nvidia.com/gpu` set to 2 or 4, with tensor parallelism inside a tray. `sglang-tp8.yaml` runs TP=8 across both trays: two pods with four GPUs each, rank 0 serving the API. The emulated GPUs compute nothing, so every answer is `"!!!..."` (token 0) with exactly `max_tokens` tokens and `finish_reason: length`; the pods set `PYTORCH_NO_CUDA_MEMORY_CACHING=1` so that outputs no kernel computed read as zeros (valid token ids) rather than leftover bytes. Unlike vLLM, SGLang does not rely on GPU-computed bookkeeping here: load tests run clean (832 requests at up to 64 concurrent, on one GPU and with TP=4), including prompt logprobs (`"echo": true, "logprobs": 1`). Inside a tray SGLang uses its own all-reduce over symmetric memory shared between the GPUs; across trays it uses NCCL. The first start pulls the image (~14 GB) and downloads the model.
+
+Submit as joe on the login node:
+
+```
+bin/ssh login 'cd examples/kubernetes && ./submit --name sglang sglang-serve.yaml'
+bin/kubectl -n joe rollout status deploy/sglang
+bin/kubectl -n joe port-forward svc/sglang 30000            # second terminal
+curl -s localhost:30000/v1/completions -H 'Content-Type: application/json' \
+    -d '{"model": "Qwen/Qwen3-0.6B", "prompt": "Hello", "max_tokens": 64}'
+bin/kubectl -n joe delete deploy,svc sglang
+```
+
+**SGLang across the trays: NVLink vs InfiniBand.** With both trays in one NVLink partition (the default), TP=8's all-reduces stay on NVLink; with the trays in separate partitions they cross InfiniBand. Measured with 256 requests (32 concurrent) per run:
+
+| Trays | NVLink | InfiniBand |
+|---|---|---|
+| one partition (default) | 320 GB | 0 |
+| separate partitions | 262 GB | 23 GB per tray |
+
+```
+bin/ssh login 'cd examples/kubernetes && ./submit --name sglang-tp8 sglang-tp8.yaml'
+bin/kubectl -n joe port-forward $(bin/kubectl -n joe get pod -o name \
+    -l jobset.sigs.k8s.io/jobset-name=sglang-tp8,batch.kubernetes.io/job-completion-index=0) 30000
+bin/kubectl -n joe delete jobset sglang-tp8
+```
+
+Traffic per fabric (Prometheus, `<bridge>` as in [Lab endpoints](../docs/endpoints.md)): `sum by (instance) (rate(nvlink_gpu_tx_bytes_total[1m]))` and `sum by (instance) (rate(node_infiniband_port_data_transmitted_bytes_total[1m]))`. To run across partitions, split them (`bin/nvlink remove default sched-worker2 && bin/nvlink create tray2 --id 7 sched-worker2 && bin/ssh root@sched-worker2 nvidia-smi --gpu-reset`; restore with `bin/nvlink delete tray2 && bin/nvlink add default sched-worker2 && bin/ssh root@sched-worker2 nvidia-smi --gpu-reset`). Kueue then refuses the job as written, because no single NVLink domain has eight GPUs; change `podset-required-topology` to `podset-preferred-topology` in a copy of `sglang-tp8.yaml` to let it span them.
+
 More: [Frameworks and examples](../docs/frameworks-and-examples.md), [Slurm](../docs/slurm.md#usage), [Kubernetes (k3s)](../docs/kubernetes.md#usage).
