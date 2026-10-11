@@ -77,7 +77,7 @@ kubectl get jobsets,workloads          # your jobs and their Kueue admission
 | `kubernetes/ddp-train.yaml` | `slurm/ddp-train.sbatch` | PyTorch DDP, 2 pods × 4 GPUs, torchrun rendezvous on pod 0 |
 | `kubernetes/ray-cluster.yaml` | `slurm/ray-cluster.sbatch` | Ray head and worker pods, driver on the head |
 | `kubernetes/vllm-serve.yaml` | – | vLLM's OpenAI-compatible server (official image) as a Deployment and Service on one GPU; answers are empty text of exactly `max_tokens` tokens ([examples](../examples/README.md)) |
-| `kubernetes/sglang-serve.yaml` | – | SGLang's OpenAI-compatible server (official image, unmodified) as a Deployment and Service, on one GPU or with tensor parallelism inside a tray; answers are `"!!!..."` of exactly `max_tokens` tokens ([examples](../examples/README.md)) |
+| `kubernetes/sglang-serve.yaml` | – | SGLang's OpenAI-compatible server (official image, unmodified; the recommended inference server, see [Inference servers](inference.md)) as a Deployment and Service, on one GPU or with tensor parallelism inside a tray; answers are `"!!!..."` of exactly `max_tokens` tokens ([examples](../examples/README.md)) |
 | `kubernetes/sglang-tp8.yaml` | – | SGLang with tensor parallelism across both trays (TP=8, 2 pods × 4 GPUs); its all-reduces cross trays over NVLink, or over InfiniBand when the trays are in different NVLink partitions |
 
 Examples are JobSets queued in Kueue (`kueue.x-k8s.io/queue-name: gpu`); `submit` fills in your uid, gid and home (`@UID@`, `@GID@`, `@HOME@`) and a unique name. Pods use `docker.io/library/buildpack-deps:noble` (Ubuntu 24.04 with Python, so the `/shared` venv runs unchanged) and mount `/shared` and `/scratch` from the tray.
