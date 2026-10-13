@@ -435,6 +435,15 @@ API CUresult cuCtxGetFlags(unsigned *flags)
 
 API CUresult cuMemGetInfo_v2(size_t *free_b, size_t *total_b)
 {
+    uint64_t limit = fg_mem_limit();
+    if (limit) {
+        /* A GPU fraction: its limit, less what this process holds. */
+        uint64_t total = limit < fg_mem_bytes() ? limit : fg_mem_bytes();
+        uint64_t used = fg_own_mem(fg_current_phys());
+        if (free_b) *free_b = used < total ? total - used : 0;
+        if (total_b) *total_b = total;
+        return CUDA_SUCCESS;
+    }
     if (free_b) *free_b = fg_mem_bytes() - (512ULL << 20);
     if (total_b) *total_b = fg_mem_bytes();
     return CUDA_SUCCESS;
@@ -488,7 +497,7 @@ static void *track(size_t n, int type)
     int phys = fg_current_phys();
     if (type == MEM_DEVICE) {
         fg_proc_cleanup(0);
-        if (fg_gpu_mem_used(phys) + n > fg_mem_bytes()) return NULL; /* out of GPU memory */
+        if (!fg_mem_fits(phys, n)) return NULL; /* out of GPU memory, or over the limit */
     }
     int mapped = type == MEM_DEVICE ? MAPPED_OWN : MAPPED_NO;
     void *m = mapped ? mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0)

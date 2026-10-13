@@ -12,6 +12,7 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 | `libnvidia-ml.so.1` | NVML | identity, PCIe, NVLink (18 links to NVSwitch), fabric cluster UUID and clique, telemetry, processes, events |
 | `libcublas`, `libcublasLt` (`.so.13` and `.so.12`), `libnccl.so.2`, `libcudnn.so.9` | CUDA libraries bundled with frameworks | preloaded through `/etc/ld.so.preload` so they win over the copies in pip wheels |
 | `nvidia-smi` | `nvidia-smi` | Python over NVML: table, `-L`, `-q`, `topo -m`, `nvlink`, `dmon`, `--query-gpu`, `--query-compute-apps`, `-l` |
+| `nvidia-cuda-mps-control` | MPS control daemon | C; the control daemon's socket and commands without MPS servers, for NVIDIA's GPU fractioning ([GPU fractions](#gpu-fractions)) |
 | `numactl` | `numactl` (on the trays) | Python; shows the GB200 NUMA layout (`-H`, `-s`) and pins commands to a Grace node's CPUs (`--cpunodebind`, `--physcpubind`); memory policies are accepted but not applied ([Limitations](#limitations)) |
 | `/dev/nvidia0-3`, `/dev/nvidiactl` | device nodes | character devices (major 195) created by Incus |
 
@@ -92,6 +93,16 @@ There is no GPU memory to clear: the lab keeps "GPU memory" in the process's own
 - in a Slurm job: all four files, but CUDA uses only the GPUs in `CUDA_VISIBLE_DEVICES`, which Slurm sets to the job's GPUs
 
 `nvidia-smi` ignores `CUDA_VISIBLE_DEVICES`, like the real one, so inside a Slurm job it lists all four GPUs. Real clusters hide the others with device cgroups (`ConstrainDevices=yes`), which the lab's containers cannot use.
+
+### GPU fractions
+
+A container given part of a GPU (NVIDIA's GPU fractioning, with [Run:ai](runai.md#gpu-fractions)) gets `NVIDIA_GPU_MEMORY_LIMIT`, in MiB, which the driver enforces through MPS memory accounting. The fake driver does the same for each process on each GPU:
+
+- an allocation that would take the process over the limit fails with out of memory (`cuMemAlloc`, `cuMemCreate`);
+- `cuMemGetInfo` reports the limit as the total, and the limit less what the process holds as free;
+- processes without the variable keep the whole GPU.
+
+`nvidia-cuda-mps-control` answers NVIDIA's GPU fractioning: in the foreground (`-f`) it listens on `$CUDA_MPS_PIPE_DIRECTORY/control`, logs to `$CUDA_MPS_LOG_DIRECTORY/control.log`, takes commands from clients and stdin, and stops on `quit`. It starts no MPS servers: the fake driver runs every process's work itself. NVML's per-process utilisation (`nvmlDeviceGetProcessUtilization`) splits each GPU's utilisation evenly between its processes, since busy time is kept per GPU.
 
 A GPU's UUID and serial come from the tray's name, so a pod sees the same GPUs as its tray. The PCI identity is a GB200 compute tray's (public `lspci` output from real trays): device `10de:2941`, subsystem `10de:2046`, each GPU in a PCI domain of its own on bus 1, `0008:01:00.0`, `0009:01:00.0` (on Grace 0), `0018:01:00.0`, `0019:01:00.0` (on Grace 1).
 
@@ -193,6 +204,7 @@ While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, 
   - CUDA's NUMA device attribute (`cudaDeviceProp.deviceNumaId`) is not reported.
 - Unusual APIs reach generated no-ops that return success without filling outputs; mainstream PyTorch, Ray, NCCL and NVML paths are implemented.
 - Only x86-64; the stubs mimic CUDA 13 (and the CUDA 12 SONAMEs for cuBLAS).
+- A GPU fraction shares its GPU's memory but not its compute: each process's work runs at the whole GPU's modelled speed, and per-process utilisation is an even split of the GPU's.
 - The libraries need glibc 2.33 or newer (`fakegpu/glibc_compat.h` keeps them off newer symbol versions), so they load in images built on Ubuntu 22.04 or later, Debian 12, RHEL 9; NVIDIA's real driver libraries also load on older ones.
 
 ## References

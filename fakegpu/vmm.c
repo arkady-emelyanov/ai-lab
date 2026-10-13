@@ -272,7 +272,7 @@ API CUresult cuMemCreate(CUmemGenericAllocationHandle *h, size_t size, const mem
     if (!h || !prop || !round_ok(size) || prop->location.type != LOCATION_DEVICE) return CUDA_ERROR_INVALID_VALUE;
     int phys = fg_vmm_phys(prop->location.id);
     if (phys < 0) return CUDA_ERROR_INVALID_DEVICE;
-    if (fg_gpu_mem_used(phys) + size > fg_mem_bytes()) return CUDA_ERROR_OUT_OF_MEMORY;
+    if (!fg_mem_fits(phys, size)) return CUDA_ERROR_OUT_OF_MEMORY;
     struct obj *o;
     CUresult rc = create(h, OBJ_MEM, size, (unsigned)prop->requestedHandleTypes, prop->location.id, &o);
     if (rc != CUDA_SUCCESS) return rc;

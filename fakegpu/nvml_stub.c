@@ -583,6 +583,46 @@ API nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v3(nvmlDevice_t d, unsigne
 API nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v2(nvmlDevice_t d, unsigned *n, void *i) { return procs(d, n, i, 1); }
 API nvmlReturn_t nvmlDeviceGetComputeRunningProcesses(nvmlDevice_t d, unsigned *n, void *i) { return procs(d, n, i, 0); }
 
+typedef struct {
+    unsigned pid;
+    unsigned long long timeStamp; /* microseconds */
+    unsigned smUtil, memUtil, encUtil, decUtil;
+} nvmlProcessUtilizationSample_t;
+
+/* One sample per process on the GPU, taken now. Busy time is kept per GPU,
+ * not per process, so the GPU's utilisation is split evenly between its
+ * processes: exact for one process (a whole GPU), an even share when a GPU
+ * is shared (GPU fractions). NULL asks for the count, as with the real one. */
+API nvmlReturn_t nvmlDeviceGetProcessUtilization(nvmlDevice_t d, nvmlProcessUtilizationSample_t *samples,
+                                                 unsigned *count, unsigned long long last_seen)
+{
+    CHECK_DEV(d);
+    if (!count) return NVML_ERROR_INVALID_ARGUMENT;
+    fg_proc_cleanup(0);
+    struct fg_occupancy *o = fg_occupancy();
+    unsigned long long now = fg_now_ns() / 1000;
+    int32_t pids[FG_MAX_PROCS];
+    unsigned n = 0;
+    for (int i = 0; o && i < FG_MAX_PROCS; i++) {
+        if (o->proc[i].gpu != idx || !fg_slot_alive(o, i)) continue;
+        int32_t pid = visible_pid(o, i);
+        if (pid) pids[n++] = pid;
+    }
+    if (!n || now <= last_seen) {
+        *count = 0;
+        return NVML_ERROR_NOT_FOUND;
+    }
+    if (!samples || *count < n) {
+        *count = n;
+        return NVML_ERROR_INSUFFICIENT_SIZE;
+    }
+    unsigned sm = utilization(idx) / n;
+    for (unsigned k = 0; k < n; k++)
+        samples[k] = (nvmlProcessUtilizationSample_t){(unsigned)pids[k], now, sm, sm * 2 / 3, 0, 0};
+    *count = n;
+    return NVML_SUCCESS;
+}
+
 /* Graphics and MPS clients never exist here. */
 static nvmlReturn_t no_procs(nvmlDevice_t d, unsigned *count)
 {

@@ -4,6 +4,7 @@
 PLAN.md
 fakegpu/build/
 fakegpu/*.so.*
+fakegpu/nvidia-cuda-mps-control
 .omc/
 fakebmc/fakebmc
 .cache/

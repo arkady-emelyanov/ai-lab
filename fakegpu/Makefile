@@ -23,9 +23,9 @@ LIBS = $(DRIVER_LIBS) $(PRELOAD_LIBS)
 
 CU12 = -DCUBLAS_VER_MAJOR=12 -DCUBLAS_VER_MINOR=9 -DCUBLAS_VER_PATCH=1 -DCUDART_VERSION=12090
 
-all: $(LIBS)
+all: $(LIBS) nvidia-cuda-mps-control
 
-$(LIBS): glibc_compat.h
+$(LIBS) nvidia-cuda-mps-control: glibc_compat.h
 
 build/%_weak.c: symbols/%.syms
 	@mkdir -p build
@@ -52,12 +52,16 @@ libcublasLt.so.12: cublas_stub.c build/cublasLt_weak.c stub_common.h fakegpu.h
 libnccl.so.2: nccl_stub.c build/nccl_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ nccl_stub.c build/nccl_weak.c -ldl -lpthread
 
+# MPS control daemon for NVIDIA's GPU fractioning (mps_control.c).
+nvidia-cuda-mps-control: mps_control.c
+	$(CC) $(CFLAGS) -o $@ $<
+
 libcudnn.so.9: cudnn_stub.c build/cudnn_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ cudnn_stub.c build/cudnn_weak.c
 
 # Driver libs go on the normal linker path (via an ld.so.conf.d entry);
 # CUDA libs go to $(LIBDIR)/preload and are listed in preload.list.
-install: $(LIBS)
+install: $(LIBS) nvidia-cuda-mps-control
 	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(LIBDIR)/preload
 	install -m 0755 $(DRIVER_LIBS) $(DESTDIR)$(LIBDIR)/
 	ln -sf libcuda.so.1 $(DESTDIR)$(LIBDIR)/libcuda.so
@@ -66,8 +70,9 @@ install: $(LIBS)
 	for l in $(PRELOAD_LIBS); do echo $(LIBDIR)/preload/$$l; done > $(DESTDIR)$(LIBDIR)/preload.list
 	install -D -m 0755 nvidia-smi $(DESTDIR)$(PREFIX)/bin/nvidia-smi
 	install -D -m 0755 numactl $(DESTDIR)$(PREFIX)/bin/numactl
+	install -D -m 0755 nvidia-cuda-mps-control $(DESTDIR)$(PREFIX)/bin/nvidia-cuda-mps-control
 
 clean:
-	rm -rf build $(LIBS)
+	rm -rf build $(LIBS) nvidia-cuda-mps-control
 
 .PHONY: all install clean

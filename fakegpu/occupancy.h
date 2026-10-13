@@ -224,4 +224,46 @@ static inline uint64_t fg_gpu_mem_used(int gpu)
     return sum;
 }
 
+/* This process's GPU memory on a GPU. */
+static inline uint64_t fg_own_mem(int gpu)
+{
+    struct fg_occupancy *o = fg_occupancy();
+    if (!o) return 0;
+    for (int i = 0; i < FG_MAX_PROCS; i++)
+        if (o->proc[i].gpu == gpu && fg_slot_mine(o, i))
+            return __atomic_load_n(&o->proc[i].mem, __ATOMIC_ACQUIRE);
+    return 0;
+}
+
+/* GPU memory limit of this process in bytes, 0 for none. A container given
+ * a fraction of a GPU (NVIDIA's GPU fractioning) gets NVIDIA_GPU_MEMORY_LIMIT
+ * in MiB, and the driver (MPS memory accounting) holds each of its processes
+ * to it on each GPU: allocations beyond it fail with out of memory, and
+ * cuMemGetInfo reports it as the total. */
+static uint64_t fg_limit;
+static pthread_once_t fg_limit_once = PTHREAD_ONCE_INIT;
+
+static void fg_read_limit(void)
+{
+    const char *v = getenv("NVIDIA_GPU_MEMORY_LIMIT");
+    char *end;
+    unsigned long long mib = v ? strtoull(v, &end, 10) : 0;
+    fg_limit = v && *v && !*end ? (uint64_t)mib << 20 : 0;
+}
+
+static inline uint64_t fg_mem_limit(void)
+{
+    pthread_once(&fg_limit_once, fg_read_limit);
+    return fg_limit;
+}
+
+/* Whether n more bytes of device memory fit on a GPU for this process: in
+ * the GPU's memory, and within the process's limit. */
+static inline int fg_mem_fits(int gpu, uint64_t n)
+{
+    if (fg_gpu_mem_used(gpu) + n > fg_mem_bytes()) return 0;
+    uint64_t limit = fg_mem_limit();
+    return !limit || fg_own_mem(gpu) + n <= limit;
+}
+
 #endif
