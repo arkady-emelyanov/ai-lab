@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -80,6 +81,9 @@ func readSpec(path string) ([]gpu, error) {
 type plugin struct {
 	pluginapi.UnimplementedDevicePluginServer
 	gpus []gpu
+	// watching counts kubelet's open ListAndWatch streams: without one,
+	// kubelet reports no GPUs on the node.
+	watching atomic.Int32
 }
 
 func (p *plugin) devices() []*pluginapi.Device {
@@ -102,6 +106,8 @@ func (p *plugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*plu
 // changes (a device node appearing or disappearing) reach kubelet, and so
 // does the full list if kubelet lost it.
 func (p *plugin) ListAndWatch(_ *pluginapi.Empty, stream pluginapi.DevicePlugin_ListAndWatchServer) error {
+	p.watching.Add(1)
+	defer p.watching.Add(-1)
 	for {
 		if err := stream.Send(&pluginapi.ListAndWatchResponse{Devices: p.devices()}); err != nil {
 			return err
@@ -157,7 +163,11 @@ func inode(path string) uint64 {
 
 // serve runs the plugin's gRPC server and registers it with kubelet. It
 // returns when kubelet restarts (it recreates its socket, and may remove
-// ours) so the caller can register again, as kubelet requires.
+// ours) or stops watching the GPUs, so the caller can register again, as
+// kubelet requires. A kubelet that accepts the registration while it is
+// still starting may never open ListAndWatch, and its stream can end
+// without a restart; either way the node shows no GPUs until the plugin
+// registers again.
 func serve(dir string, p *plugin) error {
 	kubeletSock := filepath.Join(dir, "kubelet.sock")
 	sock := filepath.Join(dir, socketName)
@@ -190,10 +200,17 @@ func serve(dir string, p *plugin) error {
 	}
 	log.Printf("registered %d GPUs as %s", len(p.gpus), resourceName)
 
+	unwatched := time.Now()
 	for {
 		time.Sleep(5 * time.Second)
 		if _, err := os.Stat(sock); err != nil || inode(kubeletSock) != kubelet {
 			log.Printf("kubelet restarted; registering again")
+			return nil
+		}
+		if p.watching.Load() > 0 {
+			unwatched = time.Now()
+		} else if time.Since(unwatched) > 30*time.Second {
+			log.Printf("kubelet is not watching the GPUs; registering again")
 			return nil
 		}
 	}
