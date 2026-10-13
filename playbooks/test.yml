@@ -427,6 +427,7 @@
   vars:
     project: test
     workload: test-gpus
+    fractions: [test-half-a, test-half-b]
     gpus: 2
   tasks:
     - name: Run:ai
@@ -526,6 +527,70 @@
 
         - name: Delete the workload
           ansible.builtin.command: runai-api DELETE /api/v1/workloads/trainings/{{ (submitted.stdout | from_json).workloadId }}
+          changed_when: true
+
+        # GPU fractions: two workloads asking for half a GPU each share one,
+        # and NVIDIA's GPU fractioning holds each to its half of the memory.
+        - name: Remove fractions left from an earlier run
+          ansible.builtin.shell: |
+            for w in {{ fractions | join(' ') }}; do
+              for id in $(runai-api GET "/api/v1/workloads?filterBy=name==$w" | jq -r '.workloads[].id'); do
+                runai-api DELETE /api/v1/workloads/trainings/$id >/dev/null
+              done
+              kubectl -n runai-{{ project }} wait --for=delete pod -l workloadName=$w --timeout=120s
+            done
+          changed_when: false
+
+        - name: Submit two half-GPU workloads
+          ansible.builtin.command:
+            argv:
+              - runai-api
+              - POST
+              - /api/v1/workloads/trainings
+              - "{{ {'name': item, 'clusterId': ids.stdout_lines[0], 'projectId': project_id,
+                    'spec': {'image': k3s_pod_image, 'command': 'bash',
+                             'args': '-c \"echo ' ~ probe ~ ' | base64 -d | python3 -u\"',
+                             'compute': {'gpuDevicesRequest': 1, 'gpuRequestType': 'portion',
+                                         'gpuPortionRequest': 0.5}}} | to_json }}"
+          vars:
+            project_id: >-
+              {{ (projects.stdout | from_json).projects | selectattr('name', 'equalto', project)
+                 | map(attribute='id') | first }}
+            probe: "{{ lookup('file', playbook_dir ~ '/files/gpu-fraction-probe.py') | b64encode }}"
+          loop: "{{ fractions }}"
+          register: fraction_workloads
+          changed_when: true
+
+        - name: Read what each fraction sees
+          ansible.builtin.command: kubectl -n runai-{{ project }} logs -l workloadName={{ item }}
+          loop: "{{ fractions }}"
+          register: probes
+          changed_when: false
+          retries: 30
+          delay: 5
+          until: probes.stdout is search('alloc_beyond=')
+
+        - name: Both share one GPU, each held to half of its memory
+          ansible.builtin.assert:
+            that:
+              - seen | map(attribute='gpu') | unique | list | length == 1
+              - seen | map(attribute='gpu') | first is match('^GPU-')
+              - seen | rejectattr('limit_mib', 'equalto', (fakegpu_mem_mb | int // 2) | string) | list | length == 0
+              - seen | rejectattr('total_mib', 'equalto', (fakegpu_mem_mb | int // 2) | string) | list | length == 0
+              - seen | rejectattr('alloc_within', 'equalto', '0') | list | length == 0
+              - seen | rejectattr('alloc_beyond', 'equalto', '2') | list | length == 0
+            fail_msg: "{{ seen | to_json }}"
+            quiet: true
+          vars:
+            seen: >-
+              {{ probes.results | map(attribute='stdout_lines')
+                 | map('map', 'split', '=') | map('items2dict', key_name=0, value_name=1) | list }}
+
+        - name: Delete the fractions
+          ansible.builtin.command: runai-api DELETE /api/v1/workloads/trainings/{{ (item.stdout | from_json).workloadId }}
+          loop: "{{ fraction_workloads.results }}"
+          loop_control:
+            label: "{{ item.item }}"
           changed_when: true
 
 # After the example jobs: the Slurm epilog reset each job's GPUs (handover),

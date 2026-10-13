@@ -109,6 +109,9 @@ kube_prometheus_stack_chart_version: 92.3.1
 haproxy_ingress_chart_version: 1.54.2
 # NVIDIA's GPU metrics exporter, unchanged, on the fake NVML.
 dcgm_exporter_image: nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
+# NVIDIA's GPU fractioning (GPU fractions), newer than Run:ai's 0.1.6: 0.1.7
+# is the first that gets GPUs through the GPU Operator's NRI plugin.
+gpu_fractioning_version: v0.1.7
 
 # ---- Slurm --------------------------------------------------------------------
 slurm_cluster_name: nvl8
@@ -200,9 +203,10 @@ fakegpu_coherent_gpu_memory: os
 # Version", "VBIOS Version"), NVML, cuDriverGetVersion, GPU Feature Discovery's
 # nvidia.com/cuda.driver-version.* and cuda.runtime-version.* labels, and the
 # tray BMCs' firmware inventory (VBIOS). cuda_version is the highest CUDA
-# version the driver supports, MAJOR.MINOR.
-fakegpu_driver_version: "580.95.05"
-fakegpu_cuda_version: "13.0"
+# version the driver supports, MAJOR.MINOR. With Run:ai, an r615 driver
+# (CUDA 13.4): NVIDIA's GPU fractioning needs it.
+fakegpu_driver_version: "{{ '615.20.01' if runai | bool else '580.95.05' }}"
+fakegpu_cuda_version: "{{ '13.4' if runai | bool else '13.0' }}"
 fakegpu_vbios_version: "97.00.82.00.0F"
 # BMC firmware in the BMCs' Redfish FirmwareInventory and managers: the host
 # BMC (FW_BMC_0, BMC_0), the HGX Management Controller (HGX_FW_BMC_0,

@@ -58,7 +58,7 @@ bin/ssh sched-control "runai-api POST /api/v1/workloads/trainings '{\"name\": \"
 bin/ssh sched-control runai-api DELETE /api/v1/workloads/trainings/<workload id>
 ```
 
-No GPU fractions (whole GPUs only); details in `docs/runai.md`.
+GPU fractions: add `"gpuRequestType": "portion", "gpuPortionRequest": 0.5` to `compute`; the container gets `NVIDIA_GPU_MEMORY_LIMIT`, which the fake driver enforces. Details in `docs/runai.md`.
 
 ## GPUs
 

@@ -50,9 +50,17 @@ spec:
     karta:
       nodeSelector: {node-role.kubernetes.io/runai-system: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+    # NVIDIA's GPU fractioning (GPU fractions): its operator on the
+    # controller, its daemons on the trays (GpuFractioningConfig). Run:ai
+    # bundles 0.1.6, which reaches GPUs only through NVIDIA's container
+    # runtime; from 0.1.7 also through the GPU Operator's NRI plugin
+    # (ClusterPolicy cdi.nriPluginEnabled), the lab's way (fakedp -nri).
     kai-resource-management:
       kai-scheduler:
-        global:
-          # NVIDIA's GPU fractioning enforces memory limits in the driver
-          # (r615 and its container toolkit hook), which the fake one has not.
-          nvFractions: {set: false}
+        gpu-fractioning:
+          nodeSelector: {node-role.kubernetes.io/runai-system: "true"}
+          tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+          images:
+{% for image in ['operator', 'fractiond', 'metricsd', 'mpsd'] %}
+            {{ image }}: {tag: {{ gpu_fractioning_version }}}
+{% endfor %}

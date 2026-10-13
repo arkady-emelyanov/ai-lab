@@ -57,14 +57,19 @@
     src: "{{ k3s_containerd_dir }}/config.toml"
   register: containerd_config
 
-- name: Keep containerd from setting unprivileged port and ICMP sysctls
+- name: Keep containerd from setting unprivileged port and ICMP sysctls (NRI on with Run:ai)
   ansible.builtin.copy:
     content: >-
       {{ containerd_config.content | b64decode
          | replace('enable_unprivileged_ports = true', 'enable_unprivileged_ports = false')
-         | replace('enable_unprivileged_icmp = true', 'enable_unprivileged_icmp = false') }}
+         | replace('enable_unprivileged_icmp = true', 'enable_unprivileged_icmp = false')
+         | replace(nri ~ 'true', nri ~ ('false' if runai | bool else 'true')) }}
     dest: "{{ k3s_containerd_dir }}/config-v3.toml.tmpl"
     mode: "0644"
+  vars:
+    # NRI plugins, with Run:ai: NVIDIA's GPU fractioning (fractiond) and the
+    # management devices it needs (fakedp -nri).
+    nri: "[plugins.'io.containerd.nri.v1.nri']\n  disable = "
   notify: Restart k3s
 
 - name: Apply the containerd template now

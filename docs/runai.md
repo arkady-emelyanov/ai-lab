@@ -15,6 +15,8 @@ Run:ai is installed from its open-source release (3.0.20, `runai_version`): the 
 | HAProxy ingress | namespace `haproxy-controller`, `sched-control` ports 80 and 443 | serves the UI and API at `https://runai.<controller address>.nip.io`, and workloads' URLs at its subdomains |
 | kube-prometheus-stack | namespace `monitoring` | the Prometheus operator (Run:ai runs its own Prometheus through it), kube-state-metrics, kubelet metrics |
 | DCGM exporter | namespace `gpu-operator`, DaemonSet on the trays | NVIDIA's GPU metrics exporter, unchanged, on the fake NVML; Run:ai reads GPU utilisation and memory from it |
+| NVIDIA GPU fractioning (0.1.7) | namespace `runai`: operator on `sched-control`, `fractiond` and `mpsd` on the trays | GPU fractions: gives a container part of a GPU and its memory limit, which the fake driver enforces |
+| `ClusterPolicy` `cluster-policy` | cluster-wide | the GPU Operator's resource, describing the lab's GPU stack to KAI and GPU fractioning (nothing reconciles it) |
 | `runai-api` | `/usr/local/sbin` on `sched-control` | the REST API as the administrator (`runai-api GET /v1/k8s/clusters`) |
 
 Run:ai's system services run on the controller, which is labelled `node-role.kubernetes.io/runai-system`; its workloads run on the trays. With Run:ai, the controller gets 6 CPUs and 16 GiB (`instance_limits_runai`; `make provision` applies them to a running lab). The running control plane and cluster services use about 5 GiB.
@@ -40,6 +42,20 @@ Run:ai expects NVIDIA's GPU Operator. What it reads from it, the lab provides on
 - GPUs as `nvidia.com/gpu`, allocated by GPU UUID: the lab's device plugin (`fakedp`, [Kubernetes](kubernetes.md#gpus-in-pods)).
 - Node labels (`nvidia.com/gpu.product`, `.count`, `.memory`, `.clique`): NVIDIA's GPU Feature Discovery. Run:ai's default node pool detects the NVLink domain from `nvidia.com/gpu.clique`.
 - GPU metrics: NVIDIA's DCGM exporter (`DCGM_FI_DEV_GPU_UTIL`, `DCGM_FI_DEV_FB_USED`, `DCGM_FI_DEV_FB_FREE` and more), in namespace `gpu-operator` with the names and labels the GPU Operator gives it. It mounts the tray's fake driver as the GPU Operator's runtime class would mount the real one. Each GPU's metrics carry the pod using it (kubelet's pod resources API), so Run:ai shows GPU utilisation and memory per workload.
+
+### GPU fractions
+
+A workload can ask for part of a GPU (`gpuPortionRequest: 0.5`, or an amount of GPU memory). Run:ai 3.0 allows only NVIDIA's enforced fractions (KAI's `NvFractions` mode, not configurable): KAI places the fraction on a GPU, and NVIDIA's GPU fractioning gives the container that GPU and holds it to its share of the memory. It runs unchanged on the trays, on what the lab provides for NVIDIA's driver, container toolkit and GPU Operator:
+
+- The driver enforces a fraction's memory limit: the fake CUDA driver reads `NVIDIA_GPU_MEMORY_LIMIT` (MiB, which GPU fractioning gives the container) and holds each process to it on each GPU. An allocation beyond it fails with out of memory, and `cuMemGetInfo` reports the limit as the GPU's total ([Emulated GPUs](fake-gpu.md#gpu-fractions)). The driver reports version 615.20.01 (CUDA 13.4) with Run:ai: GPU fractioning needs r615.
+- The MPS control daemon its `mpsd` supervises: the fake `nvidia-cuda-mps-control` (control socket and commands, no MPS servers: the fake driver runs every process's work itself).
+- NRI in the trays' containerd, and the GPU Operator's NRI plugin (`fakedp -nri`): its daemons get every GPU and the driver through the annotation `nvidia.cdi.k8s.io/container.<name>: management.nvidia.com/gpu=all`, allowed in namespace `runai` only. `fractiond` gives a fractional container its GPU as the CDI device `k8s.device-plugin.nvidia.com/gpu=<UUID>`. The trays have CDI specifications under both names.
+- The node label `nvidia.com/gpu.deploy.client=true`, with which the GPU Operator lets GPU client daemons run on a node.
+- A `ClusterPolicy` with the NRI plugin on (`cdi.nriPluginEnabled`), the device plugin and container toolkit versions GPU fractioning requires, and a ready status.
+
+GPU fractioning 0.1.7 replaces the 0.1.6 Run:ai bundles (`gpu_fractioning_version`, the images only): 0.1.6 reaches GPUs only through NVIDIA's container runtime (`nvidia` runtime class), 0.1.7 also through the GPU Operator's NRI plugin. The `ClusterPolicy` says `cdi.enabled: false` because of a disagreement between KAI 0.18.3 and GPU fractioning 0.1.7: with CDI enabled, KAI writes a fractional container's GPU as a CDI name and `fractiond` makes it one again (`unresolvable CDI devices k8s.device-plugin.nvidia.com/gpu=k8s.device-plugin.nvidia.com/gpu=…`); without it, KAI writes the GPU's UUID. GPU fractioning reads only `nriPluginEnabled`.
+
+Two half-GPU workloads then share one GPU: each sees `NVIDIA_GPU_MEMORY_LIMIT` of half the GPU's memory (94735 MiB), allocates up to it, and gets out of memory beyond it; `nvidia-smi` on the tray shows both processes on the GPU.
 
 ### Names and certificates
 
@@ -86,11 +102,12 @@ bin/kubectl get pods -n runai-backend; bin/kubectl get pods -n runai            
 bin/kubectl get --raw '/api/v1/namespaces/runai/services/prometheus-operated:9090/proxy/api/v1/query?query=count(DCGM_FI_DEV_GPU_UTIL)'
 ```
 
-`make test` with Run:ai checks that the cluster is connected with every required dependency, that Run:ai's Prometheus has DCGM metrics for every GPU, and that a 2-GPU training workload submitted through the API is scheduled by Run:ai onto a tray and sees its 2 GPUs.
+`make test` with Run:ai checks that the cluster is connected with every required dependency, that Run:ai's Prometheus has DCGM metrics for every GPU, that a 2-GPU training workload submitted through the API is scheduled by Run:ai onto a tray and sees its 2 GPUs, and that two half-GPU workloads share one GPU, each held to half of its memory.
 
 ## Limitations
 
-- **GPU fractions.** Sharing a GPU between workloads (Run:ai's GPU fractions, KAI's GPU sharing) is off. Run:ai's GPU fractioning (`kai-gpu-fractioning`) has the driver enforce each container's GPU memory limit, which needs NVIDIA driver r615, its container toolkit hook and MPS. KAI's own GPU sharing gives a fractional pod its GPU through `NVIDIA_VISIBLE_DEVICES`, which NVIDIA's container runtime turns into device access; the lab's GPUs reach pods through CDI devices from the device plugin, which a pod gets only by requesting `nvidia.com/gpu`.
+- **GPU fractions.** The memory limit is per process, as MPS enforces it (two processes of one fraction can each use the whole limit). Compute is not divided: a fraction's work runs at the whole GPU's modelled speed, and per-process utilisation is the GPU's split evenly between its processes. `sm-sharing` compute mode and MIG are not modelled.
+- **GPU Operator.** There is no GPU Operator: its `ClusterPolicy` is written once by the lab, and nothing acts on changes to it. KAI reads it when its operator starts: adding it to a running Run:ai (an existing lab gaining fractions) needs `bin/kubectl -n runai rollout restart deploy/kai-operator`.
 - **Optional frameworks.** Run:ai reports Knative (inference workloads), the Kubeflow training operator (PyTorch, TensorFlow, XGBoost, JAX distributed training), the MPI operator and LeaderWorkerSet (distributed inference) as not installed. Training and workspace workloads, and plain Kubernetes workloads in a project's namespace, need none of them.
 - **Users.** The lab's LDAP users are not Run:ai users; the administrator creates users (or connects an identity provider) in the UI.
 - **One system node.** The control plane and cluster services have a single replica each, on the controller; Run:ai recommends three system nodes.
@@ -100,5 +117,5 @@ bin/kubectl get --raw '/api/v1/namespaces/runai/services/prometheus-operated:909
 ## References
 
 - [NVIDIA Run:ai (source)](https://github.com/dsx-ai-factory/run-ai), [documentation](https://docs.nvidia.com/run-ai/), [installation with Helm](https://docs.nvidia.com/run-ai/self-hosted/documentation/installation-and-configuration/overview)
-- [KAI Scheduler](https://github.com/kai-scheduler/KAI-scheduler), [KAI resource management](https://github.com/kai-scheduler/kai-resource-management), [GPU fractioning](https://github.com/kai-scheduler/kai-gpu-fractioning)
+- [KAI Scheduler](https://github.com/kai-scheduler/KAI-scheduler), [KAI resource management](https://github.com/kai-scheduler/kai-resource-management), [GPU fractioning](https://github.com/kai-scheduler/kai-gpu-fractioning), [GPU fractions in KAI](https://github.com/kai-scheduler/KAI-scheduler/issues/1544)
 - [DCGM exporter](https://github.com/NVIDIA/dcgm-exporter), [HAProxy Kubernetes ingress](https://github.com/haproxytech/kubernetes-ingress), [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)

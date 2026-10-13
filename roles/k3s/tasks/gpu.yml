@@ -19,14 +19,27 @@
     state: directory
     mode: "0755"
 
+# With Run:ai, the same GPUs also under the names NVIDIA's GPU stack uses:
+# the device plugin's (k8s.device-plugin.nvidia.com/gpu=<UUID>, which NVIDIA's
+# GPU fractioning gives a container sharing a GPU) and the toolkit's
+# management device (management.nvidia.com/gpu=all, for its daemons).
 - name: Describe the GPUs to the container runtime (CDI)
   ansible.builtin.template:
     src: fakegpu-cdi.json.j2
-    dest: /etc/cdi/fakegpu.json
+    dest: /etc/cdi/{{ item.file }}
     mode: "0644"
   vars:
     gpu_list: "{{ gpus.stdout_lines | map('split', ', ') | list }}"
     preload: "{{ preload_list.content | b64decode | split | join(':') }}"
+    cdi_kind: "{{ item.kind }}"
+    cdi_all: "{{ item.all }}"
+  loop: >-
+    {{ [{'file': 'fakegpu.json', 'kind': 'nvidia.com/gpu', 'all': false}]
+       + ([{'file': 'nvidia-device-plugin.json', 'kind': 'k8s.device-plugin.nvidia.com/gpu', 'all': false},
+           {'file': 'nvidia-management.json', 'kind': 'management.nvidia.com/gpu', 'all': true}]
+          if runai | bool else []) }}
+  loop_control:
+    label: "{{ item.kind }}"
   # containerd reads CDI specifications when it starts: new mounts or env
   # reach pods only after the agent restarts (running pods keep going).
   notify: [Restart fakedp, Restart k3s]
@@ -47,7 +60,7 @@
       BindsTo=k3s-agent.service
 
       [Service]
-      ExecStart=/usr/local/sbin/fakedp -cdi-spec /etc/cdi/fakegpu.json
+      ExecStart=/usr/local/sbin/fakedp -cdi-spec /etc/cdi/fakegpu.json{{ fakedp_nri_args }}
       Restart=always
       RestartSec=3
 
@@ -55,6 +68,10 @@
       WantedBy=k3s-agent.service
     dest: /etc/systemd/system/fakedp.service
     mode: "0644"
+  vars:
+    # With Run:ai, also the GPU Operator's NRI plugin (fakedp/nri.go):
+    # management devices for NVIDIA's GPU fractioning, in Run:ai's namespace.
+    fakedp_nri_args: "{{ ' -nri -management-namespaces runai' if runai | bool else '' }}"
   notify: Restart fakedp
 
 - name: Start the device plugin

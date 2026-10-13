@@ -80,6 +80,14 @@
 # ---- prerequisites ------------------------------------------------------------------
 
 # Run:ai's system services (control plane and cluster) require this label.
+# The GPU Operator's mark that a node runs GPU client daemons, NVIDIA's GPU
+# fractioning's among them (and evicts them before a driver upgrade).
+- name: Let GPU client daemons run on the trays
+  ansible.builtin.command: kubectl label node {{ item }} nvidia.com/gpu.deploy.client=true --overwrite
+  loop: "{{ groups['workers'] }}"
+  register: client_label
+  changed_when: "'not labeled' not in client_label.stdout"
+
 - name: Make the controller Run:ai's system node
   ansible.builtin.command: kubectl label node {{ inventory_hostname }} node-role.kubernetes.io/runai-system=true --overwrite
   register: label
@@ -93,10 +101,36 @@
   vars:
     files: "{{ dict(certs.results | map(attribute='item') | zip(certs.results | map(attribute='content'))) }}"
 
+# The ClusterPolicy needs its API (in the same file) established first.
 - name: Apply them
   ansible.builtin.command: kubectl apply -f /etc/rancher/k3s/lab-runai-objects.yaml
   register: applied
   changed_when: applied.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+  until: applied.rc == 0
+  retries: 5
+  delay: 5
+
+- name: Read the ClusterPolicy's state
+  ansible.builtin.command: kubectl get clusterpolicy cluster-policy -o jsonpath={.status.state}
+  register: policy_state
+  changed_when: false
+
+# What the GPU Operator reports when its operands run.
+- name: Report the lab's GPU stack ready
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - patch
+      - clusterpolicy
+      - cluster-policy
+      - --subresource=status
+      - --type=merge
+      - -p
+      - >-
+        {{ {'status': {'state': 'ready', 'conditions': [{'type': 'Ready', 'status': 'True', 'reason': 'Reconciled',
+            'message': 'ClusterPolicy is ready', 'lastTransitionTime': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ')}]}}
+           | to_json }}
+  when: policy_state.stdout != 'ready'
 
 - name: Install the ingress controller and the Prometheus operator
   ansible.builtin.template:
