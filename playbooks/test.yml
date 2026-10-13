@@ -419,6 +419,115 @@
       failed_when: misplaced.stdout | length > 0
       when: scheduler == 'k3s'
 
+# Run:ai (runai: true): the cluster connected to its control plane, GPU
+# metrics from the DCGM exporter in Run:ai's Prometheus, and a training
+# workload submitted through the API, scheduled by Run:ai onto GPUs.
+- name: NVIDIA Run:ai
+  hosts: controller
+  vars:
+    project: test
+    workload: test-gpus
+    gpus: 2
+  tasks:
+    - name: Run:ai
+      when: scheduler == 'k3s' and runai | bool
+      block:
+        - name: The cluster is connected with every required dependency
+          ansible.builtin.shell: >-
+            runai-api GET /v1/k8s/clusters/$(runai-api GET /v1/k8s/clusters
+            | jq -r '.[] | select(.name == "{{ runai_cluster_name }}") | .uuid')
+          register: cluster
+          changed_when: false
+          failed_when: >-
+            (cluster.stdout | from_json).status.state != 'Connected'
+            or (cluster.stdout | from_json).status.dependencies.required | dict2items
+               | rejectattr('value.available') | list | length > 0
+
+        - name: Run:ai's Prometheus has DCGM metrics for every GPU
+          ansible.builtin.command: >-
+            kubectl get --raw
+            '/api/v1/namespaces/runai/services/prometheus-operated:9090/proxy/api/v1/query?query=count(DCGM_FI_DEV_FB_FREE)'
+          register: dcgm
+          changed_when: false
+          retries: 12
+          delay: 10
+          until: >-
+            dcgm.rc == 0 and (dcgm.stdout | from_json).data.result | length == 1
+            and (dcgm.stdout | from_json).data.result[0].value[1] | int == groups['workers'] | length * fakegpu_count
+
+        - name: Look up the cluster and its node pool
+          ansible.builtin.shell: |
+            set -e
+            runai-api GET /v1/k8s/clusters | jq -r '.[] | select(.name == "{{ runai_cluster_name }}") | .uuid'
+            runai-api GET /api/v1/node-pools | jq -r '.nodepools[] | select(.name == "default") | .id'
+          register: ids
+          changed_when: false
+
+        - name: Read the test project
+          ansible.builtin.command: runai-api GET /api/v1/org-unit/projects
+          register: projects
+          changed_when: false
+
+        - name: Create the test project
+          ansible.builtin.command:
+            argv:
+              - runai-api
+              - POST
+              - /api/v1/org-unit/projects
+              - "{{ {'name': project, 'clusterId': ids.stdout_lines[0],
+                    'resources': [{'nodePool': {'id': ids.stdout_lines[1]}, 'gpu': {'deserved': gpus}}]} | to_json }}"
+          when: project not in (projects.stdout | from_json).projects | map(attribute='name')
+
+        - name: Read the test project again
+          ansible.builtin.command: runai-api GET /api/v1/org-unit/projects
+          register: projects
+          changed_when: false
+
+        - name: Remove a workload left from an earlier run
+          ansible.builtin.shell: |
+            for id in $(runai-api GET '/api/v1/workloads?filterBy=name=={{ workload }}' | jq -r '.workloads[].id'); do
+              runai-api DELETE /api/v1/workloads/trainings/$id >/dev/null
+            done
+            kubectl -n runai-{{ project }} wait --for=delete pod -l workloadName={{ workload }} --timeout=120s
+          changed_when: false
+
+        - name: Submit a training workload through the API
+          ansible.builtin.command:
+            argv:
+              - runai-api
+              - POST
+              - /api/v1/workloads/trainings
+              - "{{ {'name': workload, 'clusterId': ids.stdout_lines[0], 'projectId': project_id,
+                    'spec': {'image': k3s_pod_image, 'command': 'nvidia-smi', 'args': '-L',
+                             'compute': {'gpuDevicesRequest': gpus}}} | to_json }}"
+          vars:
+            project_id: >-
+              {{ (projects.stdout | from_json).projects | selectattr('name', 'equalto', project)
+                 | map(attribute='id') | first }}
+          register: submitted
+          changed_when: true
+
+        - name: The workload's pod ran on a tray, scheduled by Run:ai
+          ansible.builtin.command: >-
+            kubectl -n runai-{{ project }} get pods -l workloadName={{ workload }}
+            -o jsonpath='{.items[0].status.phase} {.items[0].spec.schedulerName} {.items[0].spec.nodeName}'
+          register: pod
+          changed_when: false
+          retries: 30
+          delay: 5
+          until: pod.stdout is match('^Succeeded runai-scheduler (' ~ groups['workers'] | join('|') ~ ')$')
+
+        - name: It saw the GPUs it asked for
+          ansible.builtin.command: kubectl -n runai-{{ project }} logs -l workloadName={{ workload }}
+          register: logs
+          changed_when: false
+          failed_when: >-
+            logs.stdout_lines | select('search', '^GPU [0-9]+: NVIDIA ') | list | length != gpus
+
+        - name: Delete the workload
+          ansible.builtin.command: runai-api DELETE /api/v1/workloads/trainings/{{ (submitted.stdout | from_json).workloadId }}
+          changed_when: true
+
 # After the example jobs: the Slurm epilog reset each job's GPUs (handover),
 # and no GPU is left needing recovery (with either scheduler).
 - name: GPU handover

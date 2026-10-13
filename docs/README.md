@@ -27,6 +27,7 @@
 
 - [Slurm](slurm.md): GPU scheduling, accounting, block topology, GPU handover
 - [Kubernetes (k3s)](kubernetes.md): GPU pods, Kueue, JobSets, users
+- [NVIDIA Run:ai](runai.md): the open-source Run:ai control plane and cluster on k3s, KAI Scheduler, the DCGM exporter on the emulated GPUs
 - [Frameworks and examples](frameworks-and-examples.md): the PyTorch and Ray environment, the example jobs and their expected results
 - [Inference servers](inference.md): vLLM and SGLang on the emulated GPUs, what works, tensor parallelism over NVLink and InfiniBand
 

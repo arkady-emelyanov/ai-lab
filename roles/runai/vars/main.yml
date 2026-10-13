@@ -1,0 +1,14 @@
+runai_manifests_dir: /var/lib/rancher/k3s/server/manifests
+# Run:ai's cluster services that run on the system node (the controller):
+# RunaiConfig keys of the operator's deployments.
+runai_cluster_services: [accessrule-controller, admission-controller, advice-restart-controller, agent,
+                         anyworkload-controller, application-controller, binder, cluster-api, cluster-redis,
+                         cluster-sync, external-workload-integrator, init-ca, metrics-exporter,
+                         node-scale-adjuster, nodepool-controller, pod-group-assigner, pod-group-controller,
+                         pod-grouper, project-controller, queue-controller, researcher-service, runai-scheduler,
+                         runtime-rules, shared-objects-controller, status-updater, workload-exporter]
+# The lab's certificate authority and the domain's certificate, on the host.
+runai_secrets: "{{ repo_root }}/.secrets/runai"
+# On the controller, for runai-api.
+runai_ca_path: /etc/rancher/k3s/runai-ca.crt
+runai_admin_password_path: /etc/rancher/k3s/runai-admin.pass

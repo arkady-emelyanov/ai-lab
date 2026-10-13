@@ -31,7 +31,7 @@ Commands that need the Incus socket run under `sg incus-admin`, so a group membe
 - `local.yml`: your own values (created by `make init`, git-ignored); it overrides `all.yml`.
 - `inventory/hosts.yml`: the instances, groups, static addresses (`ip_host`) and tray numbers.
 
-After a change, run `make configure`, or `make provision` for instance settings such as limits and devices. The exception is `scheduler` (`slurm` or `k3s`): it decides what is installed, so changing it takes `make down` and `make up` (volumes are kept).
+After a change, run `make configure`, or `make provision` for instance settings such as limits and devices (it applies changed CPU and memory limits to running instances and restarts k3s there, so its nodes report their new capacity). The exception is `scheduler` (`slurm` or `k3s`): it decides what is installed, so changing it takes `make down` and `make up` (volumes are kept).
 
 | Group | Instances |
 |---|---|
@@ -115,6 +115,10 @@ sg incus-admin -c 'incus list --all-projects -c ns4'   # all instances RUNNING w
 | A node shows `down*` in Slurm after a restart | Addresses are static, so this should not happen; if it does, `make configure` restarts the Slurm daemons when `/etc/hosts` changes. |
 | Host bind mounts with `shift=true` fail | Ubuntu's Incus 6.0.0 cannot do idmapped mounts on kernels ≥ 6.9 ([lxc/incus#882](https://github.com/lxc/incus/issues/882)); the lab uses Incus volumes instead. |
 | One tray's GPUs run at lower utilisation than the other's during the same job (k3s mode especially) | The tray competes for CPU. Check each container's cores, `bin/ssh sched-worker1 cat /sys/fs/cgroup/cpuset.cpus.effective`, and in k3s mode the pods', `cat /sys/fs/cgroup/kubepods/cpuset.cpus.effective`: the trays must have distinct cores shared with no other instance, and the pods the tray's cores. `/sys/fs/cgroup/cpu.pressure` in the tray shows the stall. `make provision` restores the pinning and restarts a re-pinned tray's kubelet (which copies the tray's cores into the pod cgroup only when it starts). Work on the host itself is not confined and can still slow a tray. |
+| k3s pods stuck in `CreateContainerError` with "failed to reserve container name … is reserved for …" | k3s (with its containerd) restarted while it was creating the container: the container runs, but the kubelet never learned its ID and every retry collides with its name. Delete the pod (`bin/kubectl -n <ns> delete pod <pod>`); its controller creates a new one. |
+| Pods with volumes on the controller stay `Pending`, local-path logs `helper pod … not found` | local-path's helper pod was evicted by the controller's `CriticalAddonsOnly` taint. `make configure` lets it tolerate the taint (and restarts local-path); after a k3s upgrade that rewrites local-path's configuration, run it again. |
+| Pods fail with `ErrImagePull`: "pull QPS exceeded" | kubelet's own limit on image pulls (5/s), hit when a chart starts many pods at once. The lab sets `registry-qps=0`; pulls of `docker.io` images go through `k3s_registry_mirrors` (`mirror.gcr.io`). |
+| Run:ai: the cluster stays `WaitingToConnect`, or its pods `Pending` with "Insufficient cpu" | Its services run on the controller: check `make provision` gave it `instance_limits_runai` (`bin/kubectl describe node sched-control`, Allocatable) and that the services' small requests are applied (`make configure`); `bin/kubectl -n runai logs deploy/runai-operator` names other causes. |
 | topograph build fails with `GOSUMDB=off` | The Makefile enables the checksum database for that one build; a newer Go toolchain is downloaded automatically. |
 
 ## References

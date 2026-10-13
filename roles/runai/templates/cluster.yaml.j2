@@ -1,0 +1,58 @@
+# {{ ansible_managed }}
+# The Run:ai cluster services (operator, KAI Scheduler and resource
+# management, workload controllers, Prometheus), connected to the control
+# plane as cluster {{ runai_cluster_name }}. System services run on the
+# controller; Run:ai's workloads on the trays.
+apiVersion: v1
+kind: Secret
+metadata: {name: runai-control-plane-client, namespace: runai}
+stringData:
+  client-secret: {{ runai_client_secret | to_json }}
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: runai-cluster
+  namespace: kube-system
+spec:
+  repo: {{ runai_chart_repo }}
+  chart: runai-cluster
+  version: {{ runai_version }}
+  targetNamespace: runai
+  # Run:ai's charts conflict with Helm 4's default server-side apply.
+  serverSide: "false"
+  timeout: 20m
+  valuesContent: |-
+    controlPlane:
+      url: https://{{ runai_fqdn }}
+      existingSecret: runai-control-plane-client
+    cluster:
+      uid: {{ runai_cluster_uid }}
+      url: https://{{ runai_fqdn }}
+    global:
+      customCA: {enabled: true}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - {key: node-role.kubernetes.io/runai-system, operator: Exists}
+      tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+    clusterConfig:
+      global:
+        ingress: {ingressClass: haproxy}
+        subdomainSupport: true
+      # The services' CPU requests suit production system nodes (about 5
+      # CPUs in all); the lab's controller gets small ones, limits stay.
+{% for service in runai_cluster_services %}
+      {{ service }}: {resources: {requests: {cpu: 10m}}}
+{% endfor %}
+    karta:
+      nodeSelector: {node-role.kubernetes.io/runai-system: "true"}
+      tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+    kai-resource-management:
+      kai-scheduler:
+        global:
+          # NVIDIA's GPU fractioning enforces memory limits in the driver
+          # (r615 and its container toolkit hook), which the fake one has not.
+          nvFractions: {set: false}

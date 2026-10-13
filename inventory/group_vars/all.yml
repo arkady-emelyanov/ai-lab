@@ -86,6 +86,30 @@ scratch_pool_size: 200GiB
 scratch_size_gib: 50
 scratch_mount: /scratch
 
+# ---- NVIDIA Run:ai (scheduler: k3s) ------------------------------------------------
+# Open-source NVIDIA Run:ai on the k3s cluster: its control plane (web UI, API,
+# Keycloak, PostgreSQL) and its cluster services (KAI Scheduler, operators),
+# connected to each other as one Run:ai cluster. Both run on the controller,
+# which then needs more room (applied by make provision). With the NVIDIA
+# GPU stack's DCGM exporter on the trays, HAProxy ingress on the controller
+# and the Prometheus operator, which Run:ai requires.
+runai: false
+runai_version: 3.0.20
+runai_chart_repo: https://helm.ngc.nvidia.com/nvidia/runai-oss
+# Name of the web UI and API. auto: runai.<controller address>.nip.io, a
+# public wildcard DNS name that resolves to the address in it, so neither the
+# host nor the lab needs a hosts entry (workloads get subdomains of it).
+runai_domain: auto
+# Administrator of the control plane (password in .secrets/runai-admin.pass).
+runai_admin_email: admin@ai-lab.local
+runai_cluster_name: nvl8
+instance_limits_runai:
+  controller: { cpu: 6, memory: 16GiB }
+kube_prometheus_stack_chart_version: 92.3.1
+haproxy_ingress_chart_version: 1.54.2
+# NVIDIA's GPU metrics exporter, unchanged, on the fake NVML.
+dcgm_exporter_image: nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
+
 # ---- Slurm --------------------------------------------------------------------
 slurm_cluster_name: nvl8
 slurm_partition: gpu

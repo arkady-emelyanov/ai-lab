@@ -77,6 +77,14 @@
         tasks_from: cluster
       when: scheduler == 'k3s'
 
+- name: NVIDIA Run:ai (control plane and cluster)
+  hosts: controller
+  tasks:
+    - name: Run:ai
+      ansible.builtin.include_role:
+        name: runai
+      when: scheduler == 'k3s' and runai | bool
+
 - name: kubectl on the login node
   hosts: login
   tasks:

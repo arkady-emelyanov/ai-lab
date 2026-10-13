@@ -23,6 +23,7 @@ All from the repository's root.
 | `bin/ssh root@<instance>` | log in to any instance as root |
 | `bin/scp`, `bin/ssh-copy-id` | the same for copying files and installing your key |
 | `bin/kubectl` | kubectl as cluster admin (k3s mode) |
+| `bin/ssh sched-control runai-api <METHOD> <path> [json]` | NVIDIA Run:ai's REST API as its administrator (`runai: true`, [NVIDIA Run:ai](runai.md)) |
 | `make shell`, `make shell-<instance>` | a shell through `incus exec`, without SSH |
 
 ## Hardware

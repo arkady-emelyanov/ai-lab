@@ -31,7 +31,7 @@ RUN      = $(INCUS_SG) '$(ANSIBLE) $$(test -f $(LOCAL) && echo --extra-vars=@$(L
 
 .PHONY: init proto check up provision configure frameworks test test-fakegpu test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
 
-init: $(LOCAL) $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
+init: $(LOCAL) $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/runai-admin.pass $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
 	@chmod -R go-rwx $(SECRETS)
 
 # Local settings, not in git: created once, never overwritten.
@@ -73,6 +73,12 @@ $(SECRETS)/munge.key:
 $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token:
 	mkdir -p -m 0700 $(SECRETS)
 	head -c 24 /dev/urandom | base64 | tr -d '/+=' > $@
+	chmod 0600 $@
+
+# Run:ai wants upper and lower case, a digit and a special character.
+$(SECRETS)/runai-admin.pass:
+	mkdir -p -m 0700 $(SECRETS)
+	echo "Lab-$$(head -c 18 /dev/urandom | base64 | tr -d '/+=')-7a" > $@
 	chmod 0600 $@
 
 $(SECRETS)/rustfs.access:

@@ -1,0 +1,151 @@
+# {{ ansible_managed }}
+# Run:ai's namespaces with the certificates of runai_domain, a token for
+# scraping kubelets, and NVIDIA's DCGM exporter on the trays.
+{% set ca_pem = files['ca.crt'] | b64decode %}
+{% set tls = {'tls.crt': files[runai_fqdn ~ '.crt'], 'tls.key': files[runai_fqdn ~ '.key']} %}
+apiVersion: v1
+kind: Namespace
+metadata: {name: runai-backend}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: runai}
+---
+# The certificate covers the domain and its subdomains (workloads' URLs).
+{% for ns, name in [('runai-backend', 'runai-backend-tls'), ('runai', 'runai-cluster-domain-tls-secret'),
+                    ('runai', 'runai-cluster-domain-star-tls-secret')] %}
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/tls
+metadata: {name: {{ name }}, namespace: {{ ns }}}
+data: {{ tls | to_json }}
+---
+{% endfor %}
+# The lab's certificate authority, trusted by Run:ai's services
+# (global.customCA); the cluster copies it to workloads' namespaces.
+apiVersion: v1
+kind: Secret
+metadata: {name: runai-ca-cert, namespace: runai-backend}
+stringData:
+  runai-ca.pem: {{ ca_pem | to_json }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: runai-ca-cert
+  namespace: runai
+  labels: {run.ai/cluster-wide: "true", run.ai/name: runai-ca-cert}
+stringData:
+  runai-ca.pem: {{ ca_pem | to_json }}
+---
+# Host-based routing: workloads at https://<project>-<workload>.<domain>.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: runai-cluster-domain-star-ingress, namespace: runai}
+spec:
+  ingressClassName: haproxy
+  rules:
+    - host: "*.{{ runai_fqdn }}"
+  tls:
+    - hosts: ["*.{{ runai_fqdn }}"]
+      secretName: runai-cluster-domain-star-tls-secret
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: monitoring}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: kubelet-scraper, namespace: monitoring}
+---
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/service-account-token
+metadata:
+  name: kubelet-scraper-token
+  namespace: monitoring
+  annotations: {kubernetes.io/service-account.name: kubelet-scraper}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: kubelet-scraper}
+rules:
+  - apiGroups: [""]
+    resources: [nodes/metrics]
+    verbs: [get]
+  - nonResourceURLs: [/metrics, /metrics/cadvisor, /metrics/probes, /metrics/resource]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: kubelet-scraper}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kubelet-scraper}
+subjects: [{kind: ServiceAccount, name: kubelet-scraper, namespace: monitoring}]
+---
+# NVIDIA's DCGM exporter, as the GPU Operator runs it (namespace, names and
+# labels Run:ai looks for), unchanged on the fake NVML. The GPU Operator's
+# daemons get the whole driver from NVIDIA's runtime class; here the pod
+# mounts the tray's fake driver and its state, as the CDI specification
+# does for GPU pods (roles/k3s/templates/fakegpu-cdi.json.j2).
+apiVersion: v1
+kind: Namespace
+metadata: {name: gpu-operator}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: gpu-operator
+  labels: {app: nvidia-dcgm-exporter}
+spec:
+  selector:
+    matchLabels: {app: nvidia-dcgm-exporter}
+  template:
+    metadata:
+      labels: {app: nvidia-dcgm-exporter}
+    spec:
+      nodeSelector: {nvidia.com/gpu.present: "true"}
+      automountServiceAccountToken: false
+      containers:
+        - name: nvidia-dcgm-exporter
+          image: {{ dcgm_exporter_image }}
+          env:
+            - {name: DCGM_EXPORTER_LISTEN, value: ":9400"}
+            # GPU to pod mapping (kubelet's pod resources API).
+            - {name: DCGM_EXPORTER_KUBERNETES, value: "true"}
+            - {name: LD_LIBRARY_PATH, value: {{ fakegpu_prefix }}/lib/fakegpu}
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          ports:
+            - {name: metrics, containerPort: 9400}
+          readinessProbe:
+            httpGet: {path: /health, port: 9400}
+            initialDelaySeconds: 15
+          # The GPUs' device nodes.
+          securityContext: {privileged: true}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: pod-resources, mountPath: /var/lib/kubelet/pod-resources, readOnly: true}
+            - {name: fakegpu-lib, mountPath: {{ fakegpu_prefix }}/lib/fakegpu, readOnly: true}
+            - {name: fakegpu-conf, mountPath: /etc/fakegpu.conf, readOnly: true}
+            - {name: sideband, mountPath: {{ sideband_tray_path }}, readOnly: true}
+            - {name: telemetry, mountPath: {{ telemetry_tray_path }}}
+      volumes:
+        - {name: pod-resources, hostPath: {path: /var/lib/kubelet/pod-resources}}
+        - {name: fakegpu-lib, hostPath: {path: {{ fakegpu_prefix }}/lib/fakegpu}}
+        - {name: fakegpu-conf, hostPath: {path: /etc/fakegpu.conf}}
+        - {name: sideband, hostPath: {path: {{ sideband_tray_path }}}}
+        - {name: telemetry, hostPath: {path: {{ telemetry_tray_path }}}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nvidia-dcgm-exporter
+  namespace: gpu-operator
+  labels: {app: nvidia-dcgm-exporter}
+spec:
+  selector: {app: nvidia-dcgm-exporter}
+  ports:
+    - {name: gpu-metrics, port: 9400, targetPort: metrics}

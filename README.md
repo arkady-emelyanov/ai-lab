@@ -37,7 +37,7 @@ The [documentation](docs/README.md) covers every component, with the commands in
 
 - x86-64 Linux with [Incus](https://linuxcontainers.org/incus/), `make`, Python 3, Go, `jq`, git.
 - Your user in the `incus-admin` group.
-- RAM: the running cluster uses about 10 GiB; 16 GiB free recommended. Container memory limits add up to 27 GiB (32 GiB with k3s).
+- RAM: the running cluster uses about 10 GiB; 16 GiB free recommended. Container memory limits add up to 27 GiB (32 GiB with k3s, 45 GiB with Run:ai, which uses about 5 GiB more).
 - CPU: 4 or more cores.
 - Disk: about 25 GB under `/var/lib/incus`, including the 5.6 GB frameworks venv.
 
@@ -48,7 +48,7 @@ make frameworks    # PyTorch + Ray on the cluster (optional, several GB)
 make test          # end-to-end checks
 ```
 
-`make init` prints the exact fix for anything the host still needs ([Platform](docs/platform.md#troubleshooting)) and creates `local.yml`, your git-ignored settings, which override `inventory/group_vars/all.yml`. The lab runs Slurm by default, for Kubernetes, set `scheduler: k3s` before `make up` ([Kubernetes](docs/kubernetes.md)).
+`make init` prints the exact fix for anything the host still needs ([Platform](docs/platform.md#troubleshooting)) and creates `local.yml`, your git-ignored settings, which override `inventory/group_vars/all.yml`. The lab runs Slurm by default, for Kubernetes, set `scheduler: k3s` before `make up` ([Kubernetes](docs/kubernetes.md)); add `runai: true` for NVIDIA Run:ai on it ([NVIDIA Run:ai](docs/runai.md)).
 
 **First steps:**
 

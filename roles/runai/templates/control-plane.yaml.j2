@@ -1,0 +1,58 @@
+# {{ ansible_managed }}
+# Run:ai's control plane (web UI, API, Keycloak, PostgreSQL, NATS, Thanos)
+# on the controller. The chart's requests suit a production system node
+# (10 CPUs, 13 GiB); the lab's controller gets small ones, its limits stay.
+{% set on_controller = {'nodeSelector': {'node-role.kubernetes.io/runai-system': 'true'},
+                        'tolerations': [{'key': 'CriticalAddonsOnly', 'operator': 'Exists'}]} %}
+{% set small = {'resources': {'requests': {'cpu': '20m', 'memory': '64Mi'}}} %}
+{% set services = ['assetsService', 'auditService', 'authorization', 'bffService', 'catalogService',
+                   'cliExposer', 'clusterMigrator', 'clusterService', 'datavolumes', 'frontend',
+                   'identityManager', 'identityProviderReconciler', 'k8sObjectsTracker', 'metricStoresMigrator',
+                   'metricsService', 'notificationsProxy', 'notificationsService', 'orgUnitHelper', 'orgUnitService',
+                   'policyService', 'postgresqlUserInit', 'secretGenerator', 'tempBackendSettings', 'tenantsManager',
+                   'traefik', 'workloads', 'workloadsHelper', 'workloadsManager'] %}
+{% set values = {
+  'global': {
+    'domain': runai_fqdn,
+    'ingress': {'ingressClass': 'haproxy', 'tlsSecretName': 'runai-backend-tls'},
+    'customCA': {'enabled': true},
+    'tolerations': on_controller.tolerations,
+  },
+  'tenantsManager': {'config': {'adminUsername': runai_admin_email}},
+  'keycloakx': on_controller | combine({'resources': {'requests': {'cpu': '100m', 'memory': '768Mi'}}}),
+  'postgresql': {'primary': on_controller | combine({'resources': {'requests': {'cpu': '100m', 'memory': '256Mi'}}})},
+  'nats': on_controller | combine({'resources': {'requests': {'cpu': '20m', 'memory': '64Mi'}}}),
+  'thanos': {'query': on_controller | combine(small), 'receive': on_controller | combine(small)},
+} %}
+{% for service in services %}
+{#   global.tolerations reaches these; the subcharts above need their own. #}
+{%   set _ = values.update({service: (values[service] | default({}))
+                                     | combine({'nodeSelector': on_controller.nodeSelector}, small, recursive=true)}) %}
+{% endfor %}
+apiVersion: v1
+kind: Secret
+metadata: {name: runai-control-plane-values, namespace: kube-system}
+stringData:
+  values.yaml: |
+    tenantsManager:
+      config:
+        adminPassword: {{ runai_admin_password | to_json }}
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: runai-backend
+  namespace: kube-system
+spec:
+  repo: {{ runai_chart_repo }}
+  chart: control-plane
+  version: {{ runai_version }}
+  targetNamespace: runai-backend
+  # Run:ai's charts conflict with Helm 4's default server-side apply.
+  serverSide: "false"
+  timeout: 20m
+  valuesSecrets:
+    - name: runai-control-plane-values
+      keys: [values.yaml]
+  valuesContent: |-
+    {{ values | to_nice_yaml(indent=2) | indent(4) }}

@@ -22,6 +22,8 @@ To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, home
 
 Add-ons are installed by k3s' Helm controller from `HelmChart` manifests (`roles/k3s/templates/addons.yaml.j2`); versions are pinned in `all.yml`.
 
+With `runai: true`, NVIDIA Run:ai runs on this cluster, with its own scheduler (KAI) for its projects' workloads next to Kueue ([NVIDIA Run:ai](runai.md)).
+
 ## How it works
 
 ### GPUs in pods
@@ -119,7 +121,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 
 ## Limitations
 
-- GPUs are allocated by the lab's own device plugin and CDI specification: NVIDIA's GPU Operator, container toolkit and device plugin need a real driver install. GPU Feature Discovery (NVIDIA) and Node Feature Discovery (upstream) are the real ones.
+- GPUs are allocated by the lab's own device plugin and CDI specification: NVIDIA's GPU Operator, container toolkit and device plugin need a real driver install. GPU Feature Discovery (NVIDIA), the DCGM exporter (NVIDIA, with Run:ai) and Node Feature Discovery (upstream) are the real ones.
 - Users can create pods with `hostPath` volumes in their namespace (the examples need `/shared`), which in a real cluster would be denied by Pod Security; there is no admission policy forcing pods to run as the user's uid.
 - No NVIDIA DRA driver or ComputeDomains (IMEX); NVLink placement is through Kueue topology-aware scheduling only.
 - Kubernetes users authenticate with client certificates, not LDAP.

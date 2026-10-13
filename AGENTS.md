@@ -41,12 +41,13 @@ make test          # end-to-end checks, ~10 minutes
 - Run long steps in the background with their full output in a log file (`make up > /tmp/ai-lab-up.log 2>&1`), and tell the user the path and `tail -f /tmp/ai-lab-up.log` so they can follow it.
 - The user's settings go in `local.yml`: `make init` creates it from `local.example.yml`, it is not in git, and its values override `inventory/group_vars/all.yml` (passed to Ansible as extra vars). Change settings there, never in `all.yml`, which holds the shared defaults (and is committed).
 - `scheduler: slurm` (default) or `scheduler: k3s` in `local.yml` selects Slurm or Kubernetes; ask the user which one if they did not say, before `make up`.
+- `runai: true` (with `scheduler: k3s`) adds NVIDIA Run:ai (control plane, KAI Scheduler, web UI) on the Kubernetes cluster ([NVIDIA Run:ai](docs/runai.md)); it gives the controller 6 CPUs and 16 GiB. Offer it when the user picks k3s, do not enable it unasked. On a running k3s lab: `make provision`, then `make configure`.
 - `make frameworks` installs PyTorch and Ray into the lab (several GB, needed for the DDP and Ray examples); offer it, do not run it unasked.
 - If a step fails, read the log, check [Platform: Troubleshooting](docs/platform.md#troubleshooting), fix the cause and rerun the step: every target is idempotent.
 
 ### 4. Hand over
 
-Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and [Lab endpoints](docs/endpoints.md): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, `make test` to re-check.
+Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and [Lab endpoints](docs/endpoints.md): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, with Run:ai its UI at `https://runai.<bridge address>.10.nip.io` (`admin@ai-lab.local`, password in `.secrets/runai-admin.pass`, certificate authority `.secrets/runai/ca.crt` to import in the browser), `make test` to re-check.
 
 ### Rules
 

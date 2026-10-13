@@ -30,6 +30,7 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 | BMCs | tray BMCs report their tray powered on with 4 GPUs, also through the Redfish exporter; the switch BMC exposes 72 ports per switch |
 | Partition controller | gRPC port open; every GPU reports the domain UUID and a clique |
 | Topology | topograph generates a block containing both trays (Slurm) or labels both trays with the NVLink domain and switch tiers (k3s) |
+| NVIDIA Run:ai (`runai: true`) | the cluster `Connected` to the control plane with every required dependency; Run:ai's Prometheus has DCGM metrics for all 8 GPUs; a 2-GPU training workload submitted through the REST API (project `test`) runs on a tray, scheduled by `runai-scheduler`, and lists its 2 GPUs |
 | Monitoring | every Prometheus target up; power for all 8 GPUs; scheduler GPU (`sched_*`), NVLink fabric and InfiniBand port counter series present; Grafana serves the dashboards |
 
 ## Rebuild scenarios
@@ -54,6 +55,7 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 - a rank whose peers never report warns and falls back to NVLink after the timeout
 - each GEMM precision runs at its rate, and the NUMA layout and CPU affinity match GB200's
 - the InfiniBand byte counters appear under node_exporter's names
+- no library needs a glibc newer than 2.33, so they load in images built on older distributions (Ubuntu 22.04)
 
 ## BMC integration tests
 

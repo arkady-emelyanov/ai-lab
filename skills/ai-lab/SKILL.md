@@ -49,6 +49,17 @@ kubectl get jobsets,workloads
 
 Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`; Kubernetes only: `sglang-serve` (the recommended inference server) and `vllm-serve` (`./submit --name <name>`), `sglang-tp8` (TP=8 across both trays); details and tray-size requirements in `docs/inference.md`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but GPU kernels never actually execute (no real GPU math).
 
+NVIDIA Run:ai (k3s mode with `runai: true` in `local.yml`; UI `https://runai.<bridge>.10.nip.io`, `admin@ai-lab.local`, password in `.secrets/runai-admin.pass`). Its workloads run in namespace `runai-<project>`, scheduled by KAI (`runai-scheduler`); `runai-api` on the controller is the REST API as the administrator:
+
+```
+bin/ssh sched-control runai-api GET /v1/k8s/clusters             # cluster state: Connected
+bin/ssh sched-control runai-api GET /api/v1/org-unit/projects
+bin/ssh sched-control "runai-api POST /api/v1/workloads/trainings '{\"name\": \"t1\", \"projectId\": \"<id>\", \"clusterId\": \"<uuid>\", \"spec\": {\"image\": \"docker.io/library/buildpack-deps:noble\", \"command\": \"nvidia-smi\", \"args\": \"-L\", \"compute\": {\"gpuDevicesRequest\": 2}}}'"
+bin/ssh sched-control runai-api DELETE /api/v1/workloads/trainings/<workload id>
+```
+
+No GPU fractions (whole GPUs only); details in `docs/runai.md`.
+
 ## GPUs
 
 ```
@@ -102,13 +113,13 @@ idrac_system_power_on                                       # tray power from th
 
 ## Test
 
-- `make test`: end to end (jobs, storage, BMCs, partitions, metrics), ~10 minutes.
+- `make test`: end to end (jobs, storage, BMCs, partitions, metrics, Run:ai when enabled), ~10 minutes.
 - `make test-bmc`: BMC and partition integration tests, ~30 s; `make test-bmc-disruptive` power-cycles a tray (ask first).
 - `make test-fakegpu`: the fake GPU libraries on the host, no lab needed.
 
 ## More
 
-`docs/` in the repository: `endpoints.md` (addresses and credentials), `slurm.md`, `kubernetes.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
+`docs/` in the repository: `endpoints.md` (addresses and credentials), `slurm.md`, `kubernetes.md`, `runai.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
 
 ## Installing this skill
 

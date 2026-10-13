@@ -12,6 +12,7 @@ Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.
 | Prometheus | http://10.107.111.10:9090 | none | [Monitoring](monitoring.md) |
 | Slurm exporter (Slurm mode) | http://10.107.111.10:9092/metrics | none | [Monitoring](monitoring.md) |
 | Kubernetes API (k3s mode) | https://10.107.111.10:6443 (`bin/kubectl`) | admin: `.secrets/kubeconfig`; users: `~/.kube/config` | [Kubernetes](kubernetes.md) |
+| NVIDIA Run:ai UI and API (`runai: true`) | https://runai.10.107.111.10.nip.io (`bin/ssh sched-control runai-api …`) | `admin@ai-lab.local` / `.secrets/runai-admin.pass`; certificate authority `.secrets/runai/ca.crt` | [NVIDIA Run:ai](runai.md) |
 | kube-state-metrics (k3s mode) | http://10.107.111.10:30808/metrics | none | [Monitoring](monitoring.md) |
 | topograph API | http://10.107.111.10:49021 | none | [Topology discovery](topology.md) |
 | RustFS S3 API | http://10.107.111.12:9000 | admin: `.secrets/rustfs.access` / `.secrets/rustfs.secret`; users: `<name>` / `.secrets/users/<name>.s3` | [Storage](storage.md) |
