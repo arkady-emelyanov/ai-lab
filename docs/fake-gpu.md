@@ -193,6 +193,7 @@ While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, 
   - CUDA's NUMA device attribute (`cudaDeviceProp.deviceNumaId`) is not reported.
 - Unusual APIs reach generated no-ops that return success without filling outputs; mainstream PyTorch, Ray, NCCL and NVML paths are implemented.
 - Only x86-64; the stubs mimic CUDA 13 (and the CUDA 12 SONAMEs for cuBLAS).
+- The libraries need glibc 2.33 or newer (`fakegpu/glibc_compat.h` keeps them off newer symbol versions), so they load in images built on Ubuntu 22.04 or later, Debian 12, RHEL 9; NVIDIA's real driver libraries also load on older ones.
 
 ## References
 

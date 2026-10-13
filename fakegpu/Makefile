@@ -9,7 +9,7 @@
 
 CC      ?= cc
 CFLAGS  ?= -O2 -g
-CFLAGS  += -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-function
+CFLAGS  += -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-function -include glibc_compat.h
 LDFLAGS += -shared -Wl,--no-undefined
 PREFIX  ?= /usr/local
 LIBDIR  ?= $(PREFIX)/lib/fakegpu
@@ -24,6 +24,8 @@ LIBS = $(DRIVER_LIBS) $(PRELOAD_LIBS)
 CU12 = -DCUBLAS_VER_MAJOR=12 -DCUBLAS_VER_MINOR=9 -DCUBLAS_VER_PATCH=1 -DCUDART_VERSION=12090
 
 all: $(LIBS)
+
+$(LIBS): glibc_compat.h
 
 build/%_weak.c: symbols/%.syms
 	@mkdir -p build
