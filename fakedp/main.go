@@ -219,7 +219,13 @@ func serve(dir string, p *plugin) error {
 func main() {
 	specPath := flag.String("cdi-spec", "/etc/cdi/fakegpu.json", "CDI specification of the tray's GPUs")
 	dir := flag.String("plugin-dir", pluginapi.DevicePluginPath, "kubelet device plugin directory")
+	nri := flag.Bool("nri", false, "also add management CDI devices requested by pod annotations (NRI plugin, nri.go)")
+	mgmt := flag.String("management-namespaces", "", "comma-separated namespaces allowed management devices (-nri)")
 	flag.Parse()
+
+	if *nri {
+		go runNRI(strings.Split(*mgmt, ","))
+	}
 
 	gpus, err := readSpec(*specPath)
 	if err != nil {
