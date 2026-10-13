@@ -9,7 +9,9 @@
     secrets: "{{ playbook_dir | dirname }}/.secrets"
     # --project flag for an instance
     proj: "--project {{ hostvars[item].ansible_incus_project }}"
-    limits: "{{ instance_limits | combine(instance_limits_k3s if scheduler == 'k3s' else {}) }}"
+    limits: >-
+      {{ instance_limits | combine(instance_limits_k3s if scheduler == 'k3s' else {})
+         | combine(instance_limits_runai if scheduler == 'k3s' and runai | bool else {}) }}
     # Fixed address of an instance on the bridge (needs `api`, read below).
     address: "{{ api.results[0].stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[item].ip_host }}"
     # Volumes whose data outlives the instances (make down keeps them).
@@ -140,21 +142,39 @@
       register: placement
       changed_when: false
 
-    # A tray whose pinning changes gets its kubelet restarted: the kubelet
-    # copies the node's CPUs into the pod cgroup once, at start, so pods
-    # would keep only the overlap of old and new CPUs.
+    # Pinned cores, or the CPU count when the host has too few cores to pin
+    # (also for instances created with other limits than the current ones).
+    # A k3s node whose CPUs change gets its kubelet restarted: the kubelet
+    # reads the node's capacity and copies its CPUs into the pod cgroup once,
+    # at start, so pods would keep only the overlap of old and new CPUs.
     - name: Pin instances to their cores
       ansible.builtin.shell: |
-        want={{ (placement.stdout | from_json)[item] }}
+        want={{ (placement.stdout | from_json)[item] | default(limits[role].cpu) }}
         [ "$(incus config get {{ item }} limits.cpu {{ proj }})" = "$want" ] && exit 0
         incus config set {{ item }} limits.cpu=$want {{ proj }}
-        case " {{ groups['workers'] | join(' ') }} " in
-          *" {{ item }} "*) incus exec {{ item }} {{ proj }} -- systemctl try-restart k3s-agent.service || true ;;
-        esac
+        incus exec {{ item }} {{ proj }} -- systemctl try-restart k3s.service k3s-agent.service || true
         echo changed
-      loop: "{{ instances | select('in', placement.stdout | from_json) | list }}"
+      vars:
+        role: "{{ ['controller', 'login', 'workers', 'storage', 'nvswitch', 'bmc'] | select('in', hostvars[item].group_names) | first }}"
+      loop: "{{ instances }}"
       register: pinned
       changed_when: "'changed' in pinned.stdout"
+
+    # Memory limits changed in the settings (instance_limits*, runai) reach
+    # existing instances; Incus applies them to a running container at once,
+    # a k3s node's kubelet when it restarts.
+    - name: Apply memory limits
+      ansible.builtin.shell: |
+        want={{ limits[role].memory }}
+        [ "$(incus config get {{ item }} limits.memory {{ proj }})" = "$want" ] && exit 0
+        incus config set {{ item }} limits.memory=$want {{ proj }}
+        incus exec {{ item }} {{ proj }} -- systemctl try-restart k3s.service k3s-agent.service || true
+        echo changed
+      vars:
+        role: "{{ ['controller', 'login', 'workers', 'storage', 'nvswitch', 'bmc'] | select('in', hostvars[item].group_names) | first }}"
+      loop: "{{ instances }}"
+      register: memory
+      changed_when: "'changed' in memory.stdout"
 
     # Let first boot (cloud-init) finish before restarting anything.
     - name: Wait for first boot to finish

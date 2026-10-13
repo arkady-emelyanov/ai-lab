@@ -14,6 +14,10 @@ server: https://{{ groups['controller'][0] }}:{{ k3s_port }}
 node-label:
   - nvidia.com/gpu.present=true
 {% endif %}
-# kubelet in an unprivileged container (user namespace).
+# kubelet in an unprivileged container (user namespace). No client-side
+# limit on image pulls (default 5/s): a chart starting dozens of pods at
+# once (Run:ai) fails them with "pull QPS exceeded"; containerd still pulls
+# each image once, through the registry mirrors.
 kubelet-arg:
   - feature-gates=KubeletInUserNamespace=true
+  - registry-qps=0

@@ -27,6 +27,37 @@
   register: corefile
   changed_when: "' unchanged' not in corefile.stdout"
 
+# local-path creates a volume with a helper pod bound to the volume's node;
+# on the controller its NoExecute taint evicts the pod at once and the claim
+# never binds. k3s keeps the configuration unless its own manifest changes
+# (a k3s upgrade), and this runs again with make configure.
+- name: Read local-path's helper pod
+  ansible.builtin.command: kubectl -n kube-system get configmap local-path-config -o json
+  register: local_path
+  changed_when: false
+
+- name: Let local-path's helper pod run on the controller
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - -n
+      - kube-system
+      - patch
+      - configmap
+      - local-path-config
+      - --type=merge
+      - -p
+      - "{{ {'data': {'helperPod.yaml': helper | trim ~ '\n  tolerations:\n  - operator: Exists\n'}} | to_json }}"
+  vars:
+    helper: "{{ (local_path.stdout | from_json).data['helperPod.yaml'] }}"
+  when: "'tolerations' not in helper"
+  register: local_path_patched
+
+# Claims that already failed wait out the provisioner's backoff otherwise.
+- name: Restart local-path with the new helper pod
+  ansible.builtin.command: kubectl -n kube-system rollout restart deployment/local-path-provisioner
+  when: local_path_patched is changed
+
 - name: Install the add-on charts (k3s Helm controller)
   ansible.builtin.template:
     src: addons.yaml.j2
