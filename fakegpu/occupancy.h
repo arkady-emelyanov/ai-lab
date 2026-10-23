@@ -66,6 +66,29 @@ struct fg_gpu_net {
     uint64_t ib_rx;       /* bytes received */
 };
 
+/* MIG state of a GPU (mig.h): the mode, and GPU instances by GI id (the
+ * slot of their placement), each with its compute instances by CI id. */
+#define FG_MIG_SLOTS 15
+#define FG_MIG_CIS 8
+
+struct fg_mig_ci {
+    uint8_t used, profile; /* profile: NVML compute instance profile index */
+    uint8_t start, size;   /* placement in the GI's compute slices */
+};
+
+struct fg_mig_gi {
+    uint8_t used, profile; /* profile: entry in mig_profiles (mig.h) */
+    uint8_t start, size;   /* placement in the GPU's memory slices */
+    uint32_t serial;       /* when it was created (MIG UUIDs) */
+    struct fg_mig_ci ci[FG_MIG_CIS];
+};
+
+struct fg_gpu_mig {
+    uint32_t current, pending; /* MIG mode: 1 enabled */
+    uint32_t serial, pad;
+    struct fg_mig_gi gi[FG_MIG_SLOTS];
+};
+
 /* Fields added later go after everything older versions map, so processes
  * still running an older library never read or clear them. */
 struct fg_occupancy {
@@ -74,6 +97,7 @@ struct fg_occupancy {
     uint64_t pidns[FG_MAX_PROCS]; /* slot owner's PID namespace (inode of /proc/self/ns/pid) */
     struct fg_gpu_reset reset[FG_MAX_GPUS];
     struct fg_gpu_net net[FG_MAX_GPUS];
+    struct fg_gpu_mig mig[FG_MAX_GPUS];
 };
 
 static inline uint64_t fg_now_ns(void)
@@ -257,13 +281,19 @@ static inline uint64_t fg_mem_limit(void)
     return fg_limit;
 }
 
+/* The memory of the MIG device this process's current context is on, 0 when
+ * it is a whole GPU (libcuda, cuda_stub.c; absent from NVML). */
+uint64_t fg_mig_mem_limit(void) __attribute__((weak));
+
 /* Whether n more bytes of device memory fit on a GPU for this process: in
- * the GPU's memory, and within the process's limit. */
+ * the GPU's memory, within the process's limit, and within its MIG device. */
 static inline int fg_mem_fits(int gpu, uint64_t n)
 {
     if (fg_gpu_mem_used(gpu) + n > fg_mem_bytes()) return 0;
     uint64_t limit = fg_mem_limit();
-    return !limit || fg_own_mem(gpu) + n <= limit;
+    if (limit && fg_own_mem(gpu) + n > limit) return 0;
+    uint64_t mig = fg_mig_mem_limit ? fg_mig_mem_limit() : 0;
+    return !mig || fg_own_mem(gpu) + n <= mig;
 }
 
 #endif

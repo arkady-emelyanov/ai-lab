@@ -94,6 +94,25 @@ There is no GPU memory to clear: the lab keeps "GPU memory" in the process's own
 
 `nvidia-smi` ignores `CUDA_VISIBLE_DEVICES`, like the real one, so inside a Slurm job it lists all four GPUs. Real clusters hide the others with device cgroups (`ConstrainDevices=yes`), which the lab's containers cannot use.
 
+### MIG
+
+The GPUs do MIG (Multi-Instance GPU) as GB200s do: a GPU splits into GPU instances and those into compute instances, each compute instance a MIG device with its own `MIG-` UUID, its GPU instance's memory and its own SMs. NVIDIA's own tools run on it unchanged: `mig-parted` (the GPU Operator's MIG manager) applies, asserts and exports every one of its GB200 configurations, and GPU Feature Discovery labels the MIG devices (`make test-fakegpu` checks both, built from NVIDIA's sources).
+
+- **Profiles** are GB200's, from real `nvidia-smi mig -lgip` output: `1g.23gb` (7 instances, 18 SMs), `1g.23gb+me`, `1g.47gb` (4), `2g.47gb` (3), `3g.93gb` (2), `4g.93gb`, `7g.186gb`; each with its memory, SMs and engines, placements on the GPU's 8 memory slices, and compute instance profiles (`1c.3g.93gb`, ...). GPU instance IDs are the hardware's slots: the whole GPU is 0, a `1g` at slot 6 is 13, as on GB200.
+- **MIG mode** switches at once on an idle GPU (Hopper and later); with a process on the GPU it is pending until the GPU's next reset (`nvidia-smi -r`). Disabling it with instances is refused, as is destroying a GPU instance that still has compute instances; a full GPU or an occupied placement is `Insufficient Resources`.
+- **State** is the tray's: NVML keeps MIG mode and instances in the tray's shared GPU state, so every process, pod and tool on the tray sees the same layout.
+- **NVML** implements the MIG API go-nvml, go-nvlib, mig-parted, NVIDIA's device plugin and DRA driver, Slurm and dcgm-exporter use: profiles (v1, v2, v3, by id), placements, GPU and compute instances (create, list, by id, info, destroy, remaining capacity), MIG device handles (dense indices, UUID lookup, parent, instance ids, attributes, memory, name `NVIDIA GB200 MIG 1g.23gb`).
+- **CUDA**: a MIG-enabled GPU shows as its MIG devices, one per GPU instance (none while it has no compute instance), and `CUDA_VISIBLE_DEVICES` takes `MIG-` UUIDs. A MIG device has its slice's memory (allocations beyond it fail), its compute instance's SMs, no peers and no fabric memory, and runs work slower in proportion to its SMs.
+- **nvidia-smi**: `-mig 0|1`, `mig -lgip`, `-lgipp`, `-lcip`, `-lgi`, `-lci`, `-cgi <profiles> [-C]`, `-cci`, `-dci`, `-dgi`, MIG devices in `-L` and `-q`, `mig.mode.current` and `.pending`, and `-i` with PCI bus ids, in the formats a GB200 prints.
+
+```
+nvidia-smi -i 0 -mig 1
+nvidia-smi mig -i 0 -cgi 3g.93gb,1g.23gb,1g.23gb -C
+nvidia-smi -L                                  # GPU 0, then its MIG devices and their MIG- UUIDs
+CUDA_VISIBLE_DEVICES=MIG-... python train.py   # a 1g.23gb slice: 22 GiB, 18 SMs
+nvidia-smi mig -dci && nvidia-smi mig -dgi && nvidia-smi -mig 0
+```
+
 ### GPU fractions
 
 A container given part of a GPU (NVIDIA's GPU fractioning, with [Run:ai](runai.md#gpu-fractions)) gets `NVIDIA_GPU_MEMORY_LIMIT`, in MiB, which the driver enforces through MPS memory accounting. The fake driver does the same for each process on each GPU:
@@ -204,6 +223,7 @@ While a GPU job runs, `nvidia-smi` on its tray shows its processes with memory, 
   - CUDA's NUMA device attribute (`cudaDeviceProp.deviceNumaId`) is not reported.
 - Unusual APIs reach generated no-ops that return success without filling outputs; mainstream PyTorch, Ray, NCCL and NVML paths are implemented.
 - Only x86-64; the stubs mimic CUDA 13 (and the CUDA 12 SONAMEs for cuBLAS).
+- MIG: compute instances inside one GPU instance share its memory, and SM counts of partial compute instances (not published for GB200) are the GPU instance's split by slices. No `/proc/driver/nvidia/capabilities` or `/proc/driver/nvidia-caps/mig-minors` entries for MIG devices, so tools that hand MIG devices to containers through them (NVIDIA's device plugin, its DRA driver's MIG devices, Slurm's MIG GRES) cannot yet; MIG instances survive a tray's reboot.
 - A GPU fraction shares its GPU's memory but not its compute: each process's work runs at the whole GPU's modelled speed, and per-process utilisation is an even split of the GPU's.
 - The libraries need glibc 2.33 or newer (`fakegpu/glibc_compat.h` keeps them off newer symbol versions), so they load in images built on Ubuntu 22.04 or later, Debian 12, RHEL 9; NVIDIA's real driver libraries also load on older ones.
 

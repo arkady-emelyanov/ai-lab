@@ -3,7 +3,9 @@
 
 Supported: default table, -L, topo -m, nvlink -s, -q [-d FABRIC], dmon [-c N],
 --query-gpu=FIELDS / --query-compute-apps=FIELDS --format=csv[,noheader][,nounits],
--i IDS, -l SECONDS, -r / --gpu-reset [-i IDS] (root, GPUs without processes).
+-i IDS (indices or PCI bus ids), -l SECONDS, -r / --gpu-reset [-i IDS] (root, GPUs
+without processes), MIG: -mig 0|1, mig -lgip | -lgipp | -lcip [-gi IDS] | -lgi | -lci |
+-cgi PROFILES [-C] | -cci [PROFILES] -gi IDS | -dci [-gi IDS] [-ci IDS] | -dgi [-gi IDS].
 """
 import ctypes
 import datetime
@@ -53,6 +55,54 @@ class FabricInfo(ctypes.Structure):
 
 
 NVML_NVLINK_MAX_LINKS = 64  # links are enumerated until NVML rejects the index
+
+# ---- MIG (NVML's MIG API, nvml.h) ----
+
+class GiProfileInfo(ctypes.Structure):  # nvmlGpuInstanceProfileInfo_v2_t
+    _fields_ = [("version", ctypes.c_uint), ("id", ctypes.c_uint), ("isP2pSupported", ctypes.c_uint),
+                ("sliceCount", ctypes.c_uint), ("instanceCount", ctypes.c_uint), ("multiprocessorCount", ctypes.c_uint),
+                ("copyEngineCount", ctypes.c_uint), ("decoderCount", ctypes.c_uint), ("encoderCount", ctypes.c_uint),
+                ("jpegCount", ctypes.c_uint), ("ofaCount", ctypes.c_uint), ("memorySizeMB", ctypes.c_ulonglong),
+                ("name", ctypes.c_char * 96)]
+
+
+class Placement(ctypes.Structure):
+    _fields_ = [("start", ctypes.c_uint), ("size", ctypes.c_uint)]
+
+
+class GiInfo(ctypes.Structure):
+    _fields_ = [("device", ctypes.c_void_p), ("id", ctypes.c_uint), ("profileId", ctypes.c_uint),
+                ("placement", Placement)]
+
+
+class CiProfileInfo(ctypes.Structure):  # nvmlComputeInstanceProfileInfo_v2_t
+    _fields_ = [("version", ctypes.c_uint), ("id", ctypes.c_uint), ("sliceCount", ctypes.c_uint),
+                ("instanceCount", ctypes.c_uint), ("multiprocessorCount", ctypes.c_uint),
+                ("sharedCopyEngineCount", ctypes.c_uint), ("sharedDecoderCount", ctypes.c_uint),
+                ("sharedEncoderCount", ctypes.c_uint), ("sharedJpegCount", ctypes.c_uint),
+                ("sharedOfaCount", ctypes.c_uint), ("name", ctypes.c_char * 96)]
+
+
+class CiInfo(ctypes.Structure):
+    _fields_ = [("device", ctypes.c_void_p), ("gpuInstance", ctypes.c_void_p), ("id", ctypes.c_uint),
+                ("profileId", ctypes.c_uint), ("placement", Placement)]
+
+
+class Attributes(ctypes.Structure):
+    _fields_ = [("multiprocessorCount", ctypes.c_uint), ("sharedCopyEngineCount", ctypes.c_uint),
+                ("sharedDecoderCount", ctypes.c_uint), ("sharedEncoderCount", ctypes.c_uint),
+                ("sharedJpegCount", ctypes.c_uint), ("sharedOfaCount", ctypes.c_uint),
+                ("gpuInstanceSliceCount", ctypes.c_uint), ("computeInstanceSliceCount", ctypes.c_uint),
+                ("memorySizeMB", ctypes.c_ulonglong)]
+
+
+MIG_PROFILE_COUNT, MIG_CI_PROFILE_COUNT = 18, 9
+IN_USE, INSUFFICIENT_RESOURCES, NOT_FOUND = 19, 23, 6
+
+
+def error(ret):
+    nvml.nvmlErrorString.restype = ctypes.c_char_p
+    return nvml.nvmlErrorString(ret).decode()
 
 
 def check(ret):
@@ -133,6 +183,29 @@ class Gpu:
         check(nvml.nvmlDeviceGetFieldValues(h, 1, ctypes.byref(fv)))
         self.nvlink_gbs = (fv.value & 0xFFFFFFFF) / 1000 if fv.nvmlReturn == 0 else 0
         self.procs = processes(h)
+        cur, pend = ctypes.c_uint(), ctypes.c_uint()
+        check(nvml.nvmlDeviceGetMigMode(h, ctypes.byref(cur), ctypes.byref(pend)))
+        self.mig_current, self.mig_pending = cur.value, pend.value
+        self.mig_devices = mig_devices(h)
+
+
+def mig_devices(h):
+    """(index, GI id, CI id, UUID, CI name, attributes) of a GPU's MIG devices."""
+    out = []
+    n = ctypes.c_uint()
+    check(nvml.nvmlDeviceGetMaxMigDeviceCount(h, ctypes.byref(n)))
+    for i in range(n.value):
+        m = ctypes.c_void_p()
+        if nvml.nvmlDeviceGetMigDeviceHandleByIndex(h, i, ctypes.byref(m)) != 0:
+            break
+        gi, ci = ctypes.c_uint(), ctypes.c_uint()
+        check(nvml.nvmlDeviceGetGpuInstanceId(m, ctypes.byref(gi)))
+        check(nvml.nvmlDeviceGetComputeInstanceId(m, ctypes.byref(ci)))
+        a = Attributes()
+        check(nvml.nvmlDeviceGetAttributes_v2(m, ctypes.byref(a)))
+        name = string("nvmlDeviceGetName", m).split(" MIG ", 1)[1]
+        out.append((i, gi.value, ci.value, string("nvmlDeviceGetUUID", m), name, a))
+    return out
 
 
 def process_name(pid):
@@ -259,6 +332,24 @@ def query(devs):
         print(f"        Health")
         print(f"            Bandwidth                     : Full")
         print(f"            Summary                       : Healthy")
+        print(f"    MIG Mode")
+        print(f"        Current                           : {'Enabled' if g.mig_current else 'Disabled'}")
+        print(f"        Pending                           : {'Enabled' if g.mig_pending else 'Disabled'}")
+        for i, gi, ci, _uuid, _name, a in g.mig_devices:
+            print(f"    MIG Device")
+            print(f"        Index                             : {i}")
+            print(f"        GPU Instance ID                   : {gi}")
+            print(f"        Compute Instance ID               : {ci}")
+            print(f"        Device Attributes")
+            print(f"            Shared")
+            print(f"                Multiprocessor count      : {a.multiprocessorCount}")
+            print(f"                Copy Engine count         : {a.sharedCopyEngineCount}")
+            print(f"                Encoder count             : {a.sharedEncoderCount}")
+            print(f"                Decoder count             : {a.sharedDecoderCount}")
+            print(f"                OFA count                 : {a.sharedOfaCount}")
+            print(f"                JPG count                 : {a.sharedJpegCount}")
+            print(f"        FB Memory Usage")
+            print(f"            Total                         : {a.memorySizeMB} MiB")
         print(f"    FB Memory Usage")
         print(f"        Total                             : {g.mem_total} MiB")
         print(f"        Used                              : {g.mem_used} MiB")
@@ -276,7 +367,8 @@ FIELDS = {
     "power.limit": lambda g: (f"{g.power_limit:.2f}", "W"), "pstate": lambda g: f"P{g.pstate}",
     "clocks.sm": lambda g: (g.sm_clock, "MHz"), "clocks.mem": lambda g: (g.mem_clock, "MHz"),
     "compute_cap": lambda g: "10.0", "persistence_mode": lambda g: "Enabled",
-    "mig.mode.current": lambda g: "Disabled", "fabric.state": lambda g: g.fabric_state,
+    "mig.mode.current": lambda g: "Enabled" if g.mig_current else "Disabled",
+    "mig.mode.pending": lambda g: "Enabled" if g.mig_pending else "Disabled", "fabric.state": lambda g: g.fabric_state,
     "fabric.clique_id": lambda g: g.clique, "fabric.cluster_uuid": lambda g: g.cluster_uuid,
     "count": lambda g: len(gpus()),
     "temperature.memory": lambda g: g.temp + 4, "power.max_limit": lambda g: (f"{g.power_limit:.2f}", "W"),
@@ -359,15 +451,43 @@ def gpu_reset(ids):
     sys.exit(1 if failed else 0)
 
 
+def parse_ids(arg):
+    """GPU indices from -i: indices or PCI bus ids (as mig-parted passes them)."""
+    ids = set()
+    n = ctypes.c_uint()
+    check(nvml.nvmlDeviceGetCount_v2(ctypes.byref(n)))
+    for x in arg.split(","):
+        x = x.strip()
+        if x.isdigit():
+            ids.add(int(x))
+            continue
+        for i in range(n.value):
+            h = ctypes.c_void_p()
+            check(nvml.nvmlDeviceGetHandleByIndex_v2(i, ctypes.byref(h)))
+            pci = PciInfo()
+            check(nvml.nvmlDeviceGetPciInfo_v3(h, ctypes.byref(pci)))
+            if pci.busId.decode().lower().endswith(x.lower().split(":", 1)[-1]) and \
+                    int(pci.busId.decode().split(":")[0], 16) == int(x.split(":")[0], 16):
+                ids.add(i)
+                break
+        else:
+            sys.exit(f"No devices were found matching {x}")
+    return ids
+
+
 def main(argv):
     check(nvml.nvmlInit_v2())
+    if argv[:1] == ["mig"]:
+        return mig(argv[1:])
     ids, fmt, fields, apps, loop, count, rest = None, "csv", None, None, None, None, []
     it = iter(argv)
     for a in it:
         if a in ("-i", "--id"):
-            ids = {int(x) for x in next(it).split(",")}
+            ids = parse_ids(next(it))
         elif a.startswith("--id="):
-            ids = {int(x) for x in a.split("=", 1)[1].split(",")}
+            ids = parse_ids(a.split("=", 1)[1])
+        elif a in ("-mig", "--multi-instance-gpu"):
+            rest = ["-mig", next(it)]
         elif a.startswith("--query-gpu="):
             fields = a.split("=", 1)[1]
         elif a.startswith("--query-compute-apps="):
@@ -388,6 +508,8 @@ def main(argv):
         return dmon(ids, count)
     if rest[:1] in (["-r"], ["--gpu-reset"]):
         return gpu_reset(ids)
+    if rest[:1] == ["-mig"]:
+        return set_mig_mode(ids, rest[1])
     while True:
         run(ids, fields, apps, fmt, rest, argv)
         if not loop:
@@ -404,6 +526,8 @@ def run(ids, fields, apps, fmt, rest, argv):
     elif rest[:1] in (["-L"], ["--list-gpus"]):
         for g in devs:
             print(f"GPU {g.index}: {g.name} (UUID: {g.uuid})")
+            for i, _gi, _ci, uuid, name, _a in g.mig_devices:
+                print(f"  {'MIG ' + name:<16}Device {i:2d}: (UUID: {uuid})")
     elif rest[:2] == ["topo", "-m"]:
         topo(devs)
     elif rest[:2] == ["topo", "-gnid"]:  # the GPU's own NUMA node, N/A where its memory is not one
@@ -417,6 +541,353 @@ def run(ids, fields, apps, fmt, rest, argv):
         table(devs)
     else:
         sys.exit(f"nvidia-smi (fakegpu): unsupported arguments: {' '.join(argv)}")
+
+
+# ---- MIG commands ----
+
+
+def handles(ids):
+    n = ctypes.c_uint()
+    check(nvml.nvmlDeviceGetCount_v2(ctypes.byref(n)))
+    out = []
+    for i in range(n.value):
+        if ids is None or i in ids:
+            h = ctypes.c_void_p()
+            check(nvml.nvmlDeviceGetHandleByIndex_v2(i, ctypes.byref(h)))
+            pci = PciInfo()
+            check(nvml.nvmlDeviceGetPciInfo_v3(h, ctypes.byref(pci)))
+            out.append((i, h, pci.busId.decode()))
+    return out
+
+
+def set_mig_mode(ids, mode):
+    """nvidia-smi -mig 0|1: at once on an idle GPU (Hopper and later), else
+    pending until a GPU reset; disabling with instances is refused."""
+    mode = int(mode)
+    word = "enable" if mode else "disable"
+    for _i, h, bus in handles(ids):
+        act = ctypes.c_int()
+        ret = nvml.nvmlDeviceSetMigMode(h, mode, ctypes.byref(act))
+        if ret != 0:
+            print(f"Unable to {word} MIG Mode for GPU {bus}: {error(ret)}")
+            print("Terminating early due to previous errors.")
+            sys.exit(ret)
+        if act.value == 0:
+            print(f"{'Enabled' if mode else 'Disabled'} MIG Mode for GPU {bus}")
+        else:
+            print(f"Warning: MIG mode is in pending {word} state for GPU {bus}:{error(act.value)}")
+            print(f"Reboot the system or try nvidia-smi --gpu-reset to make MIG mode effective on GPU {bus}")
+    print("All done.")
+
+
+def gi_profiles(h):
+    """GPU instance profiles: (index, info)."""
+    out = []
+    for i in range(MIG_PROFILE_COUNT):
+        info = GiProfileInfo(version=ctypes.sizeof(GiProfileInfo) | (2 << 24))
+        if nvml.nvmlDeviceGetGpuInstanceProfileInfoV(h, i, ctypes.byref(info)) == 0:
+            out.append((i, info))
+    return out
+
+
+def profile_arg(h, arg):
+    """A profile given by id or name (1g.23gb, MIG 1g.23gb)."""
+    for _i, p in gi_profiles(h):
+        if arg == str(p.id) or arg in (p.name.decode(), p.name.decode()[4:]):
+            return p
+    return None
+
+
+def gpu_instances(h):
+    """(id, GI handle, info, profile) of a GPU's GPU instances, by id."""
+    out = []
+    for _i, p in gi_profiles(h):
+        n = ctypes.c_uint(p.instanceCount)
+        buf = (ctypes.c_void_p * max(p.instanceCount, 1))()
+        if nvml.nvmlDeviceGetGpuInstances(h, p.id, buf, ctypes.byref(n)) != 0:
+            continue
+        for g in buf[:n.value]:
+            g = ctypes.c_void_p(g)
+            info = GiInfo()
+            check(nvml.nvmlGpuInstanceGetInfo(g, ctypes.byref(info)))
+            out.append((info.id, g, info, p))
+    return sorted(out, key=lambda x: x[0])
+
+
+def ci_profiles(gi):
+    out = []
+    for j in range(MIG_CI_PROFILE_COUNT):
+        info = CiProfileInfo(version=ctypes.sizeof(CiProfileInfo) | (2 << 24))
+        if nvml.nvmlGpuInstanceGetComputeInstanceProfileInfoV(gi, j, 0, ctypes.byref(info)) == 0:
+            out.append(info)
+    return out
+
+
+def default_ci(gi):
+    """The default compute instance profile (marked * by -lcip): the most SMs."""
+    return max(ci_profiles(gi), key=lambda c: c.multiprocessorCount)
+
+
+def compute_instances(gi):
+    out = []
+    for c in ci_profiles(gi):
+        n = ctypes.c_uint(c.instanceCount)
+        buf = (ctypes.c_void_p * max(c.instanceCount, 1))()
+        if nvml.nvmlGpuInstanceGetComputeInstances(gi, c.id, buf, ctypes.byref(n)) != 0:
+            continue
+        for x in buf[:n.value]:
+            x = ctypes.c_void_p(x)
+            info = CiInfo()
+            check(nvml.nvmlComputeInstanceGetInfo_v2(x, ctypes.byref(info)))
+            out.append((info.id, x, info, c))
+    return sorted(out, key=lambda x: x[0])
+
+
+def create_ci(i, gid, gi, c):
+    ci = ctypes.c_void_p()
+    ret = nvml.nvmlGpuInstanceCreateComputeInstance(gi, c.id, ctypes.byref(ci))
+    if ret != 0:
+        print(f"Unable to create a compute instance on GPU {i:2d} GPU instance ID {gid:2d} using profile {c.id}: "
+              f"{error(ret)}")
+        return ret
+    info = CiInfo()
+    check(nvml.nvmlComputeInstanceGetInfo_v2(ci, ctypes.byref(info)))
+    print(f"Successfully created compute instance ID {info.id:2d} on GPU {i:2d} GPU instance ID {gid:2d} "
+          f"using profile {c.name.decode()} (ID {c.id:2d})")
+    return 0
+
+
+def mig(argv):
+    ids, gis, cis, cmd, arg, default = None, None, None, None, None, False
+    names = {"--list-gpu-instance-profiles": "lgip", "--list-gpu-instance-possible-placements": "lgipp",
+             "--list-compute-instance-profiles": "lcip", "--list-gpu-instances": "lgi",
+             "--list-compute-instances": "lci", "--destroy-compute-instance": "dci",
+             "--destroy-gpu-instance": "dgi", "--create-gpu-instance": "cgi", "--create-compute-instance": "cci"}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        value = argv[i + 1] if i + 1 < len(argv) else None
+        if a in ("-i", "--id"):
+            ids, i = parse_ids(value), i + 1
+        elif a in ("-gi", "--gpu-instance-id"):
+            gis, i = {int(x) for x in value.split(",")}, i + 1
+        elif a in ("-ci", "--compute-instance-id"):
+            cis, i = {int(x) for x in value.split(",")}, i + 1
+        elif a in ("-C", "--default-compute-instance"):
+            default = True
+        elif a in ("-lgip", "-lgipp", "-lcip", "-lgi", "-lci", "-dci", "-dgi", "-cgi", "-cci") or a in names:
+            cmd = names.get(a, a[1:])
+            if cmd in ("cgi", "cci") and value is not None and not value.startswith("-"):
+                arg, i = value, i + 1  # profiles: required for -cgi, optional for -cci
+        else:
+            sys.exit(f"nvidia-smi (fakegpu): unsupported arguments: mig {' '.join(argv)}")
+        i += 1
+    devs = handles(ids)
+    if cmd == "lgip":
+        return list_gi_profiles(devs)
+    if cmd == "lgipp":
+        return list_placements(devs)
+    if cmd == "lcip":
+        return list_ci_profiles(devs, gis)
+    if cmd == "lgi":
+        return list_gis(devs)
+    if cmd == "lci":
+        return list_cis(devs, gis)
+    if cmd == "cgi":
+        return create_gis(devs, arg or "", default)
+    if cmd == "cci":
+        return create_cis(devs, arg, gis)
+    if cmd == "dci":
+        return destroy_cis(devs, gis, cis)
+    if cmd == "dgi":
+        return destroy_gis(devs, gis)
+    sys.exit("nvidia-smi (fakegpu): mig: no command")
+
+
+def box(title, header, rows, width):
+    line = "+" + "-" * width + "+"
+    print(line)
+    print(f"| {title:<{width - 1}}|")
+    for h in header:
+        print(f"| {h:<{width - 1}}|")
+    print("|" + "=" * width + "|")
+    for i, row in enumerate(rows):
+        for r in row:
+            print(f"|{r:<{width}}|")
+        print(line)
+    if not rows:
+        print(line)
+
+
+def list_gi_profiles(devs):
+    rows = []
+    for i, h, _bus in devs:
+        for _idx, p in gi_profiles(h):
+            free = ctypes.c_uint(p.instanceCount)
+            if nvml.nvmlDeviceGetGpuInstanceRemainingCapacity(h, p.id, ctypes.byref(free)) != 0:
+                free.value = p.instanceCount
+            rows.append([f"  {i:2d}  {p.name.decode():<18}{p.id:3d}     {free.value}/{p.instanceCount:<7}"
+                         f"{p.memorySizeMB / 1024:>8.2f}      No     {p.multiprocessorCount:<6} {p.decoderCount:<5} "
+                         f"{p.encoderCount:<4}",
+                         f"{'':>62}{p.copyEngineCount:<6} {p.jpegCount:<5} {p.ofaCount:<4}"])
+    box("GPU instance profiles:",
+        ["GPU   Name               ID    Instances   Memory     P2P    SM    DEC   ENC",
+         "                                Free/Total   GiB              CE    JPEG  OFA"], rows, 81)
+
+
+def list_placements(devs):
+    for i, h, _bus in devs:
+        for _idx, p in gi_profiles(h):
+            n = ctypes.c_uint(0)
+            check(nvml.nvmlDeviceGetGpuInstancePossiblePlacements_v2(h, p.id, None, ctypes.byref(n)))
+            buf = (Placement * max(n.value, 1))()
+            check(nvml.nvmlDeviceGetGpuInstancePossiblePlacements_v2(h, p.id, buf, ctypes.byref(n)))
+            starts = ",".join(str(x.start) for x in buf[:n.value])
+            label = "Placement :" if n.value == 1 else "Placements:"
+            print(f"GPU {i:2d} Profile ID {p.id:2d} {label} {{{starts}}}:{buf[0].size}")
+
+
+def list_ci_profiles(devs, gis):
+    rows = []
+    for i, h, _bus in devs:
+        for gid, gi, _info, p in gpu_instances(h):
+            if gis is not None and gid not in gis:
+                continue
+            best = default_ci(gi)
+            for c in ci_profiles(gi):
+                free = ctypes.c_uint(c.instanceCount)
+                nvml.nvmlGpuInstanceGetComputeInstanceRemainingCapacity(gi, c.id, ctypes.byref(free))
+                mark = "*" if c.id == best.id else " "
+                rows.append([f"  {i:2d}     {gid:2d}       {c.name.decode():<20}{c.id:2d}{mark}     "
+                             f"{free.value}/{c.instanceCount:<12}{c.multiprocessorCount:<9}"
+                             f"{c.sharedDecoderCount:<6}{c.sharedEncoderCount:<6}{c.sharedOfaCount:<4}",
+                             f"{'':>70}{c.sharedCopyEngineCount:<6}{c.sharedJpegCount:<4}"])
+    box("Compute instance profiles:",
+        ["GPU     GPU       Name             Profile  Instances   Exclusive       Shared",
+         "      Instance                       ID     Free/Total     SM       DEC   ENC   OFA",
+         "        ID                                                          CE    JPEG"], rows, 88)
+
+
+def list_gis(devs):
+    rows = []
+    for i, h, _bus in devs:
+        for gid, _gi, info, p in gpu_instances(h):
+            rows.append([f"  {i:2d}  {p.name.decode():<16}{p.id:4d}     {gid:4d}       "
+                         f"{info.placement.start:3d}:{info.placement.size:<6}"])
+    if not rows:
+        print("No GPU instances found: Not Found")
+        sys.exit(NOT_FOUND)
+    box("GPU instances:", ["GPU   Name             Profile  Instance   Placement",
+                           "                         ID       ID       Start:Size"], rows, 55)
+
+
+def list_cis(devs, gis):
+    rows = []
+    for i, h, _bus in devs:
+        for gid, gi, _info, _p in gpu_instances(h):
+            if gis is not None and gid not in gis:
+                continue
+            for cid, _ci, info, c in compute_instances(gi):
+                rows.append([f"  {i:2d}     {gid:2d}       {c.name.decode():<18}{c.id:3d}       {cid:3d}       "
+                             f"{info.placement.start:3d}:{info.placement.size:<5}"])
+    if not rows:
+        print("No compute instances found: Not Found")
+        sys.exit(NOT_FOUND)
+    box("Compute instances:", ["GPU     GPU       Name             Profile   Instance   Placement",
+                               "      Instance                       ID        ID       Start:Size",
+                               "        ID"], rows, 68)
+
+
+def create_gis(devs, arg, default):
+    failed = 0
+    for i, h, _bus in devs:
+        for item in [x.strip() for x in arg.split(",") if x.strip()]:
+            p = profile_arg(h, item)
+            if p is None:
+                print(f"Unable to create a GPU instance on GPU {i:2d} using profile {item}: Invalid Argument")
+                failed = failed or 2
+                continue
+            gi = ctypes.c_void_p()
+            ret = nvml.nvmlDeviceCreateGpuInstance(h, p.id, ctypes.byref(gi))
+            if ret != 0:
+                print(f"Unable to create a GPU instance on GPU {i:2d} using profile {item}: {error(ret)}")
+                failed = failed or ret
+                continue
+            info = GiInfo()
+            check(nvml.nvmlGpuInstanceGetInfo(gi, ctypes.byref(info)))
+            print(f"Successfully created GPU instance ID {info.id:2d} on GPU {i:2d} using profile "
+                  f"{p.name.decode()} (ID {p.id:2d})")
+            if default:
+                failed = create_ci(i, info.id, gi, default_ci(gi)) or failed
+    if failed:
+        print(f"Failed to create GPU instances: {error(failed)}")
+        sys.exit(failed)
+
+
+def create_cis(devs, arg, gis):
+    failed = 0
+    for i, h, _bus in devs:
+        for gid, gi, _info, _p in gpu_instances(h):
+            if gis is not None and gid not in gis:
+                continue
+            profiles = ci_profiles(gi)
+            wanted = [default_ci(gi)] if not arg else [
+                next((c for c in profiles if item.strip() in (str(c.id), c.name.decode(), c.name.decode()[4:])), None)
+                for item in arg.split(",")]
+            for c in wanted:
+                if c is None:
+                    failed = failed or 2
+                    continue
+                failed = create_ci(i, gid, gi, c) or failed
+    if failed:
+        print(f"Failed to create compute instances: {error(failed)}")
+        sys.exit(failed)
+
+
+def destroy_cis(devs, gis, cis):
+    found = failed = 0
+    for i, h, _bus in devs:
+        for gid, gi, _info, _p in gpu_instances(h):
+            if gis is not None and gid not in gis:
+                continue
+            for cid, ci, _info, _c in compute_instances(gi):
+                if cis is not None and cid not in cis:
+                    continue
+                found += 1
+                ret = nvml.nvmlComputeInstanceDestroy(ci)
+                if ret != 0:
+                    print(f"Unable to destroy compute instance ID {cid:2d} from GPU {i:2d} GPU instance ID {gid:2d}: "
+                          f"{error(ret)}")
+                    failed = failed or ret
+                else:
+                    print(f"Successfully destroyed compute instance ID {cid:2d} from GPU {i:2d} GPU instance ID {gid:2d}")
+    if not found:
+        print("No compute instances found: Not Found")
+        sys.exit(NOT_FOUND)
+    if failed:
+        print(f"Failed to destroy compute instances: {error(failed)}")
+        sys.exit(failed)
+
+
+def destroy_gis(devs, gis):
+    found = failed = 0
+    for i, h, _bus in devs:
+        for gid, gi, _info, _p in gpu_instances(h):
+            if gis is not None and gid not in gis:
+                continue
+            found += 1
+            ret = nvml.nvmlGpuInstanceDestroy(gi)
+            if ret != 0:
+                print(f"Unable to destroy GPU instance ID {gid:2d} from GPU {i:2d}: {error(ret)}")
+                failed = failed or ret
+            else:
+                print(f"Successfully destroyed GPU instance ID {gid:2d} from GPU {i:2d}")
+    if not found:
+        print("No GPU instances found: Not Found")
+        sys.exit(NOT_FOUND)
+    if failed:
+        print(f"Failed to destroy GPU instances: {error(failed)}")
+        sys.exit(failed)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <math.h>
-#include "occupancy.h"
+#include "mig.h"
 
 typedef int nvmlReturn_t;
 
@@ -47,6 +47,34 @@ static int dev_idx(nvmlDevice_t d)
     if (idx < 0) return NVML_ERROR_INVALID_ARGUMENT;                \
     (void)idx
 
+/* MIG handles (MIG section below): a GPU instance, a compute instance, and a
+ * MIG device (an nvmlDevice_t of its own), each naming its GPU by visible
+ * index and its instances by id. Valid while the instances exist. */
+struct mig_handle { unsigned magic; int vis, gi, ci; };
+#define GI_MAGIC 0x6151A7CEu
+#define CI_MAGIC 0xC151A7CEu
+#define MIGDEV_MAGIC 0x41D0E71Cu
+static struct mig_handle gi_handles[FG_MAX_GPUS][FG_MIG_SLOTS];
+static struct mig_handle ci_handles[FG_MAX_GPUS][FG_MIG_SLOTS][FG_MIG_CIS];
+static struct mig_handle mig_dev_handles[FG_MAX_GPUS][FG_MIG_SLOTS][FG_MIG_CIS];
+
+/* The MIG device a handle is, if it is one and its instances exist. */
+static struct mig_handle *mig_dev_of(const void *d)
+{
+    const struct mig_handle *h = d;
+    if (h < &mig_dev_handles[0][0][0] || h >= &mig_dev_handles[0][0][0] + sizeof mig_dev_handles / sizeof *h)
+        return NULL;
+    if (h->magic != MIGDEV_MAGIC || !mig_ci_exists(fg_phys(h->vis), h->gi, h->ci, NULL, NULL)) return NULL;
+    return (struct mig_handle *)h;
+}
+
+static nvmlReturn_t copy_str(char *dst, unsigned len, const char *src);
+static nvmlReturn_t mig_dev_uuid(struct mig_handle *h, char *uuid, unsigned len);
+static nvmlReturn_t mig_dev_name(struct mig_handle *h, char *name, unsigned len);
+static unsigned long long mig_dev_mem(struct mig_handle *h);
+static int mig_dev_index(struct mig_handle *h);
+static int mig_find_uuid(const char *uuid, nvmlDevice_t *d);
+
 static nvmlReturn_t copy_str(char *dst, unsigned len, const char *src)
 {
     if (!dst) return NVML_ERROR_INVALID_ARGUMENT;
@@ -70,6 +98,8 @@ API const char *nvmlErrorString(nvmlReturn_t r)
     case NVML_ERROR_NOT_SUPPORTED: return "Not Supported";
     case NVML_ERROR_NOT_FOUND: return "Not Found";
     case NVML_ERROR_INSUFFICIENT_SIZE: return "Insufficient Size";
+    case MIG_IN_USE: return "In use by another client";
+    case MIG_INSUFFICIENT_RESOURCES: return "Insufficient Resources";
     default: return "Unknown Error";
     }
 }
@@ -131,6 +161,7 @@ API nvmlReturn_t nvmlDeviceGetHandleByUUID(const char *uuid, nvmlDevice_t *d)
 {
     char u[64];
     if (!uuid || !d) return NVML_ERROR_INVALID_ARGUMENT;
+    if (!strncasecmp(uuid, "MIG-", 4)) return mig_find_uuid(uuid, d) ? NVML_SUCCESS : NVML_ERROR_NOT_FOUND;
     for (int i = 0; i < fg_count(); i++) {
         fg_uuid_str(fg_phys(i), u, sizeof u);
         if (!strcasecmp(u, uuid)) return nvmlDeviceGetHandleByIndex_v2((unsigned)i, d);
@@ -154,6 +185,12 @@ API nvmlReturn_t nvmlDeviceGetHandleByPciBusId(const char *bus, nvmlDevice_t *d)
 
 API nvmlReturn_t nvmlDeviceGetIndex(nvmlDevice_t d, unsigned *i)
 {
+    struct mig_handle *mh = mig_dev_of(d);
+    if (mh) {
+        if (!i) return NVML_ERROR_INVALID_ARGUMENT;
+        *i = (unsigned)mig_dev_index(mh);
+        return NVML_SUCCESS;
+    }
     CHECK_DEV(d);
     if (!i) return NVML_ERROR_INVALID_ARGUMENT;
     *i = (unsigned)(d - devs);
@@ -163,6 +200,7 @@ API nvmlReturn_t nvmlDeviceGetIndex(nvmlDevice_t d, unsigned *i)
 /* The /dev/nvidiaN number (Slurm builds the device path from it): physical. */
 API nvmlReturn_t nvmlDeviceGetMinorNumber(nvmlDevice_t d, unsigned *m)
 {
+    if (mig_dev_of(d)) return NVML_ERROR_NOT_SUPPORTED; /* MIG devices have capability nodes, not a minor */
     CHECK_DEV(d);
     if (!m) return NVML_ERROR_INVALID_ARGUMENT;
     *m = (unsigned)idx;
@@ -173,6 +211,8 @@ API nvmlReturn_t nvmlDeviceGetMinorNumber(nvmlDevice_t d, unsigned *m)
 
 API nvmlReturn_t nvmlDeviceGetName(nvmlDevice_t d, char *name, unsigned len)
 {
+    struct mig_handle *mh = mig_dev_of(d);
+    if (mh) return mig_dev_name(mh, name, len);
     CHECK_DEV(d);
     return copy_str(name, len, fg_name());
 }
@@ -180,6 +220,8 @@ API nvmlReturn_t nvmlDeviceGetName(nvmlDevice_t d, char *name, unsigned len)
 API nvmlReturn_t nvmlDeviceGetUUID(nvmlDevice_t d, char *uuid, unsigned len)
 {
     char u[64];
+    struct mig_handle *mh = mig_dev_of(d);
+    if (mh) return mig_dev_uuid(mh, uuid, len);
     CHECK_DEV(d);
     fg_uuid_str(idx, u, sizeof u);
     return copy_str(uuid, len, u);
@@ -350,6 +392,14 @@ typedef struct { unsigned version; unsigned long long total, reserved, free, use
 
 API nvmlReturn_t nvmlDeviceGetMemoryInfo(nvmlDevice_t d, nvmlMemory_t *m)
 {
+    struct mig_handle *mh = mig_dev_of(d);
+    if (mh) {
+        if (!m) return NVML_ERROR_INVALID_ARGUMENT;
+        m->total = mig_dev_mem(mh);
+        m->used = 16ULL << 20; /* a MIG device's reserved memory, as nvidia-smi shows it idle */
+        m->free = m->total - m->used;
+        return NVML_SUCCESS;
+    }
     CHECK_DEV(d);
     if (!m) return NVML_ERROR_INVALID_ARGUMENT;
     m->total = fg_mem_bytes();
@@ -360,6 +410,15 @@ API nvmlReturn_t nvmlDeviceGetMemoryInfo(nvmlDevice_t d, nvmlMemory_t *m)
 
 API nvmlReturn_t nvmlDeviceGetMemoryInfo_v2(nvmlDevice_t d, nvmlMemory_v2_t *m)
 {
+    struct mig_handle *mh = mig_dev_of(d);
+    if (mh) {
+        if (!m) return NVML_ERROR_INVALID_ARGUMENT;
+        m->total = mig_dev_mem(mh);
+        m->reserved = 16ULL << 20;
+        m->used = 0;
+        m->free = m->total - m->reserved;
+        return NVML_SUCCESS;
+    }
     CHECK_DEV(d);
     if (!m) return NVML_ERROR_INVALID_ARGUMENT;
     m->total = fg_mem_bytes();
@@ -465,15 +524,7 @@ API nvmlReturn_t nvmlDeviceGetEccMode(nvmlDevice_t d, unsigned *cur, unsigned *p
 }
 
 /* Slurm treats a non-zero MIG mode as "MIG enabled". */
-API nvmlReturn_t nvmlDeviceGetMigMode(nvmlDevice_t d, unsigned *cur, unsigned *pend)
-{
-    CHECK_DEV(d);
-    if (!cur || !pend) return NVML_ERROR_INVALID_ARGUMENT;
-    *cur = *pend = 0;
-    return NVML_SUCCESS;
-}
-
-API nvmlReturn_t nvmlDeviceGetMaxMigDeviceCount(nvmlDevice_t d, unsigned *n) { return set_uint(d, n, 0); }
+/* MIG: see the MIG section at the end. */
 
 /* Clocks: graphics=0 sm=1 mem=2 video=3 */
 static unsigned clock_mhz(int type, int max)
@@ -840,6 +891,7 @@ API int fakegpu_reset_gpu(unsigned idx)
     __atomic_store_n(&o->reset[idx].clique, fg_partition_clique(idx) + 1, __ATOMIC_RELEASE);
     __atomic_store_n(&o->reset[idx].reset_ns, fg_now_ns(), __ATOMIC_RELAXED);
     __atomic_add_fetch(&o->reset[idx].count, 1, __ATOMIC_RELAXED);
+    mig_reset((int)idx); /* a pending MIG mode takes effect */
     return 0;
 }
 
@@ -978,3 +1030,639 @@ API nvmlReturn_t nvmlSystemEventSetWait(nvmlSystemEventSetWaitRequest_t *r)
     sleep_ms(r->timeoutms);
     return NVML_ERROR_TIMEOUT;
 }
+
+/* ---- MIG (mig.h) ------------------------------------------------------------- */
+
+typedef struct mig_handle *nvmlGpuInstance_t, *nvmlComputeInstance_t;
+
+typedef struct {
+    unsigned id, isP2pSupported, sliceCount, instanceCount, multiprocessorCount, copyEngineCount, decoderCount,
+        encoderCount, jpegCount, ofaCount;
+    unsigned long long memorySizeMB;
+} nvmlGpuInstanceProfileInfo_t;
+
+typedef struct {
+    unsigned version, id, isP2pSupported, sliceCount, instanceCount, multiprocessorCount, copyEngineCount,
+        decoderCount, encoderCount, jpegCount, ofaCount;
+    unsigned long long memorySizeMB;
+    char name[96];
+} nvmlGpuInstanceProfileInfo_v2_t;
+
+typedef struct {
+    unsigned version, id, sliceCount, instanceCount, multiprocessorCount, copyEngineCount, decoderCount,
+        encoderCount, jpegCount, ofaCount;
+    unsigned long long memorySizeMB;
+    char name[96];
+    unsigned capabilities;
+} nvmlGpuInstanceProfileInfo_v3_t;
+
+typedef struct { unsigned start, size; } nvmlGpuInstancePlacement_t, nvmlComputeInstancePlacement_t;
+
+typedef struct {
+    nvmlDevice_t device;
+    unsigned id, profileId;
+    nvmlGpuInstancePlacement_t placement;
+} nvmlGpuInstanceInfo_t;
+
+typedef struct {
+    unsigned id, sliceCount, instanceCount, multiprocessorCount, sharedCopyEngineCount, sharedDecoderCount,
+        sharedEncoderCount, sharedJpegCount, sharedOfaCount;
+} nvmlComputeInstanceProfileInfo_t;
+
+typedef struct {
+    unsigned version, id, sliceCount, instanceCount, multiprocessorCount, sharedCopyEngineCount,
+        sharedDecoderCount, sharedEncoderCount, sharedJpegCount, sharedOfaCount;
+    char name[96];
+} nvmlComputeInstanceProfileInfo_v2_t;
+
+typedef struct {
+    unsigned version, id, sliceCount, instanceCount, multiprocessorCount, sharedCopyEngineCount,
+        sharedDecoderCount, sharedEncoderCount, sharedJpegCount, sharedOfaCount;
+    char name[96];
+    unsigned capabilities;
+} nvmlComputeInstanceProfileInfo_v3_t;
+
+typedef struct {
+    nvmlDevice_t device;
+    nvmlGpuInstance_t gpuInstance;
+    unsigned id, profileId;
+    nvmlComputeInstancePlacement_t placement;
+} nvmlComputeInstanceInfo_t;
+
+typedef struct {
+    unsigned multiprocessorCount, sharedCopyEngineCount, sharedDecoderCount, sharedEncoderCount,
+        sharedJpegCount, sharedOfaCount, gpuInstanceSliceCount, computeInstanceSliceCount;
+    unsigned long long memorySizeMB;
+} nvmlDeviceAttributes_t;
+
+#define STRUCT_VERSION(v) ((v) >> 24)
+
+/* The visible index of a whole-GPU handle, or -1. */
+static int vis_of(nvmlDevice_t d) { return d >= devs && d < devs + fg_count() ? (int)(d - devs) : -1; }
+
+static nvmlGpuInstance_t gi_handle(int vis, int gi)
+{
+    struct mig_handle *h = &gi_handles[vis][gi];
+    *h = (struct mig_handle){GI_MAGIC, vis, gi, -1};
+    return h;
+}
+
+static nvmlComputeInstance_t ci_handle(int vis, int gi, int ci)
+{
+    struct mig_handle *h = &ci_handles[vis][gi][ci];
+    *h = (struct mig_handle){CI_MAGIC, vis, gi, ci};
+    return h;
+}
+
+static nvmlDevice_t mig_dev_handle(int vis, int gi, int ci)
+{
+    struct mig_handle *h = &mig_dev_handles[vis][gi][ci];
+    *h = (struct mig_handle){MIGDEV_MAGIC, vis, gi, ci};
+    return (nvmlDevice_t)h;
+}
+
+/* A GPU instance handle whose instance exists; its profile in *p. */
+static struct mig_handle *gi_of(nvmlGpuInstance_t g, const struct mig_profile **p)
+{
+    if (!g || g < &gi_handles[0][0] || g >= &gi_handles[0][0] + FG_MAX_GPUS * FG_MIG_SLOTS) return NULL;
+    if (g->magic != GI_MAGIC || !mig_gi_exists(fg_phys(g->vis), g->gi, p)) return NULL;
+    return g;
+}
+
+static struct mig_handle *ci_of(nvmlComputeInstance_t c, const struct mig_profile **p,
+                                const struct mig_ci_profile **cp)
+{
+    if (!c || c < &ci_handles[0][0][0] || c >= &ci_handles[0][0][0] + FG_MAX_GPUS * FG_MIG_SLOTS * FG_MIG_CIS)
+        return NULL;
+    if (c->magic != CI_MAGIC || !mig_ci_exists(fg_phys(c->vis), c->gi, c->ci, p, cp)) return NULL;
+    return c;
+}
+
+static void ci_name_of(int phys, int gi, int ci, char *buf, size_t len)
+{
+    const struct mig_profile *p;
+    const struct mig_ci_profile *c;
+    if (mig_ci_exists(phys, gi, ci, &p, &c)) mig_ci_name(p, c, buf, len);
+    else snprintf(buf, len, "?");
+}
+
+static nvmlReturn_t mig_dev_uuid(struct mig_handle *h, char *uuid, unsigned len)
+{
+    char u[64];
+    mig_uuid_str(fg_phys(h->vis), h->gi, h->ci, u, sizeof u);
+    return copy_str(uuid, len, u);
+}
+
+static nvmlReturn_t mig_dev_name(struct mig_handle *h, char *name, unsigned len)
+{
+    char ci[48], n[128];
+    ci_name_of(fg_phys(h->vis), h->gi, h->ci, ci, sizeof ci);
+    snprintf(n, sizeof n, "%s MIG %s", fg_name(), ci);
+    return copy_str(name, len, n);
+}
+
+static unsigned long long mig_dev_mem(struct mig_handle *h)
+{
+    const struct mig_profile *p;
+    return mig_gi_exists(fg_phys(h->vis), h->gi, &p) ? p->mib << 20 : 0;
+}
+
+static int mig_dev_index(struct mig_handle *h)
+{
+    struct mig_dev list[FG_MIG_SLOTS * FG_MIG_CIS];
+    int n = mig_devices(fg_phys(h->vis), list);
+    for (int i = 0; i < n; i++)
+        if (list[i].gi == h->gi && list[i].ci == h->ci) return i;
+    return -1;
+}
+
+static int mig_find_uuid(const char *uuid, nvmlDevice_t *d)
+{
+    char u[64];
+    struct mig_dev list[FG_MIG_SLOTS * FG_MIG_CIS];
+    for (int v = 0; v < fg_count(); v++) {
+        int n = mig_devices(fg_phys(v), list);
+        for (int i = 0; i < n; i++) {
+            mig_uuid_str(fg_phys(v), list[i].gi, list[i].ci, u, sizeof u);
+            if (!strcasecmp(u, uuid)) {
+                *d = mig_dev_handle(v, list[i].gi, list[i].ci);
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* ---- MIG mode ---- */
+
+API nvmlReturn_t nvmlDeviceGetMigMode(nvmlDevice_t d, unsigned *cur, unsigned *pend)
+{
+    CHECK_DEV(d);
+    if (!cur || !pend) return NVML_ERROR_INVALID_ARGUMENT;
+    struct fg_gpu_mig *m = mig_state(idx);
+    *cur = m ? __atomic_load_n(&m->current, __ATOMIC_ACQUIRE) : 0;
+    *pend = m ? __atomic_load_n(&m->pending, __ATOMIC_ACQUIRE) : 0;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceSetMigMode(nvmlDevice_t d, unsigned mode, nvmlReturn_t *activationStatus)
+{
+    CHECK_DEV(d);
+    if (!activationStatus) return NVML_ERROR_INVALID_ARGUMENT;
+    int act = MIG_OK;
+    nvmlReturn_t rc = mig_set_mode(idx, mode, &act);
+    *activationStatus = rc == NVML_SUCCESS ? act : rc;
+    return rc;
+}
+
+API nvmlReturn_t nvmlDeviceGetMaxMigDeviceCount(nvmlDevice_t d, unsigned *n)
+{
+    if (mig_dev_of(d)) return NVML_ERROR_NOT_SUPPORTED;
+    CHECK_DEV(d);
+    if (!n) return NVML_ERROR_INVALID_ARGUMENT;
+    *n = mig_enabled(idx) ? MIG_COMPUTE_SLICES : 0;
+    return NVML_SUCCESS;
+}
+
+/* ---- GPU instance profiles and placements ---- */
+
+static void profile_fill(const struct mig_profile *p, unsigned *id, unsigned *slices, unsigned *inst, unsigned *sms,
+                         unsigned *ce, unsigned *dec, unsigned *enc, unsigned *jpeg, unsigned *ofa,
+                         unsigned long long *mib)
+{
+    *id = p->id;
+    *slices = p->slices;
+    *inst = p->instances;
+    *sms = p->sms;
+    *ce = p->ce;
+    *dec = p->dec;
+    *enc = p->enc;
+    *jpeg = p->jpeg;
+    *ofa = p->ofa;
+    *mib = p->mib;
+}
+
+/* Profiles exist whether MIG is on or off; an index GB200 lacks is not
+ * supported, one beyond the enum invalid (callers enumerate until it). */
+static nvmlReturn_t profile_lookup(nvmlDevice_t d, unsigned index, const struct mig_profile **p)
+{
+    if (dev_idx(d) < 0) return NVML_ERROR_INVALID_ARGUMENT;
+    if (index >= MIG_PROFILE_COUNT) return NVML_ERROR_INVALID_ARGUMENT;
+    *p = mig_profile_by_index(index);
+    return *p ? NVML_SUCCESS : NVML_ERROR_NOT_SUPPORTED;
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstanceProfileInfo(nvmlDevice_t d, unsigned index, nvmlGpuInstanceProfileInfo_t *i)
+{
+    const struct mig_profile *p;
+    nvmlReturn_t rc = profile_lookup(d, index, &p);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!i) return NVML_ERROR_INVALID_ARGUMENT;
+    i->isP2pSupported = 0;
+    profile_fill(p, &i->id, &i->sliceCount, &i->instanceCount, &i->multiprocessorCount, &i->copyEngineCount,
+                 &i->decoderCount, &i->encoderCount, &i->jpegCount, &i->ofaCount, &i->memorySizeMB);
+    return NVML_SUCCESS;
+}
+
+static nvmlReturn_t profile_info_v(const struct mig_profile *p, void *info)
+{
+    unsigned v = STRUCT_VERSION(*(unsigned *)info);
+    if (v == 2) {
+        nvmlGpuInstanceProfileInfo_v2_t *i = info;
+        i->isP2pSupported = 0;
+        profile_fill(p, &i->id, &i->sliceCount, &i->instanceCount, &i->multiprocessorCount, &i->copyEngineCount,
+                     &i->decoderCount, &i->encoderCount, &i->jpegCount, &i->ofaCount, &i->memorySizeMB);
+        snprintf(i->name, sizeof i->name, "MIG %s", p->name);
+        return NVML_SUCCESS;
+    }
+    if (v == 3) {
+        nvmlGpuInstanceProfileInfo_v3_t *i = info;
+        profile_fill(p, &i->id, &i->sliceCount, &i->instanceCount, &i->multiprocessorCount, &i->copyEngineCount,
+                     &i->decoderCount, &i->encoderCount, &i->jpegCount, &i->ofaCount, &i->memorySizeMB);
+        snprintf(i->name, sizeof i->name, "MIG %s", p->name);
+        i->capabilities = 0; /* no P2P, no graphics */
+        return NVML_SUCCESS;
+    }
+    return 25; /* NVML_ERROR_ARGUMENT_VERSION_MISMATCH */
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstanceProfileInfoV(nvmlDevice_t d, unsigned index, void *info)
+{
+    const struct mig_profile *p;
+    nvmlReturn_t rc = profile_lookup(d, index, &p);
+    if (rc != NVML_SUCCESS) return rc;
+    return info ? profile_info_v(p, info) : NVML_ERROR_INVALID_ARGUMENT;
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstanceProfileInfoByIdV(nvmlDevice_t d, unsigned id, void *info)
+{
+    if (dev_idx(d) < 0 || !info) return NVML_ERROR_INVALID_ARGUMENT;
+    const struct mig_profile *p = mig_profile_by_id(id);
+    return p ? profile_info_v(p, info) : NVML_ERROR_INVALID_ARGUMENT;
+}
+
+/* Placements of a profile id, whether MIG is on or off; NULL placements:
+ * the count only (go-nvml's first call). */
+API nvmlReturn_t nvmlDeviceGetGpuInstancePossiblePlacements_v2(nvmlDevice_t d, unsigned id,
+                                                               nvmlGpuInstancePlacement_t *pl, unsigned *n)
+{
+    if (dev_idx(d) < 0 || !n) return NVML_ERROR_INVALID_ARGUMENT;
+    const struct mig_profile *p = mig_profile_by_id(id);
+    if (!p) return NVML_ERROR_INVALID_ARGUMENT;
+    if (pl) {
+        if (*n < p->nstarts) return NVML_ERROR_INSUFFICIENT_SIZE;
+        for (unsigned i = 0; i < p->nstarts; i++) pl[i] = (nvmlGpuInstancePlacement_t){p->starts[i], p->mem_slices};
+    }
+    *n = p->nstarts;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstancePossiblePlacements(nvmlDevice_t d, unsigned id,
+                                                            nvmlGpuInstancePlacement_t *pl, unsigned *n)
+{
+    return nvmlDeviceGetGpuInstancePossiblePlacements_v2(d, id, pl, n);
+}
+
+/* ---- GPU instances ---- */
+
+/* MIG must be on for instances; *p the profile of a known id. */
+static nvmlReturn_t gi_call(nvmlDevice_t d, unsigned id, int *idx, const struct mig_profile **p)
+{
+    *idx = dev_idx(d);
+    if (*idx < 0) return NVML_ERROR_INVALID_ARGUMENT;
+    if (!mig_enabled(*idx)) return NVML_ERROR_NOT_SUPPORTED;
+    if (p && !(*p = mig_profile_by_id(id))) return NVML_ERROR_INVALID_ARGUMENT;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstanceRemainingCapacity(nvmlDevice_t d, unsigned id, unsigned *n)
+{
+    int idx;
+    const struct mig_profile *p;
+    nvmlReturn_t rc = gi_call(d, id, &idx, &p);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!n) return NVML_ERROR_INVALID_ARGUMENT;
+    struct fg_gpu_mig m = *mig_state(idx); /* a copy to fill */
+    unsigned count = 0;
+    int s;
+    while ((s = mig_gi_fit(&m, p, -1)) >= 0) {
+        struct fg_mig_gi *x = &m.gi[mig_slot((unsigned)s, p->mem_slices)];
+        *x = (struct fg_mig_gi){.used = 1, .profile = (uint8_t)(p - mig_profiles), .start = (uint8_t)s,
+                                .size = (uint8_t)p->mem_slices};
+        count++;
+    }
+    *n = count;
+    return NVML_SUCCESS;
+}
+
+static nvmlReturn_t create_gi(nvmlDevice_t d, unsigned id, int start, nvmlGpuInstance_t *g)
+{
+    int idx;
+    const struct mig_profile *p;
+    nvmlReturn_t rc = gi_call(d, id, &idx, &p);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!g) return NVML_ERROR_INVALID_ARGUMENT;
+    int slot;
+    rc = mig_create_gi(idx, p, start, &slot);
+    if (rc == NVML_SUCCESS) *g = gi_handle(vis_of(d), slot);
+    return rc;
+}
+
+API nvmlReturn_t nvmlDeviceCreateGpuInstance(nvmlDevice_t d, unsigned id, nvmlGpuInstance_t *g)
+{
+    return create_gi(d, id, -1, g);
+}
+
+API nvmlReturn_t nvmlDeviceCreateGpuInstanceWithPlacement(nvmlDevice_t d, unsigned id,
+                                                          const nvmlGpuInstancePlacement_t *pl, nvmlGpuInstance_t *g)
+{
+    const struct mig_profile *p = mig_profile_by_id(id);
+    if (!pl || !p) return NVML_ERROR_INVALID_ARGUMENT;
+    if (!mig_valid_start(p, pl->start, pl->size)) return NVML_ERROR_INVALID_ARGUMENT;
+    return create_gi(d, id, (int)pl->start, g);
+}
+
+API nvmlReturn_t nvmlGpuInstanceDestroy(nvmlGpuInstance_t g)
+{
+    struct mig_handle *h = gi_of(g, NULL);
+    if (!h) return NVML_ERROR_INVALID_ARGUMENT;
+    return mig_destroy_gi(fg_phys(h->vis), h->gi);
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstances(nvmlDevice_t d, unsigned id, nvmlGpuInstance_t *gs, unsigned *n)
+{
+    int idx;
+    const struct mig_profile *p;
+    nvmlReturn_t rc = gi_call(d, id, &idx, &p);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!n) return NVML_ERROR_INVALID_ARGUMENT;
+    struct fg_gpu_mig *m = mig_state(idx);
+    unsigned count = 0;
+    for (int g = 0; g < FG_MIG_SLOTS; g++) {
+        if (!m->gi[g].used || &mig_profiles[m->gi[g].profile] != p) continue;
+        if (gs) {
+            if (count >= *n) return NVML_ERROR_INSUFFICIENT_SIZE;
+            gs[count] = gi_handle(vis_of(d), g);
+        }
+        count++;
+    }
+    *n = count;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstanceById(nvmlDevice_t d, unsigned id, nvmlGpuInstance_t *g)
+{
+    int idx;
+    nvmlReturn_t rc = gi_call(d, 0, &idx, NULL);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!g) return NVML_ERROR_INVALID_ARGUMENT;
+    if (id >= FG_MIG_SLOTS || !mig_gi_exists(idx, (int)id, NULL)) return NVML_ERROR_NOT_FOUND;
+    *g = gi_handle(vis_of(d), (int)id);
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlGpuInstanceGetInfo(nvmlGpuInstance_t g, nvmlGpuInstanceInfo_t *info)
+{
+    const struct mig_profile *p;
+    struct mig_handle *h = gi_of(g, &p);
+    if (!h || !info) return NVML_ERROR_INVALID_ARGUMENT;
+    const struct fg_mig_gi *x = &mig_state(fg_phys(h->vis))->gi[h->gi];
+    info->device = &devs[h->vis];
+    info->id = (unsigned)h->gi;
+    info->profileId = p->id;
+    info->placement = (nvmlGpuInstancePlacement_t){x->start, x->size};
+    return NVML_SUCCESS;
+}
+
+/* ---- compute instances ---- */
+
+static nvmlReturn_t ci_profile_lookup(nvmlGpuInstance_t g, unsigned index, unsigned engine,
+                                      struct mig_handle **h, const struct mig_profile **p,
+                                      const struct mig_ci_profile **c)
+{
+    *h = gi_of(g, p);
+    if (!*h) return NVML_ERROR_INVALID_ARGUMENT;
+    if (index >= MIG_CI_PROFILE_COUNT || engine != 0) return NVML_ERROR_INVALID_ARGUMENT;
+    *c = mig_ci_profile(*p, index);
+    return *c ? NVML_SUCCESS : NVML_ERROR_NOT_SUPPORTED;
+}
+
+API nvmlReturn_t nvmlGpuInstanceGetComputeInstanceProfileInfo(nvmlGpuInstance_t g, unsigned index, unsigned engine,
+                                                              nvmlComputeInstanceProfileInfo_t *i)
+{
+    struct mig_handle *h;
+    const struct mig_profile *p;
+    const struct mig_ci_profile *c;
+    nvmlReturn_t rc = ci_profile_lookup(g, index, engine, &h, &p, &c);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!i) return NVML_ERROR_INVALID_ARGUMENT;
+    *i = (nvmlComputeInstanceProfileInfo_t){(unsigned)c->index, c->slices, c->instances, c->sms, p->ce, p->dec,
+                                            p->enc, p->jpeg, p->ofa};
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlGpuInstanceGetComputeInstanceProfileInfoV(nvmlGpuInstance_t g, unsigned index, unsigned engine,
+                                                               void *info)
+{
+    struct mig_handle *h;
+    const struct mig_profile *p;
+    const struct mig_ci_profile *c;
+    nvmlReturn_t rc = ci_profile_lookup(g, index, engine, &h, &p, &c);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!info) return NVML_ERROR_INVALID_ARGUMENT;
+    unsigned v = STRUCT_VERSION(*(unsigned *)info);
+    if (v != 2 && v != 3) return 25; /* NVML_ERROR_ARGUMENT_VERSION_MISMATCH */
+    nvmlComputeInstanceProfileInfo_v3_t *i = info; /* v2 is v3 without capabilities */
+    i->id = (unsigned)c->index;
+    i->sliceCount = c->slices;
+    i->instanceCount = c->instances;
+    i->multiprocessorCount = c->sms;
+    i->sharedCopyEngineCount = p->ce;
+    i->sharedDecoderCount = p->dec;
+    i->sharedEncoderCount = p->enc;
+    i->sharedJpegCount = p->jpeg;
+    i->sharedOfaCount = p->ofa;
+    char name[48];
+    mig_ci_name(p, c, name, sizeof name);
+    snprintf(i->name, sizeof i->name, "MIG %s", name);
+    if (v == 3) i->capabilities = 0;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlGpuInstanceGetComputeInstancePossiblePlacements(nvmlGpuInstance_t g, unsigned id,
+                                                                     nvmlComputeInstancePlacement_t *pl, unsigned *n)
+{
+    struct mig_handle *h;
+    const struct mig_profile *p;
+    const struct mig_ci_profile *c;
+    nvmlReturn_t rc = ci_profile_lookup(g, id, 0, &h, &p, &c);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!n) return NVML_ERROR_INVALID_ARGUMENT;
+    if (pl) {
+        if (*n < c->instances) return NVML_ERROR_INSUFFICIENT_SIZE;
+        for (unsigned k = 0; k < c->instances; k++) pl[k] = (nvmlComputeInstancePlacement_t){k * c->slices, c->slices};
+    }
+    *n = c->instances;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlGpuInstanceGetComputeInstanceRemainingCapacity(nvmlGpuInstance_t g, unsigned id, unsigned *n)
+{
+    struct mig_handle *h;
+    const struct mig_profile *p;
+    const struct mig_ci_profile *c;
+    nvmlReturn_t rc = ci_profile_lookup(g, id, 0, &h, &p, &c);
+    if (rc != NVML_SUCCESS) return rc;
+    if (!n) return NVML_ERROR_INVALID_ARGUMENT;
+    struct fg_mig_gi x = mig_state(fg_phys(h->vis))->gi[h->gi];
+    unsigned count = 0;
+    int s;
+    while ((s = mig_ci_fit(&x, c)) >= 0) {
+        for (int i = 0; i < FG_MIG_CIS; i++)
+            if (!x.ci[i].used) {
+                x.ci[i] = (struct fg_mig_ci){1, (uint8_t)c->index, (uint8_t)s, (uint8_t)c->slices};
+                break;
+            }
+        count++;
+    }
+    *n = count;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlGpuInstanceCreateComputeInstance(nvmlGpuInstance_t g, unsigned id, nvmlComputeInstance_t *ci)
+{
+    struct mig_handle *h = gi_of(g, NULL);
+    if (!h || !ci) return NVML_ERROR_INVALID_ARGUMENT;
+    if (id >= MIG_CI_PROFILE_COUNT) return NVML_ERROR_INVALID_ARGUMENT;
+    int c;
+    nvmlReturn_t rc = mig_create_ci(fg_phys(h->vis), h->gi, id, &c);
+    if (rc == NVML_SUCCESS) *ci = ci_handle(h->vis, h->gi, c);
+    return rc;
+}
+
+API nvmlReturn_t nvmlGpuInstanceCreateComputeInstanceWithPlacement(nvmlGpuInstance_t g, unsigned id,
+                                                                   const nvmlComputeInstancePlacement_t *pl,
+                                                                   nvmlComputeInstance_t *ci)
+{
+    (void)pl; /* the lowest free placement: compute instances do not move memory */
+    return nvmlGpuInstanceCreateComputeInstance(g, id, ci);
+}
+
+API nvmlReturn_t nvmlGpuInstanceGetComputeInstances(nvmlGpuInstance_t g, unsigned id, nvmlComputeInstance_t *cs,
+                                                    unsigned *n)
+{
+    struct mig_handle *h = gi_of(g, NULL);
+    if (!h || !n) return NVML_ERROR_INVALID_ARGUMENT;
+    const struct fg_mig_gi *x = &mig_state(fg_phys(h->vis))->gi[h->gi];
+    unsigned count = 0;
+    for (int c = 0; c < FG_MIG_CIS; c++) {
+        if (!x->ci[c].used || x->ci[c].profile != id) continue;
+        if (cs) {
+            if (count >= *n) return NVML_ERROR_INSUFFICIENT_SIZE;
+            cs[count] = ci_handle(h->vis, h->gi, c);
+        }
+        count++;
+    }
+    *n = count;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlGpuInstanceGetComputeInstanceById(nvmlGpuInstance_t g, unsigned id, nvmlComputeInstance_t *ci)
+{
+    struct mig_handle *h = gi_of(g, NULL);
+    if (!h || !ci) return NVML_ERROR_INVALID_ARGUMENT;
+    if (id >= FG_MIG_CIS || !mig_ci_exists(fg_phys(h->vis), h->gi, (int)id, NULL, NULL)) return NVML_ERROR_NOT_FOUND;
+    *ci = ci_handle(h->vis, h->gi, (int)id);
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlComputeInstanceGetInfo_v2(nvmlComputeInstance_t c, nvmlComputeInstanceInfo_t *info)
+{
+    const struct mig_ci_profile *cp;
+    struct mig_handle *h = ci_of(c, NULL, &cp);
+    if (!h || !info) return NVML_ERROR_INVALID_ARGUMENT;
+    const struct fg_mig_ci *y = &mig_state(fg_phys(h->vis))->gi[h->gi].ci[h->ci];
+    info->device = &devs[h->vis];
+    info->gpuInstance = gi_handle(h->vis, h->gi);
+    info->id = (unsigned)h->ci;
+    info->profileId = (unsigned)cp->index;
+    info->placement = (nvmlComputeInstancePlacement_t){y->start, y->size};
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlComputeInstanceGetInfo(nvmlComputeInstance_t c, nvmlComputeInstanceInfo_t *info)
+{
+    return nvmlComputeInstanceGetInfo_v2(c, info);
+}
+
+API nvmlReturn_t nvmlComputeInstanceDestroy(nvmlComputeInstance_t c)
+{
+    struct mig_handle *h = ci_of(c, NULL, NULL);
+    if (!h) return NVML_ERROR_INVALID_ARGUMENT;
+    return mig_destroy_ci(fg_phys(h->vis), h->gi, h->ci);
+}
+
+/* ---- MIG devices ---- */
+
+API nvmlReturn_t nvmlDeviceGetMigDeviceHandleByIndex(nvmlDevice_t d, unsigned index, nvmlDevice_t *mig)
+{
+    CHECK_DEV(d);
+    if (!mig) return NVML_ERROR_INVALID_ARGUMENT;
+    struct mig_dev list[FG_MIG_SLOTS * FG_MIG_CIS];
+    int n = mig_devices(idx, list);
+    if (index >= (unsigned)n) return NVML_ERROR_NOT_FOUND;
+    *mig = mig_dev_handle(vis_of(d), list[index].gi, list[index].ci);
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceIsMigDeviceHandle(nvmlDevice_t d, unsigned *is)
+{
+    if (!is) return NVML_ERROR_INVALID_ARGUMENT;
+    if (mig_dev_of(d)) {
+        *is = 1;
+        return NVML_SUCCESS;
+    }
+    CHECK_DEV(d);
+    *is = 0;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetDeviceHandleFromMigDeviceHandle(nvmlDevice_t mig, nvmlDevice_t *d)
+{
+    struct mig_handle *h = mig_dev_of(mig);
+    if (!h || !d) return NVML_ERROR_INVALID_ARGUMENT;
+    *d = &devs[h->vis];
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetGpuInstanceId(nvmlDevice_t d, unsigned *id)
+{
+    struct mig_handle *h = mig_dev_of(d);
+    if (!id) return NVML_ERROR_INVALID_ARGUMENT;
+    if (!h) return dev_idx(d) < 0 ? NVML_ERROR_INVALID_ARGUMENT : NVML_ERROR_NOT_SUPPORTED;
+    *id = (unsigned)h->gi;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetComputeInstanceId(nvmlDevice_t d, unsigned *id)
+{
+    struct mig_handle *h = mig_dev_of(d);
+    if (!id) return NVML_ERROR_INVALID_ARGUMENT;
+    if (!h) return dev_idx(d) < 0 ? NVML_ERROR_INVALID_ARGUMENT : NVML_ERROR_NOT_SUPPORTED;
+    *id = (unsigned)h->ci;
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetAttributes_v2(nvmlDevice_t d, nvmlDeviceAttributes_t *a)
+{
+    const struct mig_profile *p;
+    const struct mig_ci_profile *c;
+    struct mig_handle *h = mig_dev_of(d);
+    if (!a) return NVML_ERROR_INVALID_ARGUMENT;
+    if (!h) return dev_idx(d) < 0 ? NVML_ERROR_INVALID_ARGUMENT : NVML_ERROR_NOT_SUPPORTED;
+    if (!mig_ci_exists(fg_phys(h->vis), h->gi, h->ci, &p, &c)) return NVML_ERROR_INVALID_ARGUMENT;
+    *a = (nvmlDeviceAttributes_t){c->sms, p->ce, p->dec, p->enc, p->jpeg, p->ofa, p->slices, c->slices, p->mib};
+    return NVML_SUCCESS;
+}
+
+API nvmlReturn_t nvmlDeviceGetAttributes(nvmlDevice_t d, nvmlDeviceAttributes_t *a) { return nvmlDeviceGetAttributes_v2(d, a); }

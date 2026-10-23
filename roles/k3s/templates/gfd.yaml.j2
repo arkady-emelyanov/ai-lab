@@ -81,10 +81,16 @@ spec:
               value: {{ fakegpu_prefix }}/lib/fakegpu
             - name: GFD_MACHINE_TYPE_FILE
               value: /etc/tray-dmi/product_name
+            # MIG devices as nvidia.com/mig-<profile>.* labels, MIG-enabled
+            # GPUs keep their own (as the GPU Operator's mixed strategy).
+            - name: MIG_STRATEGY
+              value: mixed
           volumeMounts:
             - {name: fakegpu-lib, mountPath: "{{ fakegpu_prefix }}/lib/fakegpu", readOnly: true}
             - {name: fakegpu-conf, mountPath: /etc/fakegpu.conf, readOnly: true}
             - {name: sideband, mountPath: "{{ sideband_tray_path }}", readOnly: true}
+            # The tray's GPU state: MIG mode and instances (driver state).
+            - {name: telemetry, mountPath: "{{ telemetry_tray_path }}"}
 {% for i in range(fakegpu_count) %}
             - {name: nvidia{{ i }}, mountPath: /dev/nvidia{{ i }}}
 {% endfor %}
@@ -95,6 +101,7 @@ spec:
         - {name: fakegpu-lib, hostPath: {path: "{{ fakegpu_prefix }}/lib/fakegpu", type: Directory}}
         - {name: fakegpu-conf, hostPath: {path: /etc/fakegpu.conf, type: File}}
         - {name: sideband, hostPath: {path: "{{ sideband_tray_path }}", type: Directory}}
+        - {name: telemetry, hostPath: {path: "{{ telemetry_tray_path }}", type: Directory}}
 {% for i in range(fakegpu_count) %}
         - {name: nvidia{{ i }}, hostPath: {path: /dev/nvidia{{ i }}, type: CharDevice}}
 {% endfor %}

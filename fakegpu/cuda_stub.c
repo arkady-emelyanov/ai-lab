@@ -7,15 +7,17 @@
  * return a consistent fake device. "Device memory" is host memory, so
  * copies round-trip correctly; kernel launches are no-ops.
  *
- * CUDA_VISIBLE_DEVICES is honoured (indices or GPU- UUIDs), like the real
- * driver, so Slurm GPU allocation is reflected in what a job sees.
+ * CUDA_VISIBLE_DEVICES is honoured (indices, GPU- or MIG- UUIDs), like the
+ * real driver, so Slurm GPU allocation is reflected in what a job sees. A
+ * GPU with MIG on shows as its MIG devices (mig.h), one per GPU instance,
+ * each with its slice's memory and SMs.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <pthread.h>
 #include <sys/file.h>
 #include <sys/random.h>
-#include "occupancy.h"
+#include "mig.h"
 
 typedef int CUresult;
 typedef int CUdevice;
@@ -37,9 +39,56 @@ typedef struct { unsigned char bytes[16]; } CUuuid;
 
 /* ---- device enumeration ------------------------------------------------ */
 
-static int vis_map[FG_MAX_GPUS]; /* CUDA ordinal -> physical index */
+/* CUDA ordinal -> physical index, and the MIG device it is (GI and CI id,
+ * -1 for a whole GPU). At most 7 MIG devices per GPU. */
+#define FG_MAX_CUDA_DEVS (FG_MAX_GPUS * 7)
+static int vis_map[FG_MAX_CUDA_DEVS], vis_gi[FG_MAX_CUDA_DEVS], vis_ci[FG_MAX_CUDA_DEVS];
 static int vis_count;
 static pthread_once_t vis_once = PTHREAD_ONCE_INIT;
+
+static void vis_add(int phys, int gi, int ci)
+{
+    for (int i = 0; i < vis_count; i++)
+        if (vis_map[i] == phys && vis_gi[i] == gi && vis_ci[i] == ci) return;
+    if (vis_count >= FG_MAX_CUDA_DEVS) return;
+    vis_map[vis_count] = phys;
+    vis_gi[vis_count] = gi;
+    vis_ci[vis_count] = ci;
+    vis_count++;
+}
+
+/* A GPU's CUDA devices: itself; with MIG on, a MIG device per GPU instance
+ * (its first compute instance), none while it has no compute instance. */
+static void vis_add_gpu(int phys)
+{
+    if (!mig_enabled(phys)) {
+        vis_add(phys, -1, -1);
+        return;
+    }
+    struct mig_dev list[FG_MIG_SLOTS * FG_MIG_CIS];
+    int n = mig_devices(phys, list);
+    for (int i = 0; i < n; i++)
+        if (i == 0 || list[i].gi != list[i - 1].gi) vis_add(phys, list[i].gi, list[i].ci);
+}
+
+/* A MIG- UUID: the MIG device of any GPU's, as (physical index, GI, CI). */
+static int match_mig_uuid(const char *tok, size_t len, int *gi, int *ci)
+{
+    char u[64];
+    struct mig_dev list[FG_MIG_SLOTS * FG_MIG_CIS];
+    for (int i = 0; i < fg_count(); i++) {
+        int phys = fg_phys(i), n = mig_devices(phys, list);
+        for (int k = 0; k < n; k++) {
+            mig_uuid_str(phys, list[k].gi, list[k].ci, u, sizeof u);
+            if (len == strlen(u) && strncasecmp(u, tok, len) == 0) {
+                *gi = list[k].gi;
+                *ci = list[k].ci;
+                return phys;
+            }
+        }
+    }
+    return -1;
+}
 
 static int match_uuid(const char *tok, size_t len)
 {
@@ -56,31 +105,42 @@ static void vis_init(void)
     int n = fg_count();
     const char *env = getenv("CUDA_VISIBLE_DEVICES");
     if (!env) {
-        for (int i = 0; i < n; i++) vis_map[vis_count++] = fg_phys(i);
+        for (int i = 0; i < n; i++) vis_add_gpu(fg_phys(i));
         return;
     }
     /* Like the real driver: stop at the first invalid or duplicate entry. */
     const char *p = env;
-    while (*p && vis_count < n) {
+    while (*p && vis_count < FG_MAX_CUDA_DEVS) {
         while (*p == ' ') p++;
         size_t len = strcspn(p, ",");
-        int idx = -1;
-        if (len && strncmp(p, "GPU-", 4) == 0) {
-            idx = match_uuid(p, len);
-        } else if (len) {
-            char *end;
-            long v = strtol(p, &end, 10);
-            if (end == p + len && v >= 0 && v < n) idx = (int)v;
+        int idx = -1, gi = -1, ci = -1, before = vis_count;
+        if (len && strncasecmp(p, "MIG-", 4) == 0) {
+            int phys = match_mig_uuid(p, len, &gi, &ci);
+            if (phys < 0) break;
+            vis_add(phys, gi, ci);
+        } else {
+            if (len && strncmp(p, "GPU-", 4) == 0) {
+                idx = match_uuid(p, len);
+            } else if (len) {
+                char *end;
+                long v = strtol(p, &end, 10);
+                if (end == p + len && v >= 0 && v < n) idx = (int)v;
+            }
+            if (idx < 0) break;
+            vis_add_gpu(fg_phys(idx)); /* entries count among the GPUs present */
         }
-        if (idx < 0) break;
-        idx = fg_phys(idx); /* entries count among the GPUs present */
-        for (int i = 0; i < vis_count; i++)
-            if (vis_map[i] == idx) idx = -1;
-        if (idx < 0) break;
-        vis_map[vis_count++] = idx;
+        if (vis_count == before) break; /* a duplicate */
         p += len;
         if (*p == ',') p++;
     }
+}
+
+/* The MIG device CUDA device dev is, if it is one: its profiles. */
+static int vis_mig(CUdevice dev, const struct mig_profile **p, const struct mig_ci_profile **c)
+{
+    pthread_once(&vis_once, vis_init);
+    if (dev < 0 || dev >= vis_count || vis_gi[dev] < 0) return 0;
+    return mig_ci_exists(vis_map[dev], vis_gi[dev], vis_ci[dev], p, c);
 }
 
 static int fg_debug(void)
@@ -105,7 +165,7 @@ static int phys_at(CUdevice dev, const char *fn)
 /* Contexts are just tagged allocations remembering their device. */
 struct fake_ctx { unsigned magic; CUdevice dev; };
 #define CTX_MAGIC 0xFA6E6C7Bu
-static struct fake_ctx primary[FG_MAX_GPUS];
+static struct fake_ctx primary[FG_MAX_CUDA_DEVS];
 static __thread CUcontext cur_ctx;
 
 static CUcontext primary_ctx(CUdevice dev)
@@ -124,6 +184,28 @@ int fg_current_phys(void)
     struct fake_ctx *c = cur_ctx;
     int p = phys_at(c && c->magic == CTX_MAGIC ? c->dev : 0, "current context");
     return p < 0 ? 0 : p;
+}
+
+static int current_dev(void)
+{
+    struct fake_ctx *c = cur_ctx;
+    return c && c->magic == CTX_MAGIC ? c->dev : 0;
+}
+
+/* The memory of the MIG device the current context is on, 0 for a whole GPU
+ * (occupancy.h: allocations beyond it fail). */
+uint64_t fg_mig_mem_limit(void)
+{
+    const struct mig_profile *p;
+    return vis_mig(current_dev(), &p, NULL) ? p->mib << 20 : 0;
+}
+
+/* How much slower work runs on the current context's device than on the
+ * whole GPU: its share of the SMs (timing.c). */
+double fg_current_slowdown(void)
+{
+    const struct mig_ci_profile *c;
+    return vis_mig(current_dev(), NULL, &c) ? (double)MIG_FULL_SMS / c->sms : 1.0;
 }
 
 /* ---- init / version ---------------------------------------------------- */
@@ -198,6 +280,14 @@ API CUresult cuDeviceGetName(char *name, int len, CUdevice dev)
 {
     if (!name || len <= 0) return CUDA_ERROR_INVALID_VALUE;
     if (phys(dev) < 0) return CUDA_ERROR_INVALID_DEVICE;
+    const struct mig_profile *p;
+    const struct mig_ci_profile *c;
+    if (vis_mig(dev, &p, &c)) {
+        char ci[48];
+        mig_ci_name(p, c, ci, sizeof ci);
+        snprintf(name, (size_t)len, "%s MIG %s", fg_name(), ci);
+        return CUDA_SUCCESS;
+    }
     snprintf(name, (size_t)len, "%s", fg_name());
     return CUDA_SUCCESS;
 }
@@ -206,7 +296,8 @@ API CUresult cuDeviceTotalMem_v2(size_t *bytes, CUdevice dev)
 {
     if (!bytes) return CUDA_ERROR_INVALID_VALUE;
     if (phys(dev) < 0) return CUDA_ERROR_INVALID_DEVICE;
-    *bytes = fg_mem_bytes();
+    const struct mig_profile *p;
+    *bytes = vis_mig(dev, &p, NULL) ? p->mib << 20 : fg_mem_bytes();
     return CUDA_SUCCESS;
 }
 
@@ -223,7 +314,8 @@ API CUresult cuDeviceGetUuid(CUuuid *uuid, CUdevice dev)
     int p = phys(dev);
     if (!uuid) return CUDA_ERROR_INVALID_VALUE;
     if (p < 0) return CUDA_ERROR_INVALID_DEVICE;
-    fg_uuid(p, uuid->bytes);
+    if (vis_mig(dev, NULL, NULL)) mig_uuid(p, vis_gi[dev], vis_ci[dev], uuid->bytes);
+    else fg_uuid(p, uuid->bytes);
     return CUDA_SUCCESS;
 }
 
@@ -315,6 +407,11 @@ API CUresult cuDeviceGetAttribute(int *val, int attr, CUdevice dev)
     if (!val) return CUDA_ERROR_INVALID_VALUE;
     if (p < 0) return CUDA_ERROR_INVALID_DEVICE;
     *val = attribute(attr, p);
+    const struct mig_ci_profile *c;
+    if (vis_mig(dev, NULL, &c)) {
+        if (attr == 16) *val = (int)c->sms;                    /* its compute instance's SMs */
+        if (attr == 128 || attr == 132) *val = 0;              /* no fabric memory, no multicast */
+    }
     return CUDA_SUCCESS;
 }
 
@@ -331,7 +428,7 @@ API CUresult cuDeviceCanAccessPeer(int *can, CUdevice a, CUdevice b)
 {
     if (!can) return CUDA_ERROR_INVALID_VALUE;
     if (phys(a) < 0 || phys(b) < 0) return CUDA_ERROR_INVALID_DEVICE;
-    *can = a != b;
+    *can = a != b && !vis_mig(a, NULL, NULL) && !vis_mig(b, NULL, NULL); /* MIG devices have no peers */
     return CUDA_SUCCESS;
 }
 
@@ -438,7 +535,8 @@ API CUresult cuCtxGetFlags(unsigned *flags)
 
 API CUresult cuMemGetInfo_v2(size_t *free_b, size_t *total_b)
 {
-    uint64_t limit = fg_mem_limit();
+    uint64_t limit = fg_mem_limit(), mig = fg_mig_mem_limit();
+    if (mig && (!limit || mig < limit)) limit = mig;
     if (limit) {
         /* A GPU fraction: its limit, less what this process holds. */
         uint64_t total = limit < fg_mem_bytes() ? limit : fg_mem_bytes();
@@ -476,12 +574,6 @@ struct alloc_rec {
 static struct alloc_rec *allocs;
 static unsigned long long alloc_seq;
 static pthread_mutex_t alloc_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static int current_dev(void)
-{
-    struct fake_ctx *c = cur_ctx;
-    return c && c->magic == CTX_MAGIC ? c->dev : 0;
-}
 
 static void occupancy_exit(void) { fg_proc_cleanup(1); }
 static void atexit_register(void) { atexit(occupancy_exit); }
@@ -1140,11 +1232,11 @@ API CUresult cuCtxGetSharedMemConfig(int *cfg) { if (cfg) *cfg = 0; return CUDA_
 
 API CUresult cuDeviceGetDefaultMemPool(void **pool, CUdevice dev)
 {
-    static char pools[FG_MAX_GPUS];
+    static char pools[FG_MAX_CUDA_DEVS];
     int p = phys(dev);
     if (!pool) return CUDA_ERROR_INVALID_VALUE;
     if (p < 0) return CUDA_ERROR_INVALID_DEVICE;
-    *pool = &pools[p];
+    *pool = &pools[dev];
     return CUDA_SUCCESS;
 }
 

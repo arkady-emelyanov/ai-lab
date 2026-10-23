@@ -24,6 +24,7 @@ typedef void *CUstream;
 #define API __attribute__((visibility("default")))
 
 int fg_current_phys(void); /* cuda_stub.c */
+double fg_current_slowdown(void); /* cuda_stub.c: a MIG device's share of the SMs */
 
 /* ---- cost model (nanoseconds before latency_scale) ------------------------ */
 
@@ -105,7 +106,7 @@ static void sleep_until(uint64_t t)
  * the cuBLAS, cuDNN and NCCL stubs share the same timelines. */
 API uint64_t fakegpu_enqueue(CUstream h, uint64_t ns)
 {
-    ns = (uint64_t)((double)ns * fg_latency_scale());
+    ns = (uint64_t)((double)ns * fg_latency_scale() * fg_current_slowdown());
     pthread_mutex_lock(&tl_lock);
     struct fg_stream *s = stream_of(h);
     uint64_t oldest = s->done[s->next];
