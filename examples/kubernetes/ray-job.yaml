@@ -17,8 +17,11 @@ spec:
   entrypoint: python @HOME@/examples/ray_demo.py
   # Kueue requires it: the cluster's resources return to the queue.
   shutdownAfterJobFinishes: true
-  # Keeps the finished cluster for 90 s, for the collectors' last upload.
-  ttlSecondsAfterFinished: 90
+  # Deletes the finished cluster 5 s after the job. Kueue gives the quota back
+  # when the job ends, so the cluster must not keep its GPUs long; the
+  # collectors upload the rest as their pods stop (upstream's samples wait
+  # 90 s, which leaves the next admitted job waiting for GPUs as long).
+  ttlSecondsAfterFinished: 5
   # The pod that submits the job and follows its output (kubectl logs job/<name>).
   submitterPodTemplate:
     spec:

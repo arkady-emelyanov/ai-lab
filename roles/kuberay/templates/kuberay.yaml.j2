@@ -411,3 +411,20 @@ data:
   RAY_GRAFANA_HOST: http://{{ groups['controller'][0] }}:{{ grafana_port }}
   RAY_GRAFANA_IFRAME_HOST: http://{{ kuberay_controller_address }}:{{ grafana_port }}
 {% endfor %}
+{% if runai | bool %}
+---
+# Run:ai copies it to every project's namespace (runai-<project>), where Ray
+# clusters are Run:ai workloads scheduled by KAI. The History Server's keys
+# reach them as a Run:ai credentials asset (tasks).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ray-grafana
+  namespace: runai
+  labels: {run.ai/cluster-wide: "true", run.ai/name: ray-grafana}
+data:
+  RAY_PROMETHEUS_HOST: http://{{ groups['controller'][0] }}:9090
+  RAY_PROMETHEUS_NAME: Prometheus
+  RAY_GRAFANA_HOST: http://{{ groups['controller'][0] }}:{{ grafana_port }}
+  RAY_GRAFANA_IFRAME_HOST: http://{{ kuberay_controller_address }}:{{ grafana_port }}
+{% endif %}

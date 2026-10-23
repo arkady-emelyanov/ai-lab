@@ -19,6 +19,8 @@ Run:ai is installed from its open-source release (3.0.20, `runai_version`): the 
 | `ClusterPolicy` `cluster-policy` | cluster-wide | the GPU Operator's resource, describing the lab's GPU stack to KAI and GPU fractioning (nothing reconciles it) |
 | `runai-api` | `/usr/local/sbin` on `sched-control` | the REST API as the administrator (`runai-api GET /v1/k8s/clusters`) |
 
+KubeRay's Ray clusters, jobs and services in a project's namespace are Run:ai workloads too, scheduled by KAI ([KubeRay](kuberay.md#with-runai)).
+
 Run:ai's system services run on the controller, which is labelled `node-role.kubernetes.io/runai-system`; its workloads run on the trays. With Run:ai, the controller gets 6 CPUs and 16 GiB (`instance_limits_runai`; `make provision` applies them to a running lab). The running control plane and cluster services use about 5 GiB.
 
 ## How it works

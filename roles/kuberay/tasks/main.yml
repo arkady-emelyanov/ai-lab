@@ -45,6 +45,44 @@
   delay: 10
   changed_when: false
 
+# With Run:ai, Ray clusters in a project's namespace are Run:ai workloads,
+# scheduled by KAI (Run:ai knows RayCluster, RayJob and RayService). The
+# History Server's keys reach every project namespace as a cluster-wide
+# Run:ai credentials asset, which Run:ai turns into the Secret
+# genericsecret-ray-history-s3 there.
+- name: The History Server's keys for Run:ai projects
+  when: runai | bool
+  block:
+    - name: Look up the Run:ai cluster and its credentials
+      ansible.builtin.shell: |
+        set -eo pipefail
+        runai-api GET /v1/k8s/clusters | jq -r '.[] | select(.name == "{{ runai_cluster_name }}") | .uuid'
+        runai-api GET /api/v1/asset/credentials/generic-secret | jq -r '.entries[].meta.name'
+      args:
+        executable: /bin/bash
+      register: runai_credentials
+      changed_when: false
+
+    - name: Create the credentials asset ray-history-s3
+      ansible.builtin.command:
+        argv:
+          - runai-api
+          - POST
+          - /api/v1/asset/credentials/generic-secret
+          - >-
+            {{ {'meta': {'name': 'ray-history-s3', 'scope': 'cluster', 'clusterId': runai_credentials.stdout_lines[0]},
+                'spec': {'keyValuePairs': [
+                  {'key': 'STORAGE_BACKEND', 'value': 's3'},
+                  {'key': 'S3_ENDPOINT', 'value': storage_host ~ ':' ~ rustfs_port},
+                  {'key': 'S3DISABLE_SSL', 'value': 'true'},
+                  {'key': 'S3FORCE_PATH_STYLE', 'value': 'true'},
+                  {'key': 'S3_REGION', 'value': 'us-east-1'},
+                  {'key': 'S3_BUCKET', 'value': kuberay_history_bucket},
+                  {'key': 'AWS_ACCESS_KEY_ID', 'value': 'ray-history'},
+                  {'key': 'AWS_SECRET_ACCESS_KEY', 'value': kuberay_history_secret_key}]}} | to_json }}
+      when: "'ray-history-s3' not in runai_credentials.stdout_lines[1:]"
+      no_log: true
+
 - name: KubeRay is ready
   ansible.builtin.debug:
     msg: >-

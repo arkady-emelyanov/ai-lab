@@ -39,7 +39,7 @@ The dashboard opens on namespace `joe` (the first directory user); its namespace
 
 ### History
 
-A running cluster's Ray dashboard dies with the cluster, and so does the **Logs** link of its job on the **Jobs** page ("kuberay service not found"). KubeRay's History Server keeps them. A collector runs next to Ray in each pod that has one, reads Ray's logs from the directory it shares with Ray (`/tmp/ray`, an `emptyDir`) and receives Ray's events (tasks, actors, jobs, nodes; Ray 2.55 or later, the venv has 2.59), and uploads both to the bucket `ray-history`, under the cluster's name and Ray session. A RayJob keeps its cluster 90 s after the job (`ttlSecondsAfterFinished`) for the last upload.
+A running cluster's Ray dashboard dies with the cluster, and so does the **Logs** link of its job on the **Jobs** page ("kuberay service not found"). KubeRay's History Server keeps them. A collector runs next to Ray in each pod that has one, reads Ray's logs from the directory it shares with Ray (`/tmp/ray`, an `emptyDir`) and receives Ray's events (tasks, actors, jobs, nodes; Ray 2.55 or later, the venv has 2.59), and uploads both to the bucket `ray-history`, under the cluster's name and Ray session. The collector uploads what is left when its pod stops, so a RayJob can delete its cluster right after the job: `ray-job.yaml` waits 5 s (`ttlSecondsAfterFinished`). Upstream's samples wait 90 s, but Kueue gives a job's quota back when the job ends, and a cluster kept that long holds its GPUs while Kueue admits the next workload onto them, which then waits (`Insufficient nvidia.com/gpu`).
 
 The dashboard's **History** pages list the finished clusters, and for one of them its nodes, tasks and every log file, the driver's included (`job-driver-<id>.log`). The dashboard's server asks the History Server through `/historyserver/` on the dashboard's name, where HAProxy fixes one path: KubeRay 1.7.1's dashboard opens a cluster at `/enter_cluster/<namespace>/<cluster>/<session>`, its History Server expects `/enter_cluster/<namespace>/raycluster/<cluster>/<session>` (still so on KubeRay's main branch).
 
@@ -63,6 +63,12 @@ The lab's Prometheus (on the controller, outside Kubernetes) scrapes every Ray n
 
 A Ray head shows panels of those dashboards in its Ray dashboard (Overview, Metrics) when it knows where Prometheus and Grafana are: the ConfigMap `ray-grafana` in every user namespace has Ray's settings (`RAY_PROMETHEUS_HOST`, `RAY_GRAFANA_HOST` by the controller's name, `RAY_GRAFANA_IFRAME_HOST` by its address for the browser), and `ray-job.yaml` loads it into its Ray containers (`envFrom`). Grafana lets them be embedded and shown without a login: with KubeRay it allows embedding and anonymous viewers (read-only, `GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer`), as Ray documents. Finished clusters' metrics stay in Prometheus (`SessionName`, `Cluster` in Ray's dashboards); Ray's dashboard for finished clusters shows no panels, since the History Server does not answer Ray's Grafana checks for past sessions (501, "not yet supported").
 
+### With Run:ai
+
+With `runai: true`, a Ray cluster, job or service created in a Run:ai project's namespace (`runai-<project>`) is a Run:ai workload: Run:ai knows KubeRay's resources (its workload types `RayCluster`, `RayJob`, `RayService`), its pod grouper puts all of a Ray cluster's pods in one pod group, and KAI (`runai-scheduler`) schedules them together against the project's quota, as any Run:ai workload; the UI and API list it (type `RayCluster`, its GPUs). Nothing changes in KubeRay for it (no `batchScheduler`). Kueue leaves those namespaces alone (no LocalQueue there); in the users' namespaces Ray stays with Kueue.
+
+What Ray clusters use in user namespaces reaches the projects' namespaces through Run:ai: the ConfigMap `ray-grafana` (labelled `run.ai/cluster-wide` in namespace `runai`, which Run:ai copies to every project), and the History Server's keys as a cluster-wide Run:ai credentials asset `ray-history-s3`, which Run:ai turns into the Secret `genericsecret-ray-history-s3` in each project's namespace (it adds the prefix). A Ray cluster in a project loads that Secret where `ray-job.yaml` loads `ray-history-s3`, and leaves out Kueue's queue label.
+
 ## Usage
 
 From the login node (`bin/ssh login`) as a directory user:
@@ -73,7 +79,7 @@ cd examples/kubernetes
 kubectl get rayjobs,rayclusters,workloads
 ```
 
-`ray-job.yaml` is the Ray example (`ray_demo.py`, one GPU task per GPU) as a `RayJob`: a head on one tray and a worker on the other, 4 GPUs each. KubeRay starts the cluster when Kueue admits it, submits the driver from a submitter pod (Job `<name>`, whose log is the driver's output), and deletes the cluster 90 s after the job ends. Its collectors keep the cluster's logs and events: the dashboard's **History** shows them after that.
+`ray-job.yaml` is the Ray example (`ray_demo.py`, one GPU task per GPU) as a `RayJob`: a head on one tray and a worker on the other, 4 GPUs each. KubeRay starts the cluster when Kueue admits it, submits the driver from a submitter pod (Job `<name>`, whose log is the driver's output), and deletes the cluster 5 s after the job ends. Its collectors keep the cluster's logs and events: the dashboard's **History** shows them after that.
 
 Open `http://kuberay.10.107.111.10.nip.io` (your bridge's prefix may differ): **Jobs** and **Clusters** list Ray's resources in the selected namespace, with their state; a running cluster links its Ray dashboard (tasks, actors, logs). **History** lists finished clusters: open one, then its nodes' logs, tasks and the driver's output. A finished job's **Logs** link opens its cluster in Ray's own dashboard at `http://ray-history.10.107.111.10.nip.io` (Jobs, then the job: its driver logs; also tasks, actors, nodes), which also lists every finished cluster by itself.
 
@@ -83,7 +89,7 @@ As cluster admin from your machine: `bin/kubectl get rayclusters,rayjobs -A`.
 
 ## Verification
 
-`make test` with KubeRay checks that the `ray-job` example runs as `joe` with all 8 Ray tasks after Kueue admitted its cluster, that the dashboard and the API server answer at the dashboard's name from the host, that the dashboard points the browser at the API server there, that the finished job's driver output is in the dashboard's History, read through the dashboard as its pages do, that the finished job's Logs link leads to its cluster's Jobs page in Ray's dashboard for finished clusters, listing the job, and that a Ray cluster created through the API server shows its Ray dashboard through it, with its metrics in Prometheus; and that Ray's default dashboard is in Grafana's Ray folder for anonymous viewers ([Testing](testing.md)).
+`make test` with KubeRay checks that the `ray-job` example runs as `joe` with all 8 Ray tasks after Kueue admitted its cluster, that the dashboard and the API server answer at the dashboard's name from the host, that the dashboard points the browser at the API server there, that the finished job's driver output is in the dashboard's History, read through the dashboard as its pages do, that the finished job's Logs link leads to its cluster's Jobs page in Ray's dashboard for finished clusters, listing the job, and that a Ray cluster created through the API server shows its Ray dashboard through it, with its metrics in Prometheus; and that Ray's default dashboard is in Grafana's Ray folder for anonymous viewers. With Run:ai it checks that a Ray cluster in the project `test` is scheduled by `runai-scheduler` as one pod group, listed by Run:ai as a running `RayCluster` workload with its GPUs, and scraped by Prometheus ([Testing](testing.md)).
 
 
 ## Limitations
@@ -94,7 +100,7 @@ As cluster admin from your machine: `bin/kubectl get rayclusters,rayjobs -A`.
 - History is kept only for Ray clusters with the collector; Ray clusters made with the dashboard's job form have none. Every namespace's Secret `ray-history-s3` holds the same keys, so users can read each other's Ray history in the bucket (as anyone can in the dashboard). Nothing expires: delete old sessions from the bucket by hand.
 - The KubeRay dashboard's Grafana links (Jobs, Clusters) come only from KubeRay's old v1 API; with the API server V2 it has none. Ray's own dashboard, live, has the Grafana panels.
 - With KubeRay, Grafana is readable without a login (anonymous viewers), as embedding Ray's panels needs.
-- KubeRay schedules through Kueue only: with Run:ai, Ray workloads do not go through KAI (KubeRay's `batchScheduler: kai-scheduler`).
+- With Run:ai, the History Server's Secret has another name in project namespaces (`genericsecret-ray-history-s3`, Run:ai's prefix), so a Ray manifest for a project differs from one for a user namespace in that name and the queue label.
 
 ## References
 

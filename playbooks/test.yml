@@ -489,7 +489,7 @@
             path: "{{ frameworks_venv }}/bin/python"
           register: venv
 
-        # The ray-job example's cluster is gone a minute and a half after the
+        # The ray-job example's cluster is gone seconds after the
         # job; its collectors uploaded its logs to RustFS. The dashboard's
         # History pages read them through the dashboard's server, as here.
         - name: The finished RayJob's driver log is in the dashboard's History
@@ -510,7 +510,9 @@
             for node in $(curl -sf -b $jar "$api/nodes?view=summary" | jq -r '.data.summary[].raylet.nodeId'); do
                 file=$(curl -sf -b $jar "$api/api/v0/logs?node_id=$node" \
                     | jq -r '[.data.result[][]] | map(select(startswith("job-driver-"))) | .[0] // empty')
-                [ -n "$file" ] && curl -sf -b $jar "$api/api/v0/logs/file?node_id=$node&filename=$file&lines=20"
+                if [ -n "$file" ]; then
+                    curl -sf -b $jar "$api/api/v0/logs/file?node_id=$node&filename=$file&lines=20"
+                fi
             done
           args:
             executable: /bin/bash
@@ -797,6 +799,95 @@
           loop_control:
             label: "{{ item.item }}"
           changed_when: true
+
+        # KubeRay with Run:ai: a Ray cluster in the project's namespace is a
+        # Run:ai workload, gang-scheduled by KAI, with the History Server's
+        # keys and the Grafana settings Run:ai copies there.
+        - name: A Ray cluster in the project is a Run:ai workload scheduled by KAI
+          when: kuberay | bool and venv_ready
+          vars:
+            ray_cluster: test-ray
+            venv_ready: "{{ hostvars[groups['login'][0]].venv.stat.exists | default(false) }}"
+          block:
+            - name: Create a Ray cluster (head and a 2-GPU worker) in the project
+              ansible.builtin.command: kubectl apply -f -
+              args:
+                stdin: |
+                  apiVersion: ray.io/v1
+                  kind: RayCluster
+                  metadata: {name: {{ ray_cluster }}, namespace: runai-{{ project }}}
+                  spec:
+                    headGroupSpec:
+                      rayStartParams: {num-cpus: "1"}
+                      template:
+                        spec:
+                          containers:
+                            - name: ray-head
+                              image: {{ k3s_pod_image }}
+                              env: [{name: PATH, value: "{{ frameworks_venv }}/bin:/usr/local/bin:/usr/bin:/bin"}]
+                              envFrom:
+                                - configMapRef: {name: ray-grafana}
+                                - secretRef: {name: genericsecret-ray-history-s3}
+                              resources: {requests: {cpu: "1", memory: 2Gi}}
+                              volumeMounts: [{name: shared, mountPath: /shared}]
+                          volumes: [{name: shared, hostPath: {path: /shared, type: Directory}}]
+                    workerGroupSpecs:
+                      - groupName: gpu
+                        replicas: 1
+                        minReplicas: 1
+                        maxReplicas: 1
+                        rayStartParams: {num-cpus: "1"}
+                        template:
+                          spec:
+                            containers:
+                              - name: ray-worker
+                                image: {{ k3s_pod_image }}
+                                env: [{name: PATH, value: "{{ frameworks_venv }}/bin:/usr/local/bin:/usr/bin:/bin"}]
+                                resources:
+                                  limits: {nvidia.com/gpu: 2}
+                                  requests: {cpu: "1", memory: 2Gi}
+                                volumeMounts: [{name: shared, mountPath: /shared}]
+                            volumes: [{name: shared, hostPath: {path: /shared, type: Directory}}]
+              changed_when: true
+
+            - name: Its pods are scheduled by runai-scheduler as one pod group
+              ansible.builtin.command: >-
+                kubectl -n runai-{{ project }} get pods -l ray.io/cluster={{ ray_cluster }}
+                -o 'jsonpath={range .items[*]}{.spec.schedulerName}/{.metadata.annotations.pod-group-name}/{.status.phase}{"\n"}{end}'
+              register: ray_pods
+              until: >-
+                ray_pods.stdout_lines | length == 2
+                and ray_pods.stdout_lines | map('split', '/') | map(attribute=0) | unique | list == ['runai-scheduler']
+                and ray_pods.stdout_lines | map('split', '/') | map(attribute=1) | unique | list | length == 1
+                and ray_pods.stdout_lines | map('split', '/') | map(attribute=2) | unique | list == ['Running']
+              retries: 24
+              delay: 5
+              changed_when: false
+
+            - name: Run:ai lists it as a running RayCluster workload with its 2 GPUs
+              ansible.builtin.shell: >-
+                set -o pipefail;
+                runai-api GET '/api/v1/workloads?filterBy=name=={{ ray_cluster }}'
+                | jq -r '.workloads[] | "\(.type) \(.phase) \(.projectName) \(.allocatedResources.gpu)"'
+              args:
+                executable: /bin/bash
+              register: ray_workload
+              until: ray_workload.stdout == 'RayCluster Running ' ~ project ~ ' 2'
+              retries: 24
+              delay: 5
+              changed_when: false
+
+            - name: Prometheus scrapes its metrics
+              ansible.builtin.uri:
+                url: http://localhost:9090/api/v1/query?query={{ ('ray_node_cpu_count{ray_io_cluster="' ~ ray_cluster ~ '"}') | urlencode }}
+              register: ray_metrics
+              until: ray_metrics.json.data.result | length == 2
+              retries: 12
+              delay: 5
+          always:
+            - name: Delete the Ray cluster
+              ansible.builtin.command: kubectl -n runai-{{ project }} delete raycluster {{ ray_cluster }} --ignore-not-found --wait
+              changed_when: true
 
 # After the example jobs: the Slurm epilog reset each job's GPUs (handover),
 # and no GPU is left needing recovery (with either scheduler).
