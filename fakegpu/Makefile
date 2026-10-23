@@ -2,6 +2,9 @@
 #   driver:     libcuda.so.1, libnvidia-ml.so.1
 #   CUDA libs:  libcublas, libcublasLt (CUDA 13 and 12 SONAMEs), libnccl.so.2,
 #               libcudnn.so.9
+#   tools:      nvidia-cuda-mps-control; for the DRA driver's driver root
+#               (roles/fakegpu) nvidia-imex, nvidia-imex-ctl and an nvidia-smi
+#               for --version
 #
 # symbols/*.syms list every function the real libraries export. Each gets
 # a weak "return 0" (= success) definition placed in section fg_weak; the
@@ -23,9 +26,11 @@ LIBS = $(DRIVER_LIBS) $(PRELOAD_LIBS)
 
 CU12 = -DCUBLAS_VER_MAJOR=12 -DCUBLAS_VER_MINOR=9 -DCUBLAS_VER_PATCH=1 -DCUDART_VERSION=12090
 
-all: $(LIBS) nvidia-cuda-mps-control
+TOOLS = nvidia-cuda-mps-control nvidia-imex nvidia-imex-ctl smi-version
 
-$(LIBS) nvidia-cuda-mps-control: glibc_compat.h
+all: $(LIBS) $(TOOLS)
+
+$(LIBS) nvidia-cuda-mps-control smi-version: glibc_compat.h
 
 build/%_weak.c: symbols/%.syms
 	@mkdir -p build
@@ -56,13 +61,25 @@ libnccl.so.2: nccl_stub.c build/nccl_weak.c stub_common.h fakegpu.h
 nvidia-cuda-mps-control: mps_control.c
 	$(CC) $(CFLAGS) -o $@ $<
 
+# IMEX daemon and its control tool (imex.c). Static: they run in NVIDIA's
+# DRA driver image (Debian 12's glibc), mounted from the driver root.
+nvidia-imex: imex.c
+	$(CC) -O2 -Wall -Wextra -static -o $@ $<
+
+nvidia-imex-ctl: imex.c
+	$(CC) -O2 -Wall -Wextra -static -DIMEX_CTL -o $@ $<
+
+# nvidia-smi --version for the driver root (smi_version.c).
+smi-version: smi_version.c
+	$(CC) $(CFLAGS) -o $@ $<
+
 libcudnn.so.9: cudnn_stub.c build/cudnn_weak.c stub_common.h fakegpu.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -Wl,-soname,$@ -o $@ cudnn_stub.c build/cudnn_weak.c
 
 # Driver libs go on the normal linker path (via an ld.so.conf.d entry);
 # CUDA libs go to $(LIBDIR)/preload and are listed in preload.list.
-install: $(LIBS) nvidia-cuda-mps-control
-	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(LIBDIR)/preload
+install: $(LIBS) $(TOOLS)
+	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(LIBDIR)/preload $(DESTDIR)$(LIBDIR)/driver-tools
 	install -m 0755 $(DRIVER_LIBS) $(DESTDIR)$(LIBDIR)/
 	ln -sf libcuda.so.1 $(DESTDIR)$(LIBDIR)/libcuda.so
 	ln -sf libnvidia-ml.so.1 $(DESTDIR)$(LIBDIR)/libnvidia-ml.so
@@ -71,8 +88,10 @@ install: $(LIBS) nvidia-cuda-mps-control
 	install -D -m 0755 nvidia-smi $(DESTDIR)$(PREFIX)/bin/nvidia-smi
 	install -D -m 0755 numactl $(DESTDIR)$(PREFIX)/bin/numactl
 	install -D -m 0755 nvidia-cuda-mps-control $(DESTDIR)$(PREFIX)/bin/nvidia-cuda-mps-control
+	install -m 0755 nvidia-imex nvidia-imex-ctl $(DESTDIR)$(LIBDIR)/driver-tools/
+	install -m 0755 smi-version $(DESTDIR)$(LIBDIR)/driver-tools/nvidia-smi
 
 clean:
-	rm -rf build $(LIBS) nvidia-cuda-mps-control
+	rm -rf build $(LIBS) $(TOOLS)
 
 .PHONY: all install clean

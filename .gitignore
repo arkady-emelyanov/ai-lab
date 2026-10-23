@@ -13,3 +13,6 @@ fakedp/fakedp
 __pycache__/
 /local.yml
 /endpoints.md
+fakegpu/nvidia-imex
+fakegpu/nvidia-imex-ctl
+fakegpu/smi-version

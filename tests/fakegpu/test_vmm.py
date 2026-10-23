@@ -28,10 +28,13 @@ def tray(tmp_path):
     """tray(name, clique) -> environment of a process on that tray."""
     fabric = tmp_path / "fabric"
 
-    def env(name, clique=1):
+    def env(name, clique=1, imex=True):
         t = tmp_path / name
         (t / "dev").mkdir(parents=True, exist_ok=True)
         (t / "dev" / "nvidia0").touch()
+        if imex:  # an IMEX channel, as a Slurm tray or a ComputeDomain's pod has
+            (t / "dev" / "nvidia-caps-imex-channels").mkdir(exist_ok=True)
+            (t / "dev" / "nvidia-caps-imex-channels" / "channel0").touch()
         (t / "sb").mkdir(exist_ok=True)
         (t / "sb" / "fabric-clique").write_text(f"0 {clique}\n")
         return dict(os.environ, LD_LIBRARY_PATH=str(FAKEGPU), FAKEGPU_CONF=str(t / "none.conf"), FAKEGPU_COUNT="1",
@@ -100,6 +103,19 @@ def test_gpu_in_no_partition_has_no_fabric_memory(tray):
                          env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     out, _ = p.communicate(timeout=30)
     assert json.loads(out.splitlines()[-1])["rc"]["cuMemCreate"] == NOT_PERMITTED
+
+
+def test_fabric_memory_needs_an_imex_channel(tray):
+    env = tray("tray0", imex=False)
+    p = subprocess.Popen([sys.executable, str(PROC), str(FAKEGPU), "export", "fabric", "mem", tray.rendezvous],
+                         env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    out, _ = p.communicate(timeout=30)
+    assert json.loads(out.splitlines()[-1])["rc"]["cuMemCreate"] == NOT_PERMITTED
+
+
+def test_fabric_import_needs_an_imex_channel(tray):
+    r = share(tray, "fabric", "mem", tray("tray0"), tray("tray1", imex=False))
+    assert r["rc"]["cuMemImportFromShareableHandle"] == NOT_PERMITTED
 
 
 @pytest.mark.parametrize("how", ["fd", "fabric"])

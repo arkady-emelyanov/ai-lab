@@ -30,6 +30,7 @@ typedef struct { unsigned char bytes[16]; } CUuuid;
 #define CUDA_ERROR_NO_DEVICE 100
 #define CUDA_ERROR_INVALID_DEVICE 101
 #define CUDA_ERROR_NOT_FOUND 500
+#define CUDA_ERROR_NOT_PERMITTED 800
 #define CUDA_ERROR_NOT_SUPPORTED 801
 
 #define API __attribute__((visibility("default")))
@@ -145,6 +146,7 @@ static const char *err_str(CUresult e)
     case CUDA_ERROR_NO_DEVICE: return "no CUDA-capable device is detected";
     case CUDA_ERROR_INVALID_DEVICE: return "invalid device ordinal";
     case CUDA_ERROR_NOT_FOUND: return "named symbol not found";
+    case CUDA_ERROR_NOT_PERMITTED: return "operation not permitted";
     case CUDA_ERROR_NOT_SUPPORTED: return "operation not supported";
     default: return "unknown error";
     }
@@ -167,6 +169,7 @@ API CUresult cuGetErrorName(CUresult e, const char **s)
     case CUDA_ERROR_NO_DEVICE: *s = "CUDA_ERROR_NO_DEVICE"; break;
     case CUDA_ERROR_INVALID_DEVICE: *s = "CUDA_ERROR_INVALID_DEVICE"; break;
     case CUDA_ERROR_NOT_FOUND: *s = "CUDA_ERROR_NOT_FOUND"; break;
+    case CUDA_ERROR_NOT_PERMITTED: *s = "CUDA_ERROR_NOT_PERMITTED"; break;
     case CUDA_ERROR_NOT_SUPPORTED: *s = "CUDA_ERROR_NOT_SUPPORTED"; break;
     default: *s = "CUDA_ERROR_UNKNOWN";
     }

@@ -21,7 +21,11 @@
  * Fabric handles follow the NVLink partitions, as IMEX does on GB200: one
  * can only be exported from, and imported into, a GPU whose partition
  * (cluster UUID and clique, from NVML like NCCL reads them) is the one the
- * memory was created in. A GPU in no partition has no fabric memory.
+ * memory was created in. A GPU in no partition has no fabric memory. And as
+ * with the real driver, a process creates or imports fabric memory only
+ * with an IMEX channel (dev_dir/nvidia-caps-imex-channels/channel<n>, which
+ * NVIDIA's DRA driver gives a pod of a ComputeDomain; a Slurm tray has
+ * channel0): CUDA_ERROR_NOT_PERMITTED without one.
  *
  * A multicast object has backing of its own, so its address works as soon
  * as it is mapped; binding memory to it is recorded and checked. Writes
@@ -211,6 +215,24 @@ void fg_collect_unheld(const char *dir)
     closedir(d);
 }
 
+/* Whether the process can use an IMEX channel, which fabric memory needs. */
+static int imex_channel(void)
+{
+    fg_init();
+    char dir[sizeof fg_cfg.dev_dir + 32], path[sizeof dir + 300];
+    snprintf(dir, sizeof dir, "%s/nvidia-caps-imex-channels", fg_cfg.dev_dir);
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    int ok = 0;
+    for (struct dirent *e; !ok && (e = readdir(d));) {
+        if (strncmp(e->d_name, "channel", 7)) continue;
+        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
+        ok = access(path, R_OK | W_OK) == 0;
+    }
+    closedir(d);
+    return ok;
+}
+
 /* Backing for a new object: a memfd, or a file in fabric_dir. */
 static int backing(struct obj *o, int kind, size_t size, const struct partition *part)
 {
@@ -221,6 +243,7 @@ static int backing(struct obj *o, int kind, size_t size, const struct partition 
     fg_init();
     if (!fg_cfg.fabric_dir[0]) return CUDA_ERROR_NOT_SUPPORTED;
     if (!part->clique) return CUDA_ERROR_NOT_PERMITTED; /* no partition, no fabric memory */
+    if (!imex_channel()) return CUDA_ERROR_NOT_PERMITTED;
     unsigned r = 0;
     if (getrandom(&r, sizeof r, 0) != sizeof r) r = (unsigned)getpid();
     struct fabric_handle *f = &o->fabric;
@@ -350,8 +373,9 @@ API CUresult cuMemImportFromShareableHandle(CUmemGenericAllocationHandle *h, voi
             free(o);
             return CUDA_ERROR_INVALID_VALUE;
         }
-        /* IMEX: only GPUs of the partition the memory belongs to reach it. */
-        if (!in_partition(dev, f)) {
+        /* IMEX: only GPUs of the partition the memory belongs to reach it,
+         * from a process with an IMEX channel. */
+        if (!in_partition(dev, f) || !imex_channel()) {
             free(o);
             return CUDA_ERROR_NOT_PERMITTED;
         }
