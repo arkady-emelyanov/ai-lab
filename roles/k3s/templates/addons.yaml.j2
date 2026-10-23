@@ -54,6 +54,42 @@ spec:
       nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
 ---
+# Ingress controller for the lab's web UIs: plain HTTP (KubeRay's dashboard),
+# HTTPS only where a component requires it (Run:ai, its own certificate).
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: haproxy-ingress
+  namespace: kube-system
+spec:
+  repo: https://haproxytech.github.io/helm-charts
+  chart: kubernetes-ingress
+  version: {{ haproxy_ingress_chart_version }}
+  targetNamespace: haproxy-controller
+  createNamespace: true
+  valuesContent: |-
+    controller:
+      # One instance on the controller's own ports 80 and 443: the address
+      # the lab's web UI names (*.<controller address>.nip.io) resolve to,
+      # from the host and from pods.
+      kind: DaemonSet
+      daemonset:
+        useHostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Ports below 1024 in the host's network namespace: as root (a pod
+      # sysctl cannot open them with host networking).
+      unprivileged: false
+      containerPort: {http: 80, https: 443, stat: 1024}
+      service:
+        type: ClusterIP
+      ingressClass: haproxy
+      ingressClassResource:
+        name: haproxy
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
+      tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+---
 # Cluster state for the controller's Prometheus (GPU requests per pod, node
 # allocatable, jobs), on a NodePort of the control-plane node.
 apiVersion: helm.cattle.io/v1

@@ -12,7 +12,7 @@ Run:ai is installed from its open-source release (3.0.20, `runai_version`): the 
 |---|---|---|
 | Control plane (chart `control-plane`) | namespace `runai-backend`, on `sched-control` | web UI, REST API, Keycloak (users, SSO), PostgreSQL, NATS, Thanos (metrics) |
 | Cluster services (chart `runai-cluster`) | namespace `runai`, on `sched-control` | Run:ai operator, agent and cluster sync (to the control plane), KAI Scheduler (`runai-scheduler`), KAI resource management (projects, node pools, queues), workload controllers, Run:ai's Prometheus |
-| HAProxy ingress | namespace `haproxy-controller`, `sched-control` ports 80 and 443 | serves the UI and API at `https://runai.<controller address>.nip.io`, and workloads' URLs at its subdomains |
+| HAProxy ingress (a k3s add-on, [Kubernetes](kubernetes.md)) | namespace `haproxy-controller`, `sched-control` ports 80 and 443 | serves the UI and API at `https://runai.<controller address>.nip.io`, and workloads' URLs at its subdomains |
 | kube-prometheus-stack | namespace `monitoring` | the Prometheus operator (Run:ai runs its own Prometheus through it), kube-state-metrics, kubelet metrics |
 | DCGM exporter | namespace `gpu-operator`, DaemonSet on the trays | NVIDIA's GPU metrics exporter, unchanged, on the fake NVML; Run:ai reads GPU utilisation and memory from it |
 | NVIDIA GPU fractioning (0.1.7) | namespace `runai`: operator on `sched-control`, `fractiond` and `mpsd` on the trays | GPU fractions: gives a container part of a GPU and its memory limit, which the fake driver enforces |
@@ -28,7 +28,7 @@ Run:ai's system services run on the controller, which is labelled `node-role.kub
 The `runai` role (`roles/runai`, run by `make configure` after the k3s cluster configuration) follows Run:ai's manual Helm installation:
 
 1. A certificate authority of the lab's own (`.secrets/runai/ca.crt`) signs a certificate for the domain and its subdomains. Run:ai's services trust it (`global.customCA`).
-2. The prerequisites: HAProxy (Run:ai's recommended ingress controller), kube-prometheus-stack and the DCGM exporter. Like the lab's other add-ons, they are k3s `HelmChart` manifests (`lab-runai-*.yaml` in k3s' manifests directory).
+2. The prerequisites: kube-prometheus-stack and the DCGM exporter. Like the lab's other add-ons, they are k3s `HelmChart` manifests (`lab-runai-*.yaml` in k3s' manifests directory). HAProxy, Run:ai's recommended ingress controller, is already there: every k3s lab has it.
 3. The control plane, with the administrator `admin@ai-lab.local` (`runai_admin_email`) and the password in `.secrets/runai-admin.pass`.
 4. The cluster is registered with the control plane through the REST API, and the installer's client secret read from it, as Run:ai's own development setup does (instead of the onboarding wizard in the UI).
 5. The cluster services, connecting to the control plane with that secret. The role waits until the control plane reports the cluster `Connected`.

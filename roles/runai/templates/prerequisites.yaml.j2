@@ -1,42 +1,10 @@
 # {{ ansible_managed }}
 # What Run:ai expects in a Kubernetes cluster before it is installed, as a
-# GPU cluster would have it: an ingress controller (HAProxy, the one Run:ai
-# recommends), the Prometheus operator (kube-prometheus-stack; Run:ai runs
-# its own Prometheus through it) and NVIDIA's DCGM exporter (objects.yaml).
-# Controllers run on the control-plane node, like the lab's other add-ons.
-apiVersion: helm.cattle.io/v1
-kind: HelmChart
-metadata:
-  name: haproxy-ingress
-  namespace: kube-system
-spec:
-  repo: https://haproxytech.github.io/helm-charts
-  chart: kubernetes-ingress
-  version: {{ haproxy_ingress_chart_version }}
-  targetNamespace: haproxy-controller
-  createNamespace: true
-  valuesContent: |-
-    controller:
-      # One instance on the controller's own ports 80 and 443: the address
-      # runai_domain resolves to, from the host and from pods.
-      kind: DaemonSet
-      daemonset:
-        useHostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
-      # Ports below 1024 in the host's network namespace: as root (a pod
-      # sysctl cannot open them with host networking).
-      unprivileged: false
-      containerPort: {http: 80, https: 443, stat: 1024}
-      service:
-        type: ClusterIP
-      ingressClass: haproxy
-      ingressClassResource:
-        name: haproxy
-      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
-      tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
-      resources:
-        requests: {cpu: 50m, memory: 64Mi}
----
+# GPU cluster would have it, besides the ingress controller (HAProxy, the one
+# Run:ai recommends; a k3s add-on): the Prometheus operator
+# (kube-prometheus-stack; Run:ai runs its own Prometheus through it) and
+# NVIDIA's DCGM exporter (objects.yaml). Controllers run on the
+# control-plane node, like the lab's other add-ons.
 # Only the operator and the cluster-state exporters: Run:ai creates its own
 # Prometheus (namespace runai), which scrapes the ServiceMonitors here.
 # The lab's node_exporter already runs on every instance.

@@ -81,9 +81,16 @@
   changed_when: false
 
 # Kueue's webhooks answer only once its controller runs.
-- name: Wait for the Kueue and JobSet controllers
-  ansible.builtin.command: kubectl -n {{ item }} rollout status deployment --timeout=300s
-  loop: [kueue-system, jobset-system]
+- name: Wait for the Kueue and JobSet controllers and the ingress controller
+  ansible.builtin.command: kubectl -n {{ item.ns }} rollout status {{ item.kind }} --timeout=300s
+  loop:
+    - {ns: kueue-system, kind: deployment}
+    - {ns: jobset-system, kind: deployment}
+    - {ns: haproxy-controller, kind: daemonset}
+  register: rollout
+  until: rollout.rc == 0
+  retries: 10
+  delay: 10
   changed_when: false
 
 - name: Render users, namespaces and queues

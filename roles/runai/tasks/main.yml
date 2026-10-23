@@ -132,7 +132,7 @@
            | to_json }}
   when: policy_state.stdout != 'ready'
 
-- name: Install the ingress controller and the Prometheus operator
+- name: Install the Prometheus operator
   ansible.builtin.template:
     src: prerequisites.yaml.j2
     dest: "{{ runai_manifests_dir }}/lab-runai-prerequisites.yaml"
@@ -148,10 +148,9 @@
   delay: 10
   changed_when: false
 
-- name: Wait for the ingress controller, the Prometheus operator and the DCGM exporter
+- name: Wait for the Prometheus operator and the DCGM exporter
   ansible.builtin.command: kubectl -n {{ item.ns }} rollout status {{ item.kind }} --timeout=300s
   loop:
-    - {ns: haproxy-controller, kind: daemonset}
     - {ns: monitoring, kind: deployment}
     - {ns: gpu-operator, kind: daemonset}
   register: rollout
