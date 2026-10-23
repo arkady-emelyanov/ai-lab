@@ -1,7 +1,8 @@
 #!/bin/bash
-# Submits an example JobSet as you, the way sbatch submits a batch script:
-# fills in your uid, gid and home, names the run <example>-<n>, queues it in
-# your namespace's Kueue queue, and prints the run's name.
+# Submits an example JobSet or KubeRay RayJob as you, the way sbatch submits
+# a batch script: fills in your uid, gid and home, names the run
+# <example>-<n>, queues it in your namespace's Kueue queue, and prints the
+# run's name.
 #
 #   ./submit nvl8-hello.yaml            submit, print the name
 #   ./submit --wait nvl8-hello.yaml     also wait for it to finish and write
@@ -20,13 +21,25 @@ while [[ ${1:-} == --* ]]; do
         *) break ;;
     esac
 done
-[[ $# -eq 1 && -f $1 ]] || { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[[ $# -eq 1 && -f $1 ]] || { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 name=${name:-$(basename "$1" .yaml)-$(date +%s%N | tail -c 7)}
-sed -e "s/@NAME@/$name/g" -e "s/@UID@/$(id -u)/g" -e "s/@GID@/$(id -g)/g" -e "s|@HOME@|$HOME|g" "$1" \
-    | kubectl $create -f - >/dev/null
+created=$(sed -e "s/@NAME@/$name/g" -e "s/@UID@/$(id -u)/g" -e "s/@GID@/$(id -g)/g" -e "s|@HOME@|$HOME|g" "$1" \
+          | kubectl $create -f - -o name)
+kind=${created%%.*}
 echo "$name"
 $wait || exit 0
+
+if [[ $kind == rayjob ]]; then
+    # A RayJob's deployment ends Complete or Failed; the submitter pod (Job
+    # <name>) has the driver's output.
+    until state=$(kubectl get rayjob "$name" -o jsonpath='{.status.jobDeploymentStatus}' | grep -E '^(Complete|Failed)$'); do
+        sleep 5
+    done
+    kubectl logs "job/$name" --tail=-1 > "$name.out" 2>&1 || true
+    [[ $(kubectl get rayjob "$name" -o jsonpath='{.status.jobStatus}') == SUCCEEDED ]]
+    exit
+fi
 
 # A JobSet ends Completed or Failed.
 until state=$(kubectl get jobset "$name" -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type}{"\n"}{end}' \

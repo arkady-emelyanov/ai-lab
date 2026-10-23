@@ -21,7 +21,7 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 | Area | Check |
 |---|---|
 | Slurm (Slurm mode) | both trays available (waits out jobs still completing) |
-| Kubernetes (k3s mode) | both trays ready with 4 GPUs, the GFD clique label and topograph's domain label; the four examples as JobSets through Kueue (`examples/kubernetes/submit --wait`) with the same output checks; 8 single-GPU pods got 8 different GPUs; `joe` reads nodes and queues but not `kube-system` |
+| Kubernetes (k3s mode) | both trays ready with 4 GPUs, the GFD clique label and topograph's domain label; the four examples as JobSets through Kueue (`examples/kubernetes/submit --wait`) with the same output checks, with KubeRay also `ray-job` as a RayJob; 8 single-GPU pods got 8 different GPUs; `joe` reads nodes and queues but not `kube-system` |
 | Jobs as `joe` (Slurm mode) | `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster` run with `sbatch --wait`; their output contains the fabric line, rank 7, all 8 DDP ranks, 8 Ray tasks |
 | Accounting (Slurm mode) | every job above is `COMPLETED` in `sacct` |
 | GPU handover | the Slurm epilog reset the jobs' GPUs (Slurm mode); no GPU needs a reset or other recovery |
@@ -30,6 +30,7 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 | BMCs | tray BMCs report their tray powered on with 4 GPUs, also through the Redfish exporter; the switch BMC exposes 72 ports per switch |
 | Partition controller | gRPC port open; every GPU reports the domain UUID and a clique |
 | Topology | topograph generates a block containing both trays (Slurm) or labels both trays with the NVLink domain and switch tiers (k3s) |
+| KubeRay (k3s mode, `kuberay: true`) | the `ray-job` example runs as `joe` (8 Ray tasks) after Kueue admitted its cluster; from the host, the dashboard serves its pages at `http://kuberay.<controller address>.nip.io` and points the browser at the API server behind the same name; the API server lists Ray jobs and clusters, creates a Ray cluster whose Ray dashboard answers through it, and deletes it |
 | NVIDIA Run:ai (`runai: true`) | the cluster `Connected` to the control plane with every required dependency; Run:ai's Prometheus has DCGM metrics for all 8 GPUs; a 2-GPU training workload submitted through the REST API (project `test`) runs on a tray, scheduled by `runai-scheduler`, and lists its 2 GPUs; two half-GPU workloads share one GPU, each with half its memory as limit and out of memory beyond it |
 | Monitoring | every Prometheus target up; power for all 8 GPUs; scheduler GPU (`sched_*`), NVLink fabric and InfiniBand port counter series present; Grafana serves the dashboards |
 

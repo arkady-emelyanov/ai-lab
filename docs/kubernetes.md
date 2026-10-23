@@ -19,10 +19,12 @@ To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, home
 | Kueue | `kueue-system` | ClusterQueue `gpu` (the trays' CPUs, memory, 8 GPUs); per user namespace a LocalQueue `gpu` and a `default` one that takes workloads without a queue label, so nothing bypasses the quota; topology-aware scheduling over topograph's labels; admits multi-pod jobs as a gang |
 | JobSet | `jobset-system` | multi-pod jobs with stable DNS names (rank 0 address for torchrun, Ray head) |
 | kube-state-metrics | `kube-system`, NodePort 30808 | cluster state for Prometheus |
+| HAProxy ingress | `haproxy-controller`, `sched-control` ports 80 and 443 | the lab's web UIs at names under `<controller address>.nip.io`: plain HTTP (KubeRay), HTTPS only where a component requires it (Run:ai) |
+| KubeRay (`kuberay: true`, the default) | `kuberay` | operator for Ray clusters, jobs and services, its API server and dashboard at `http://kuberay.<controller address>.nip.io` ([KubeRay](kuberay.md)) |
 
 Add-ons are installed by k3s' Helm controller from `HelmChart` manifests (`roles/k3s/templates/addons.yaml.j2`); versions are pinned in `all.yml`.
 
-With `runai: true`, NVIDIA Run:ai runs on this cluster, with its own scheduler (KAI) for its projects' workloads next to Kueue ([NVIDIA Run:ai](runai.md)).
+With `kuberay: true` (the default), KubeRay runs Ray clusters and jobs on this cluster, admitted by Kueue, with its web dashboard ([KubeRay](kuberay.md)). With `runai: true`, NVIDIA Run:ai runs on this cluster, with its own scheduler (KAI) for its projects' workloads next to Kueue ([NVIDIA Run:ai](runai.md)).
 
 ## How it works
 
@@ -78,11 +80,12 @@ kubectl get jobsets,workloads          # your jobs and their Kueue admission
 | `kubernetes/nvl8-hello.yaml` | `slurm/nvl8-hello.sbatch` | 8 pods × 1 GPU, admitted together into one NVLink domain |
 | `kubernetes/ddp-train.yaml` | `slurm/ddp-train.sbatch` | PyTorch DDP, 2 pods × 4 GPUs, torchrun rendezvous on pod 0 |
 | `kubernetes/ray-cluster.yaml` | `slurm/ray-cluster.sbatch` | Ray head and worker pods, driver on the head |
+| `kubernetes/ray-job.yaml` | `slurm/ray-cluster.sbatch` | the same as a KubeRay `RayJob` (`kuberay: true`): KubeRay starts the Ray cluster, submits the driver and deletes the cluster when it ends; shows in the KubeRay dashboard ([KubeRay](kuberay.md)) |
 | `kubernetes/vllm-serve.yaml` | – | vLLM's OpenAI-compatible server (official image) as a Deployment and Service on one GPU; answers are empty text of exactly `max_tokens` tokens ([examples](../examples/README.md)) |
 | `kubernetes/sglang-serve.yaml` | – | SGLang's OpenAI-compatible server (official image, unmodified; the recommended inference server, see [Inference servers](inference.md)) as a Deployment and Service, on one GPU or with tensor parallelism inside a tray; answers are `"!!!..."` of exactly `max_tokens` tokens ([examples](../examples/README.md)) |
 | `kubernetes/sglang-tp8.yaml` | – | SGLang with tensor parallelism across both trays (TP=8, 2 pods × 4 GPUs); its all-reduces cross trays over NVLink, or over InfiniBand when the trays are in different NVLink partitions |
 
-Examples are JobSets queued in Kueue (`kueue.x-k8s.io/queue-name: gpu`); `submit` fills in your uid, gid and home (`@UID@`, `@GID@`, `@HOME@`) and a unique name. Pods use `docker.io/library/buildpack-deps:noble` (Ubuntu 24.04 with Python, so the `/shared` venv runs unchanged) and mount `/shared` and `/scratch` from the tray.
+Examples are JobSets (`ray-job.yaml`: a RayJob) queued in Kueue (`kueue.x-k8s.io/queue-name: gpu`); `submit` fills in your uid, gid and home (`@UID@`, `@GID@`, `@HOME@`) and a unique name. Pods use `docker.io/library/buildpack-deps:noble` (Ubuntu 24.04 with Python, so the `/shared` venv runs unchanged) and mount `/shared` and `/scratch` from the tray.
 
 From your machine, as cluster admin: `bin/kubectl ...` (kubeconfig in `.secrets/kubeconfig`).
 
@@ -111,7 +114,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 `make test` in k3s mode checks that:
 
 - both trays are ready, with 4 GPUs and their clique and topology labels
-- the four examples run as `joe` and print the expected output
+- the examples run as `joe` and print the expected output (`ray-job.yaml` with KubeRay, admitted by Kueue)
 - the 8 single-GPU pods of `nvl8-hello` get 8 different GPUs
 - `joe` can read nodes and queues, but not `kube-system`
 - a pod can reach S3

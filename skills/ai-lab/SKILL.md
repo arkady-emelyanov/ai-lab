@@ -47,7 +47,9 @@ cd examples/kubernetes && ./submit --wait nvl8-hello.yaml     # prints the run n
 kubectl get jobsets,workloads
 ```
 
-Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`; Kubernetes only: `sglang-serve` (the recommended inference server) and `vllm-serve` (`./submit --name <name>`), `sglang-tp8` (TP=8 across both trays); details and tray-size requirements in `docs/inference.md`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but GPU kernels never actually execute (no real GPU math).
+Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`; Kubernetes only: `ray-job` (KubeRay), `sglang-serve` (the recommended inference server) and `vllm-serve` (`./submit --name <name>`), `sglang-tp8` (TP=8 across both trays); details and tray-size requirements in `docs/inference.md`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but GPU kernels never actually execute (no real GPU math).
+
+KubeRay (k3s mode, on by default with `kuberay: true`): Ray clusters and jobs as `RayCluster`/`RayJob` resources, admitted by Kueue; dashboard `http://kuberay.<bridge>.10.nip.io` (no login), which also links each running cluster's Ray dashboard. As `joe`: `cd examples/kubernetes && ./submit --wait ray-job.yaml` (driver output in `<name>.out`), `kubectl get rayjobs,rayclusters`. Details in `docs/kuberay.md`.
 
 NVIDIA Run:ai (k3s mode with `runai: true` in `local.yml`; UI `https://runai.<bridge>.10.nip.io`, `admin@ai-lab.local`, password in `.secrets/runai-admin.pass`). Its workloads run in namespace `runai-<project>`, scheduled by KAI (`runai-scheduler`); `runai-api` on the controller is the REST API as the administrator:
 
@@ -113,13 +115,13 @@ idrac_system_power_on                                       # tray power from th
 
 ## Test
 
-- `make test`: end to end (jobs, storage, BMCs, partitions, metrics, Run:ai when enabled), ~10 minutes.
+- `make test`: end to end (jobs, storage, BMCs, partitions, metrics, KubeRay and Run:ai when enabled), ~10 minutes.
 - `make test-bmc`: BMC and partition integration tests, ~30 s; `make test-bmc-disruptive` power-cycles a tray (ask first).
 - `make test-fakegpu`: the fake GPU libraries on the host, no lab needed.
 
 ## More
 
-`docs/` in the repository: `endpoints.md` (addresses and credentials), `slurm.md`, `kubernetes.md`, `runai.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
+`docs/` in the repository: `endpoints.md` (addresses and credentials), `slurm.md`, `kubernetes.md`, `kuberay.md`, `runai.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
 
 ## Installing this skill
 

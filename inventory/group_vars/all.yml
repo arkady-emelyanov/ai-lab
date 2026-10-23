@@ -89,6 +89,16 @@ scratch_pool_size: 200GiB
 scratch_size_gib: 50
 scratch_mount: /scratch
 
+# ---- KubeRay (scheduler: k3s) ------------------------------------------------------
+# Ray on Kubernetes: the KubeRay operator (RayCluster, RayJob, RayService),
+# its API server and its web dashboard, on the controller; Ray's pods run on
+# the trays, admitted by Kueue. See docs/kuberay.md.
+kuberay: true
+kuberay_version: 1.7.1
+kuberay_chart_repo: https://kuberay-project.github.io/kuberay-helm/
+# Name of the dashboard (plain HTTP). auto: kuberay.<controller address>.nip.io.
+kuberay_domain: auto
+
 # ---- NVIDIA Run:ai (scheduler: k3s) ------------------------------------------------
 # Open-source NVIDIA Run:ai on the k3s cluster: its control plane (web UI, API,
 # Keycloak, PostgreSQL) and its cluster services (KAI Scheduler, operators),

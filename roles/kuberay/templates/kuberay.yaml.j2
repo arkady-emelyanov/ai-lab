@@ -1,0 +1,140 @@
+# {{ ansible_managed }}
+# KubeRay: the operator and the API server from KubeRay's charts, and its
+# dashboard (no chart upstream), all on the control-plane node like the
+# lab's other add-ons; Ray's own pods run on the trays.
+{% set on_controller = {'nodeSelector': {'node-role.kubernetes.io/control-plane': 'true'},
+                        'tolerations': [{'key': 'CriticalAddonsOnly', 'operator': 'Exists'}]} %}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ kuberay_namespace }}
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: kuberay-operator
+  namespace: kube-system
+spec:
+  repo: {{ kuberay_chart_repo }}
+  chart: kuberay-operator
+  version: {{ kuberay_version }}
+  targetNamespace: {{ kuberay_namespace }}
+  valuesContent: |-
+    {{ on_controller | to_json }}
+---
+# API server V2: Kubernetes' own API for Ray's resources, their events and
+# the Ray dashboards of KubeRay's services, which the dashboard calls from
+# the browser. No security proxy (a shared token in front of it): the lab
+# serves it without authentication, as the dashboard.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: kuberay-apiserver
+  namespace: kube-system
+spec:
+  repo: {{ kuberay_chart_repo }}
+  chart: kuberay-apiserver
+  version: {{ kuberay_version }}
+  targetNamespace: {{ kuberay_namespace }}
+  valuesContent: |-
+    {{ on_controller | combine({'enableAPIServerV2': true, 'security': none}) | to_json }}
+---
+# Kueue manages every RayJob in the users' namespaces (their default queue)
+# and requires shutdownAfterJobFinishes, so a job's Ray cluster gives its
+# resources back when the job ends. The dashboard's job form leaves it
+# unset; Kubernetes sets it on any RayJob created without it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: rayjob-shutdown-after-finish
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [ray.io]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [rayjobs]
+  matchConditions:
+    - name: keeps-cluster
+      expression: "!has(object.spec.shutdownAfterJobFinishes) || !object.spec.shutdownAfterJobFinishes"
+  failurePolicy: Fail
+  reinvocationPolicy: Never
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          [JSONPatch{op: "add", path: "/spec/shutdownAfterJobFinishes", value: true}]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: rayjob-shutdown-after-finish
+spec:
+  policyName: rayjob-shutdown-after-finish
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kuberay-dashboard
+  namespace: {{ kuberay_namespace }}
+  labels: {app.kubernetes.io/name: kuberay-dashboard}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: kuberay-dashboard}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: kuberay-dashboard}
+    spec:
+      nodeSelector: {{ on_controller.nodeSelector | to_json }}
+      tolerations: {{ on_controller.tolerations | to_json }}
+      containers:
+        - name: dashboard
+          image: quay.io/kuberay/dashboard:v{{ kuberay_version }}
+          env:
+            # Where the browser finds the API server: the same origin, through
+            # the ingress below.
+            - {name: API_DOMAIN, value: "http://{{ kuberay_fqdn }}"}
+            - {name: DEFAULT_NAMESPACE, value: "{{ cluster_users[0].name }}"}
+            - {name: NEXT_TELEMETRY_DISABLED, value: "1"}
+          ports:
+            - {name: http, containerPort: 3000}
+          readinessProbe:
+            httpGet: {path: /api/config, port: http}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kuberay-dashboard
+  namespace: {{ kuberay_namespace }}
+spec:
+  selector: {app.kubernetes.io/name: kuberay-dashboard}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+# One plain-HTTP name for both: Kubernetes API paths go to the API server,
+# the rest (pages and the dashboard's own /api/config) to the dashboard.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kuberay
+  namespace: {{ kuberay_namespace }}
+spec:
+  ingressClassName: haproxy
+  rules:
+    - host: {{ kuberay_fqdn }}
+      http:
+        paths:
+{% for path in ['/apis/ray.io/', '/apis/events.k8s.io/', '/api/v1/'] %}
+          - path: {{ path }}
+            pathType: Prefix
+            backend:
+              service: {name: kuberay-apiserver-service, port: {name: http}}
+{% endfor %}
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: kuberay-dashboard, port: {name: http}}

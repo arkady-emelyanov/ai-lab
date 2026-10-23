@@ -36,6 +36,11 @@ rules:
   - apiGroups: [kueue.x-k8s.io]
     resources: [localqueues, workloads]
     verbs: [get, list, watch]
+{% if kuberay | bool %}
+  - apiGroups: [ray.io]
+    resources: [rayclusters, rayjobs, rayservices, raycronjobs]
+    verbs: ["*"]
+{% endif %}
 {% for user in cluster_users %}
 ---
 apiVersion: v1

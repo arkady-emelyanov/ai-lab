@@ -1,0 +1,2 @@
+kuberay_manifests_dir: /var/lib/rancher/k3s/server/manifests
+kuberay_namespace: kuberay

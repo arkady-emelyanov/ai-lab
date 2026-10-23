@@ -1,0 +1,87 @@
+# The Ray example as a KubeRay RayJob (kuberay: true): KubeRay starts a Ray
+# cluster, a head pod on one tray and a worker pod on the other, each with 4
+# GPUs, submits ray_demo.py to it and deletes the cluster when the job ends;
+# Kueue admits the whole cluster at once. The job, its cluster and the
+# head's Ray dashboard show in the KubeRay dashboard while it runs. Needs
+# the shared venv (make frameworks).
+# Submit: ./submit --wait ray-job.yaml
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: "@NAME@"
+  labels: {kueue.x-k8s.io/queue-name: gpu}
+spec:
+  entrypoint: python @HOME@/examples/ray_demo.py
+  # Kueue requires it: the cluster's resources return to the queue.
+  shutdownAfterJobFinishes: true
+  # Keeps the finished cluster's pods for a minute (their logs).
+  ttlSecondsAfterFinished: 60
+  # The pod that submits the job and follows its output (kubectl logs job/<name>).
+  submitterPodTemplate:
+    spec:
+      restartPolicy: Never
+      securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+      containers:
+        - name: ray-job-submitter
+          image: docker.io/library/buildpack-deps:noble
+          env:
+            - {name: HOME, value: "@HOME@"}
+            - {name: PATH, value: "/shared/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+          resources:
+            limits: {cpu: 500m, memory: 1Gi}
+          volumeMounts:
+            - {name: shared, mountPath: /shared}
+      volumes:
+        - {name: shared, hostPath: {path: /shared, type: Directory}}
+  rayClusterSpec:
+    headGroupSpec:
+      # KubeRay generates `ray start`; the GPUs come from the container's limits.
+      rayStartParams: {num-cpus: "2", object-store-memory: "1000000000"}
+      template:
+        metadata:
+          annotations:
+            kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+        spec:
+          securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+          containers:
+            - name: ray-head
+              image: docker.io/library/buildpack-deps:noble
+              env:
+                - {name: HOME, value: "@HOME@"}
+                - {name: PATH, value: "/shared/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+              ports:
+                - {name: gcs-server, containerPort: 6379}
+                - {name: dashboard, containerPort: 8265}
+                - {name: client, containerPort: 10001}
+              resources:
+                limits: {nvidia.com/gpu: 4}
+                requests: {cpu: "2", memory: 4Gi}
+              volumeMounts:
+                - {name: shared, mountPath: /shared}
+          volumes:
+            - {name: shared, hostPath: {path: /shared, type: Directory}}
+    workerGroupSpecs:
+      - groupName: gpu
+        replicas: 1
+        minReplicas: 1
+        maxReplicas: 1
+        rayStartParams: {num-cpus: "2", object-store-memory: "1000000000"}
+        template:
+          metadata:
+            annotations:
+              kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+          spec:
+            securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+            containers:
+              - name: ray-worker
+                image: docker.io/library/buildpack-deps:noble
+                env:
+                  - {name: HOME, value: "@HOME@"}
+                  - {name: PATH, value: "/shared/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+                resources:
+                  limits: {nvidia.com/gpu: 4}
+                  requests: {cpu: "2", memory: 4Gi}
+                volumeMounts:
+                  - {name: shared, mountPath: /shared}
+            volumes:
+              - {name: shared, hostPath: {path: /shared, type: Directory}}
