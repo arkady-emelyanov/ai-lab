@@ -1,7 +1,8 @@
 # {{ ansible_managed }}
-# KubeRay: the operator and the API server from KubeRay's charts, and its
-# dashboard (no chart upstream), all on the control-plane node like the
-# lab's other add-ons; Ray's own pods run on the trays.
+# KubeRay: the operator and the API server from KubeRay's charts, its
+# dashboard and History Server (no charts upstream), all on the
+# control-plane node like the lab's other add-ons; Ray's own pods run on the
+# trays.
 {% set on_controller = {'nodeSelector': {'node-role.kubernetes.io/control-plane': 'true'},
                         'tolerations': [{'key': 'CriticalAddonsOnly', 'operator': 'Exists'}]} %}
 apiVersion: v1
@@ -19,13 +20,16 @@ spec:
   chart: kuberay-operator
   version: {{ kuberay_version }}
   targetNamespace: {{ kuberay_namespace }}
+  # The chart's requests equal its limits (512 MiB); it uses about 25 MiB.
   valuesContent: |-
-    {{ on_controller | to_json }}
+    {{ on_controller | combine({'resources': {'limits': {'cpu': '100m', 'memory': '512Mi'},
+                                              'requests': {'cpu': '20m', 'memory': '64Mi'}}}) | to_json }}
 ---
 # API server V2: Kubernetes' own API for Ray's resources, their events and
 # the Ray dashboards of KubeRay's services, which the dashboard calls from
 # the browser. No security proxy (a shared token in front of it): the lab
-# serves it without authentication, as the dashboard.
+# serves it without authentication, as the dashboard. Its chart requests
+# 300 MiB; it uses about 10 MiB.
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
 metadata:
@@ -37,7 +41,9 @@ spec:
   version: {{ kuberay_version }}
   targetNamespace: {{ kuberay_namespace }}
   valuesContent: |-
-    {{ on_controller | combine({'enableAPIServerV2': true, 'security': none}) | to_json }}
+    {{ on_controller | combine({'enableAPIServerV2': true, 'security': none,
+                                'resources': {'limits': {'cpu': '500m', 'memory': '500Mi'},
+                                              'requests': {'cpu': '20m', 'memory': '32Mi'}}}) | to_json }}
 ---
 # Kueue manages every RayJob in the users' namespaces (their default queue)
 # and requires shutdownAfterJobFinishes, so a job's Ray cluster gives its
@@ -96,6 +102,10 @@ spec:
             # the ingress below.
             - {name: API_DOMAIN, value: "http://{{ kuberay_fqdn }}"}
             - {name: DEFAULT_NAMESPACE, value: "{{ cluster_users[0].name }}"}
+            # The History pages: the dashboard's server proxies them
+            # (/api/historyserver/) to the History Server, through the
+            # ingress below, which fixes their paths.
+            - {name: HISTORYSERVER_DOMAIN, value: "http://{{ kuberay_fqdn }}/historyserver"}
             - {name: NEXT_TELEMETRY_DISABLED, value: "1"}
           ports:
             - {name: http, containerPort: 3000}
@@ -138,3 +148,119 @@ spec:
             pathType: Prefix
             backend:
               service: {name: kuberay-dashboard, port: {name: http}}
+---
+# ---- History Server -------------------------------------------------------------
+# Where the collectors (a sidecar in each Ray pod that keeps its history)
+# upload to and the History Server reads from: the RustFS bucket, with the
+# keys of its own S3 user, in every namespace Ray clusters run in.
+{% for namespace in [kuberay_namespace] + cluster_users | map(attribute='name') | list %}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ray-history-s3
+  namespace: {{ namespace }}
+stringData:
+  STORAGE_BACKEND: s3
+  S3_ENDPOINT: "{{ storage_host }}:{{ rustfs_port }}"
+  S3DISABLE_SSL: "true"
+  S3FORCE_PATH_STYLE: "true"
+  S3_REGION: us-east-1
+  S3_BUCKET: "{{ kuberay_history_bucket }}"
+  AWS_ACCESS_KEY_ID: ray-history
+  AWS_SECRET_ACCESS_KEY: "{{ kuberay_history_secret_key }}"
+---
+{% endfor %}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: historyserver
+  namespace: {{ kuberay_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kuberay-historyserver
+rules:
+  - apiGroups: [ray.io]
+    resources: [rayclusters]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kuberay-historyserver
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kuberay-historyserver
+subjects:
+  - {kind: ServiceAccount, name: historyserver, namespace: {{ kuberay_namespace }}}
+---
+# Serves finished clusters only (no proxying to live ones, upstream's
+# default). It parses a session when it is opened and caches a few; the
+# lab's clusters are small.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: historyserver
+  namespace: {{ kuberay_namespace }}
+  labels: {app.kubernetes.io/name: historyserver}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: historyserver}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: historyserver}
+    spec:
+      serviceAccountName: historyserver
+      nodeSelector: {{ on_controller.nodeSelector | to_json }}
+      tolerations: {{ on_controller.tolerations | to_json }}
+      containers:
+        - name: historyserver
+          image: quay.io/kuberay/historyserver:v{{ kuberay_version }}
+          args: [--session-cache-max-memory=256Mi]
+          envFrom:
+            - secretRef: {name: ray-history-s3}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /readz, port: http}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 768Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: historyserver
+  namespace: {{ kuberay_namespace }}
+spec:
+  selector: {app.kubernetes.io/name: historyserver}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+# The History Server through the dashboard's name, for the dashboard's
+# server. KubeRay 1.7.1's dashboard opens a finished cluster at
+# /enter_cluster/<namespace>/<cluster>/<session>, its History Server expects
+# /enter_cluster/<namespace>/<kind>/<name>/<session> (also on KubeRay's main
+# branch): HAProxy adds the kind, raycluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kuberay-historyserver
+  namespace: {{ kuberay_namespace }}
+  annotations:
+    haproxy.org/path-rewrite: |
+      ^/historyserver/enter_cluster/([^/]+)/([^/]+)/([^/]+)$ /enter_cluster/\1/raycluster/\2/\3
+      ^/historyserver/(.*)$ /\1
+spec:
+  ingressClassName: haproxy
+  rules:
+    - host: {{ kuberay_fqdn }}
+      http:
+        paths:
+          - path: /historyserver/
+            pathType: Prefix
+            backend:
+              service: {name: historyserver, port: {name: http}}

@@ -2,8 +2,10 @@
 # cluster, a head pod on one tray and a worker pod on the other, each with 4
 # GPUs, submits ray_demo.py to it and deletes the cluster when the job ends;
 # Kueue admits the whole cluster at once. The job, its cluster and the
-# head's Ray dashboard show in the KubeRay dashboard while it runs. Needs
-# the shared venv (make frameworks).
+# head's Ray dashboard show in the KubeRay dashboard while it runs; a
+# collector next to each Ray node uploads the cluster's logs and events to
+# the History Server's bucket, so they stay in the dashboard's History pages
+# after the cluster is gone. Needs the shared venv (make frameworks).
 # Submit: ./submit --wait ray-job.yaml
 apiVersion: ray.io/v1
 kind: RayJob
@@ -14,8 +16,8 @@ spec:
   entrypoint: python @HOME@/examples/ray_demo.py
   # Kueue requires it: the cluster's resources return to the queue.
   shutdownAfterJobFinishes: true
-  # Keeps the finished cluster's pods for a minute (their logs).
-  ttlSecondsAfterFinished: 60
+  # Keeps the finished cluster for 90 s, for the collectors' last upload.
+  ttlSecondsAfterFinished: 90
   # The pod that submits the job and follows its output (kubectl logs job/<name>).
   submitterPodTemplate:
     spec:
@@ -46,9 +48,14 @@ spec:
           containers:
             - name: ray-head
               image: docker.io/library/buildpack-deps:noble
-              env:
+              env: &ray-env
                 - {name: HOME, value: "@HOME@"}
                 - {name: PATH, value: "/shared/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+                # Ray's events (tasks, actors, jobs, nodes) to the collector.
+                - {name: RAY_enable_ray_event, value: "true"}
+                - {name: RAY_enable_core_worker_ray_event_to_aggregator, value: "true"}
+                - {name: RAY_DASHBOARD_AGGREGATOR_AGENT_EVENTS_EXPORT_ADDR, value: "http://localhost:8084/v1/events"}
+                - {name: RAY_DASHBOARD_AGGREGATOR_AGENT_EXPOSABLE_EVENT_TYPES, value: ALL}
               ports:
                 - {name: gcs-server, containerPort: 6379}
                 - {name: dashboard, containerPort: 8265}
@@ -56,10 +63,31 @@ spec:
               resources:
                 limits: {nvidia.com/gpu: 4}
                 requests: {cpu: "2", memory: 4Gi}
-              volumeMounts:
+              volumeMounts: &ray-mounts
                 - {name: shared, mountPath: /shared}
-          volumes:
+                - {name: ray-tmp, mountPath: /tmp/ray}
+            - name: collector
+              image: quay.io/kuberay/collector:v1.7.1
+              env:
+                - {name: RAY_ROLE, value: Head}
+                - &collector-cluster {name: RAY_CLUSTER_NAME, valueFrom: {fieldRef: {fieldPath: "metadata.labels['ray.io/cluster']"}}}
+                - &collector-namespace {name: RAY_CLUSTER_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+                - &collector-pod-ip {name: POD_IP, valueFrom: {fieldRef: {fieldPath: status.podIP}}}
+                - &collector-head {name: FQ_RAY_IP, value: "$(RAY_CLUSTER_NAME)-head-svc.$(RAY_CLUSTER_NAMESPACE).svc.cluster.local"}
+                - &collector-tmp {name: RAY_TMP_ROOT, value: /tmp/ray}
+                - &collector-owner-kind {name: OWNER_KIND, value: rayjob}
+                - &collector-owner-name {name: OWNER_NAME, value: "@NAME@"}
+              envFrom: &collector-storage
+                - secretRef: {name: ray-history-s3}
+              resources: &collector-resources
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {memory: 256Mi}
+              volumeMounts: &collector-mounts
+                - {name: ray-tmp, mountPath: /tmp/ray}
+          volumes: &ray-volumes
             - {name: shared, hostPath: {path: /shared, type: Directory}}
+            # Ray's logs, shared with the collector.
+            - {name: ray-tmp, emptyDir: {}}
     workerGroupSpecs:
       - groupName: gpu
         replicas: 1
@@ -75,13 +103,23 @@ spec:
             containers:
               - name: ray-worker
                 image: docker.io/library/buildpack-deps:noble
-                env:
-                  - {name: HOME, value: "@HOME@"}
-                  - {name: PATH, value: "/shared/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+                env: *ray-env
                 resources:
                   limits: {nvidia.com/gpu: 4}
                   requests: {cpu: "2", memory: 4Gi}
-                volumeMounts:
-                  - {name: shared, mountPath: /shared}
-            volumes:
-              - {name: shared, hostPath: {path: /shared, type: Directory}}
+                volumeMounts: *ray-mounts
+              - name: collector
+                image: quay.io/kuberay/collector:v1.7.1
+                env:
+                  - {name: RAY_ROLE, value: Worker}
+                  - *collector-cluster
+                  - *collector-namespace
+                  - *collector-pod-ip
+                  - *collector-head
+                  - *collector-tmp
+                  - *collector-owner-kind
+                  - *collector-owner-name
+                envFrom: *collector-storage
+                resources: *collector-resources
+                volumeMounts: *collector-mounts
+            volumes: *ray-volumes

@@ -486,13 +486,45 @@
             path: "{{ frameworks_venv }}/bin/python"
           register: venv
 
+        # The ray-job example's cluster is gone a minute and a half after the
+        # job; its collectors uploaded its logs to RustFS. The dashboard's
+        # History pages read them through the dashboard's server, as here.
+        - name: The finished RayJob's driver log is in the dashboard's History
+          vars:
+            rayjob: >-
+              {{ hostvars[groups['login'][0]].jobs.results | default([])
+                 | selectattr('item.manifest', 'equalto', 'ray-job.yaml') | rejectattr('skipped', 'defined')
+                 | map(attribute='stdout') | first | default('') | trim }}
+          when: rayjob != ''
+          ansible.builtin.shell: |
+            set -euo pipefail
+            api={{ kuberay_url }}/api/historyserver
+            jar=$(mktemp); trap 'rm -f $jar' EXIT
+            read -r name session < <(curl -sf $api/clusters \
+                | jq -r '.[] | select(.ownerName == "{{ rayjob }}") | "\(.name) \(.sessionName)"' | head -1)
+            [ -n "$session" ]
+            curl -sf -c $jar "$api/enter_cluster/{{ cluster_users[0].name }}/$name/$session" >/dev/null
+            for node in $(curl -sf -b $jar "$api/nodes?view=summary" | jq -r '.data.summary[].raylet.nodeId'); do
+                file=$(curl -sf -b $jar "$api/api/v0/logs?node_id=$node" \
+                    | jq -r '[.data.result[][]] | map(select(startswith("job-driver-"))) | .[0] // empty')
+                [ -n "$file" ] && curl -sf -b $jar "$api/api/v0/logs/file?node_id=$node&filename=$file&lines=20"
+            done
+          args:
+            executable: /bin/bash
+          register: history
+          delegate_to: localhost
+          changed_when: false
+          until: history.rc == 0 and history.stdout is search('8 tasks on')
+          retries: 24
+          delay: 10
+
         # The dashboard's link to a cluster's Ray dashboard: the API server
         # proxies it from KubeRay's head service.
         - name: A Ray cluster created through the API server shows its Ray dashboard
           when: venv.stat.exists
           vars:
             cluster: test-raycluster
-            namespace: "{{ cluster_users[0].name }}"
+            ray_namespace: "{{ cluster_users[0].name }}"
             container:
               name: ray-head
               image: "{{ k3s_pod_image }}"
@@ -502,7 +534,7 @@
           block:
             - name: Create a head-only Ray cluster
               ansible.builtin.uri:
-                url: "{{ kuberay_url }}/apis/ray.io/v1/namespaces/{{ namespace }}/rayclusters"
+                url: "{{ kuberay_url }}/apis/ray.io/v1/namespaces/{{ ray_namespace }}/rayclusters"
                 method: POST
                 body_format: json
                 body:
@@ -521,7 +553,7 @@
               delegate_to: localhost
 
             - name: Wait for it to be ready
-              ansible.builtin.command: kubectl -n {{ namespace }} get raycluster {{ cluster }} -o jsonpath={.status.state}
+              ansible.builtin.command: kubectl -n {{ ray_namespace }} get raycluster {{ cluster }} -o jsonpath={.status.state}
               register: state
               until: state.stdout == 'ready'
               retries: 36
@@ -530,14 +562,14 @@
 
             - name: Its Ray dashboard answers through the API server
               ansible.builtin.uri:
-                url: "{{ kuberay_url }}/api/v1/namespaces/{{ namespace }}/services/{{ cluster }}-head-svc:8265/proxy/api/version"
+                url: "{{ kuberay_url }}/api/v1/namespaces/{{ ray_namespace }}/services/{{ cluster }}-head-svc:8265/proxy/api/version"
               register: version
               delegate_to: localhost
               failed_when: version.json.ray_version is not defined
           always:
             - name: Delete the Ray cluster
               ansible.builtin.uri:
-                url: "{{ kuberay_url }}/apis/ray.io/v1/namespaces/{{ namespace }}/rayclusters/{{ cluster }}"
+                url: "{{ kuberay_url }}/apis/ray.io/v1/namespaces/{{ ray_namespace }}/rayclusters/{{ cluster }}"
                 method: DELETE
                 status_code: [200, 202, 404]
               delegate_to: localhost

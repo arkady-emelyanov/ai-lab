@@ -98,6 +98,12 @@ kuberay_version: 1.7.1
 kuberay_chart_repo: https://kuberay-project.github.io/kuberay-helm/
 # Name of the dashboard (plain HTTP). auto: kuberay.<controller address>.nip.io.
 kuberay_domain: auto
+# History Server (beta upstream): the collector sidecar in a Ray cluster's
+# pods uploads its logs and events to this RustFS bucket, with an S3 user of
+# its own (keys in .secrets/ray-history.s3); the dashboard's History pages
+# show them after the cluster is gone.
+kuberay_history_bucket: ray-history
+kuberay_history_secret_key: "{{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/ray-history.s3 length=32 chars=ascii_letters,digits') }}"
 
 # ---- NVIDIA Run:ai (scheduler: k3s) ------------------------------------------------
 # Open-source NVIDIA Run:ai on the k3s cluster: its control plane (web UI, API,

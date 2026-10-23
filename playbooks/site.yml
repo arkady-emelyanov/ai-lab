@@ -77,14 +77,6 @@
         tasks_from: cluster
       when: scheduler == 'k3s'
 
-- name: KubeRay (operator, API server, dashboard)
-  hosts: controller
-  tasks:
-    - name: KubeRay
-      ansible.builtin.include_role:
-        name: kuberay
-      when: scheduler == 'k3s' and kuberay | bool
-
 - name: NVIDIA Run:ai (control plane and cluster)
   hosts: controller
   tasks:
@@ -109,6 +101,14 @@
 - name: Shared filesystem (JuiceFS) and S3 clients
   hosts: cluster
   roles: [juicefs, s3client]
+
+- name: KubeRay (operator, API server, dashboard, History Server on RustFS)
+  hosts: controller
+  tasks:
+    - name: KubeRay
+      ansible.builtin.include_role:
+        name: kuberay
+      when: scheduler == 'k3s' and kuberay | bool
 
 - name: Emulated InfiniBand fabric
   hosts: workers

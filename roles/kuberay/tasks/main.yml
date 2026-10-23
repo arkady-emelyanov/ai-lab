@@ -1,6 +1,7 @@
 # KubeRay on the k3s cluster (kuberay: true), from the controller: the
-# operator and the API server from KubeRay's charts, the dashboard, and one
-# plain-HTTP ingress for the dashboard and the API server. See docs/kuberay.md.
+# operator and the API server from KubeRay's charts, the dashboard, one
+# plain-HTTP ingress for the dashboard and the API server, and the History
+# Server on the RustFS bucket (S3 user: s3users role). See docs/kuberay.md.
 
 - name: Look up the bridge network
   ansible.builtin.command: incus network get {{ incus_bridge }} ipv4.address
@@ -19,6 +20,7 @@
     src: kuberay.yaml.j2
     dest: "{{ kuberay_manifests_dir }}/lab-kuberay.yaml"
     mode: "0600"
+  diff: false
 
 - name: Wait for KubeRay's APIs
   ansible.builtin.command: >-
@@ -30,9 +32,9 @@
   delay: 10
   changed_when: false
 
-- name: Wait for the operator, the API server and the dashboard
+- name: Wait for the operator, the API server, the dashboard and the History Server
   ansible.builtin.command: kubectl -n {{ kuberay_namespace }} rollout status deployment/{{ item }} --timeout=300s
-  loop: [kuberay-operator, kuberay-apiserver, kuberay-dashboard]
+  loop: [kuberay-operator, kuberay-apiserver, kuberay-dashboard, historyserver]
   register: rollout
   until: rollout.rc == 0
   retries: 10
