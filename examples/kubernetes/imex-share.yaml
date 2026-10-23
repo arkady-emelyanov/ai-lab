@@ -1,0 +1,56 @@
+# GPU memory shared over NVLink between the two trays (multi-node NVLink), as
+# on GB200: a ComputeDomain (NVIDIA's DRA driver, nvidia_dra: true) runs an
+# IMEX daemon on each tray its pods land on and gives each pod an IMEX
+# channel; rank 0 on one tray exports GPU memory as a fabric handle, rank 1
+# on the other imports it and reads it (../imex_share.py). Without the
+# channel claim the driver refuses fabric memory (CUDA_ERROR_NOT_PERMITTED).
+# Delete the ComputeDomain afterwards: kubectl delete computedomain <name>.
+# Submit: ./submit --wait imex-share.yaml
+apiVersion: resource.nvidia.com/v1beta1
+kind: ComputeDomain
+metadata:
+  name: "@NAME@"
+spec:
+  numNodes: 2
+  channel:
+    resourceClaimTemplate:
+      name: "@NAME@-channel"
+---
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: "@NAME@"
+  labels: {kueue.x-k8s.io/queue-name: gpu}
+spec:
+  replicatedJobs:
+    - name: rank
+      template:
+        spec:
+          parallelism: 2
+          completions: 2
+          completionMode: Indexed
+          backoffLimit: 0
+          template:
+            metadata:
+              annotations:
+                kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain
+            spec:
+              restartPolicy: Never
+              securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+              containers:
+                - name: share
+                  image: docker.io/library/buildpack-deps:noble
+                  command: [bash, -c, 'python3 @HOME@/examples/imex_share.py $JOB_COMPLETION_INDEX @HOME@/.imex-@NAME@']
+                  resources:
+                    # A whole tray each, so the two ranks land on different trays.
+                    limits: {nvidia.com/gpu: 4}
+                    requests: {cpu: 500m, memory: 512Mi}
+                    claims:
+                      - name: imex-channel
+                  volumeMounts:
+                    - {name: shared, mountPath: /shared}
+              resourceClaims:
+                - name: imex-channel
+                  resourceClaimTemplateName: "@NAME@-channel"
+              volumes:
+                - {name: shared, hostPath: {path: /shared, type: Directory}}

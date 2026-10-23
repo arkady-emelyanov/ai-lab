@@ -49,6 +49,8 @@ kubectl get jobsets,workloads
 
 Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`; Kubernetes only: `ray-job` (KubeRay), `sglang-serve` (the recommended inference server) and `vllm-serve` (`./submit --name <name>`), `sglang-tp8` (TP=8 across both trays); details and tray-size requirements in `docs/inference.md`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but GPU kernels never actually execute (no real GPU math).
 
+ComputeDomains (k3s mode, on by default with `nvidia_dra: true`): NVIDIA's DRA driver gives a ComputeDomain's pods IMEX channels and runs IMEX daemons on their trays, for GPU memory shared over NVLink between trays (fabric handles; without a channel the driver returns `CUDA_ERROR_NOT_PERMITTED`). As `joe`: `./submit --wait imex-share.yaml`, `kubectl get computedomains`. GPUs still come from the device plugin (`nvidia.com/gpu`). Details in `docs/compute-domains.md`.
+
 KubeRay (k3s mode, on by default with `kuberay: true`): Ray clusters and jobs as `RayCluster`/`RayJob` resources, admitted by Kueue; dashboard `http://kuberay.<bridge>.10.nip.io` (no login), which also links each running cluster's Ray dashboard; finished clusters' logs and tasks are under its **History** (KubeRay History Server, bucket `ray-history` on RustFS; only for Ray pods with the collector sidecar, as in `ray-job.yaml`), and in Ray's own dashboard at `http://ray-history.<bridge>.10.nip.io`, where a finished job's Logs link lands. Ray's metrics are in Prometheus (job `ray`, `ray_*{ray_io_cluster="<cluster>"}`) and Ray's dashboards in Grafana's folder **Ray**. With Run:ai, Ray resources in `runai-<project>` are Run:ai workloads scheduled by KAI (no Kueue label; History Server keys in Secret `genericsecret-ray-history-s3`). As `joe`: `cd examples/kubernetes && ./submit --wait ray-job.yaml` (driver output in `<name>.out`), `kubectl get rayjobs,rayclusters`. Details in `docs/kuberay.md`.
 
 NVIDIA Run:ai (k3s mode with `runai: true` in `local.yml`; UI `https://runai.<bridge>.10.nip.io`, `admin@ai-lab.local`, password in `.secrets/runai-admin.pass`). Its workloads run in namespace `runai-<project>`, scheduled by KAI (`runai-scheduler`); `runai-api` on the controller is the REST API as the administrator:
@@ -121,7 +123,7 @@ idrac_system_power_on                                       # tray power from th
 
 ## More
 
-`docs/` in the repository: `endpoints.md` (addresses and credentials), `slurm.md`, `kubernetes.md`, `kuberay.md`, `runai.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
+`docs/` in the repository: `endpoints.md` (addresses and credentials), `slurm.md`, `kubernetes.md`, `compute-domains.md`, `kuberay.md`, `runai.md`, `fake-gpu.md`, `nvlink-partitions.md`, `bmc-redfish.md`, `monitoring.md`, `topology.md`, `platform.md` (configuration, CPU placement, troubleshooting).
 
 ## Installing this skill
 

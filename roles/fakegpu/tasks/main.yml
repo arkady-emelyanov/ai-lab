@@ -118,6 +118,115 @@
     enabled: true
     daemon_reload: true
 
+# ---- driver root for NVIDIA's DRA driver (k3s, nvidia_dra) ---------------------
+# The fake driver laid out as NVIDIA's driver is on a host, in a directory of
+# its own (fakegpu_driver_root) that NVIDIA's DRA driver mounts at
+# /driver-root: the libraries under the driver version's names (its CDI
+# specifications need them; relative links only, resolved in its container),
+# nvidia-smi (--version, its check of a driver root), nvidia-imex and
+# nvidia-imex-ctl (its compute-domain daemons run them), /proc entries in
+# place of the host's (devices, the IMEX management capability), and the
+# tray's GPU state (partition, reset cliques) for the fake NVML there.
+- name: Driver root for NVIDIA's DRA driver
+  when: scheduler == 'k3s' and nvidia_dra | bool
+  vars:
+    root: "{{ fakegpu_driver_root }}"
+    libdir: "{{ fakegpu_driver_root }}/usr/lib/x86_64-linux-gnu"
+  block:
+    - name: Create the driver root's directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ libdir }}"
+        - "{{ root }}/usr/bin"
+        - "{{ root }}/etc"
+        - "{{ root }}/proc/driver/nvidia/capabilities"
+        - "{{ root }}/var/lib/fakegpu"
+
+    - name: Install the driver libraries under the driver version's names
+      ansible.builtin.copy:
+        src: "{{ fakegpu_prefix }}/lib/fakegpu/{{ item }}.so.1"
+        dest: "{{ libdir }}/{{ item }}.so.{{ fakegpu_driver_version }}"
+        remote_src: true
+        mode: "0755"
+      loop: [libnvidia-ml, libcuda]
+
+    - name: Link them by their SONAMEs
+      ansible.builtin.file:
+        src: "{{ item }}.so.{{ fakegpu_driver_version }}"
+        dest: "{{ libdir }}/{{ item }}.so.1"
+        state: link
+        force: true
+      loop: [libnvidia-ml, libcuda]
+
+    - name: Install nvidia-smi, nvidia-imex and nvidia-imex-ctl
+      ansible.builtin.copy:
+        src: "{{ fakegpu_prefix }}/lib/fakegpu/driver-tools/{{ item }}"
+        dest: "{{ root }}/usr/bin/{{ item }}"
+        remote_src: true
+        mode: "0755"
+      loop: [nvidia-smi, nvidia-imex, nvidia-imex-ctl]
+
+    - name: Copy the emulated tray's configuration
+      ansible.builtin.copy:
+        src: /etc/fakegpu.conf
+        dest: "{{ root }}/etc/fakegpu.conf"
+        remote_src: true
+        mode: "0644"
+
+    # NVIDIA's DRA driver takes it in place of /proc/devices (altProcDevices).
+    - name: Write the driver's device numbers
+      ansible.builtin.copy:
+        content: |
+          Character devices:
+          195 nvidia-frontend
+          {{ fakegpu_caps_major }} nvidia-caps
+          {{ fakegpu_imex_channels_major }} nvidia-caps-imex-channels
+
+          Block devices:
+            7 loop
+            8 sd
+          259 blkext
+        dest: "{{ root }}/proc/devices"
+        mode: "0444"
+
+    - name: Write the IMEX management capability
+      ansible.builtin.copy:
+        content: |
+          DeviceFileMinor: {{ fakegpu_imex_mgmt_minor }}
+          DeviceFileMode: 256
+          DeviceFileModify: 1
+        dest: "{{ root }}/proc/driver/nvidia/capabilities/fabric-imex-mgmt"
+        mode: "0444"
+
+    - name: Mount the GPUs' state in the driver root
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=The emulated GPUs' state in the fake driver root (NVIDIA's DRA driver)
+          RequiresMountsFor=/var/lib/fakegpu/sideband /var/lib/fakegpu/telemetry
+
+          [Mount]
+          What=/var/lib/fakegpu
+          Where={{ root }}/var/lib/fakegpu
+          Type=none
+          Options=rbind
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/{{ (root ~ '/var/lib/fakegpu') | regex_replace('^/', '') | replace('-', '\\x2d') | replace('/', '-') }}.mount
+        mode: "0644"
+      register: state_mount
+
+    - name: Start the mount
+      ansible.builtin.systemd_service:
+        name: "{{ (root ~ '/var/lib/fakegpu') | regex_replace('^/', '') | replace('-', '\\x2d') | replace('/', '-') }}.mount"
+        state: started
+        enabled: true
+        daemon_reload: "{{ state_mount.changed }}"
+
 - name: Check the fake GPUs are visible
   ansible.builtin.command: nvidia-smi -L
   register: smi

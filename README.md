@@ -48,7 +48,7 @@ make frameworks    # PyTorch + Ray on the cluster (optional, several GB)
 make test          # end-to-end checks
 ```
 
-`make init` prints the exact fix for anything the host still needs ([Platform](docs/platform.md#troubleshooting)) and creates `local.yml`, your git-ignored settings, which override `inventory/group_vars/all.yml`. The lab runs Slurm by default, for Kubernetes, set `scheduler: k3s` before `make up` ([Kubernetes](docs/kubernetes.md)); it comes with KubeRay and its dashboard for Ray jobs ([KubeRay](docs/kuberay.md)); add `runai: true` for NVIDIA Run:ai on it ([NVIDIA Run:ai](docs/runai.md)).
+`make init` prints the exact fix for anything the host still needs ([Platform](docs/platform.md#troubleshooting)) and creates `local.yml`, your git-ignored settings, which override `inventory/group_vars/all.yml`. The lab runs Slurm by default, for Kubernetes, set `scheduler: k3s` before `make up` ([Kubernetes](docs/kubernetes.md)); it comes with KubeRay and its dashboard for Ray jobs ([KubeRay](docs/kuberay.md)) and NVIDIA's DRA driver for ComputeDomains, IMEX channels for memory shared over NVLink between trays ([ComputeDomains](docs/compute-domains.md)); add `runai: true` for NVIDIA Run:ai on it ([NVIDIA Run:ai](docs/runai.md)).
 
 **First steps:**
 

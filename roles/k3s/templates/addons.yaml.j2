@@ -38,6 +38,49 @@ spec:
     controllerManager:
       nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+      # The chart requests its limits (512 MiB); Kueue uses about 150 MiB here.
+      manager:
+        resources:
+          limits: {cpu: "2", memory: 512Mi}
+          requests: {cpu: 100m, memory: 192Mi}
+{% if nvidia_dra | bool %}
+    # The chart's configuration, plus DRA: a ComputeDomain's IMEX channel
+    # (a pod's claim on its DeviceClass) counts as nvidia.com/imex-channel
+    # against the ClusterQueue's quota (queues.yaml.j2).
+    managerConfig:
+      controllerManagerConfigYaml: |-
+        apiVersion: config.kueue.x-k8s.io/v1beta2
+        kind: Configuration
+        health:
+          healthProbeBindAddress: :8081
+        metrics:
+          bindAddress: :8443
+        webhook:
+          port: 9443
+        leaderElection:
+          leaderElect: true
+          resourceName: c1f6bfd2.kueue.x-k8s.io
+        controller:
+          groupKindConcurrency:
+            Job.batch: 5
+            Pod: 5
+            Workload.kueue.x-k8s.io: 10
+            LocalQueue.kueue.x-k8s.io: 5
+            Cohort.kueue.x-k8s.io: 1
+            ClusterQueue.kueue.x-k8s.io: 5
+            ResourceFlavor.kueue.x-k8s.io: 1
+        clientConnection:
+          qps: 300
+          burst: 500
+        integrations:
+          frameworks: [batch/job, kubeflow.org/mpijob, ray.io/rayjob, ray.io/rayservice, ray.io/raycluster,
+                       jobset.x-k8s.io/jobset, workload.codeflare.dev/appwrapper, trainer.kubeflow.org/trainjob,
+                       pod, deployment, statefulset, leaderworkerset.x-k8s.io/leaderworkerset]
+        resources:
+          deviceClassMappings:
+            - name: nvidia.com/imex-channel
+              deviceClassNames: [compute-domain-default-channel.nvidia.com]
+{% endif %}
 ---
 apiVersion: helm.cattle.io/v1
 kind: HelmChart
@@ -108,3 +151,37 @@ spec:
       nodePort: {{ ksm_node_port }}
     nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
     tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+{% if nvidia_dra | bool %}
+---
+# NVIDIA's DRA driver for GPUs, unchanged, ComputeDomains only (IMEX channels
+# and daemons for memory shared over NVLink between trays); GPUs stay with
+# the lab's device plugin. Its kubelet plugin runs on the trays' fake driver
+# root (roles/fakegpu): the fake NVML there reads the tray's configuration
+# and GPU state through these variables. See docs/compute-domains.md.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: nvidia-dra-driver-gpu
+  namespace: kube-system
+spec:
+  chart: {{ nvidia_dra_chart }}
+  version: {{ nvidia_dra_version }}
+  targetNamespace: nvidia-dra-driver-gpu
+  createNamespace: true
+  valuesContent: |-
+    nvidiaDriverRoot: {{ fakegpu_driver_root }}
+    altProcDevices: {{ fakegpu_driver_root }}/proc/devices
+    resources:
+      gpus: {enabled: false}
+      computeDomains: {enabled: true}
+    controller:
+      nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
+    kubeletPlugin:
+      nodeSelector: {nvidia.com/gpu.present: "true"}
+      containers:
+        computeDomains:
+          env:
+            - {name: FAKEGPU_CONF, value: /driver-root/etc/fakegpu.conf}
+            - {name: FAKEGPU_SIDEBAND_DIR, value: /driver-root/var/lib/fakegpu/sideband}
+            - {name: FAKEGPU_STATE_PATH, value: /driver-root/var/lib/fakegpu/telemetry/occupancy}
+{% endif %}

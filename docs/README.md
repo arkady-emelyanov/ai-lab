@@ -27,6 +27,7 @@
 
 - [Slurm](slurm.md): GPU scheduling, accounting, block topology, GPU handover
 - [Kubernetes (k3s)](kubernetes.md): GPU pods, Kueue, JobSets, users
+- [ComputeDomains (IMEX)](compute-domains.md): NVIDIA's DRA driver on k3s, IMEX channels and daemons for memory shared over NVLink between trays
 - [KubeRay](kuberay.md): Ray clusters and jobs on k3s, the KubeRay dashboard and API server
 - [NVIDIA Run:ai](runai.md): the open-source Run:ai control plane and cluster on k3s, KAI Scheduler, the DCGM exporter on the emulated GPUs
 - [Frameworks and examples](frameworks-and-examples.md): the PyTorch and Ray environment, the example jobs and their expected results

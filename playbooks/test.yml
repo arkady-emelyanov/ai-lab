@@ -124,9 +124,12 @@
             - { manifest: ddp-train.yaml, needs_venv: true }
             - { manifest: ray-cluster.yaml, needs_venv: true }
             - { manifest: ray-job.yaml, needs_venv: true, needs_kuberay: true }
+            - { manifest: imex-share.yaml, needs_venv: false, needs_dra: true }
           loop_control:
             label: "{{ item.manifest }}"
-          when: (not item.needs_venv or venv_ready) and (not item.needs_kuberay | default(false) or kuberay | bool)
+          when: >-
+            (not item.needs_venv or venv_ready) and (not item.needs_kuberay | default(false) or kuberay | bool)
+            and (not item.needs_dra | default(false) or nvidia_dra | bool)
           register: jobs
           changed_when: true
           failed_when: false
@@ -156,6 +159,7 @@
               ddp-train.yaml: "rank 7/8 on"
               ray-cluster.yaml: "8 tasks on"
               ray-job.yaml: "8 tasks on"
+              imex-share.yaml: "rank 1 on .*: imported the fabric handle, read the pattern"
 
         - name: Kueue admitted the RayJob's cluster
           ansible.builtin.command: >-
@@ -167,6 +171,52 @@
           changed_when: false
           failed_when: workloads.stdout_lines | select('equalto', rayjob ~ ' True') | list | length != 1
           when: rayjob != ''
+
+        # The example's ComputeDomain stays after its JobSet (the user deletes it).
+        - name: Delete the imex-share ComputeDomain
+          ansible.builtin.command: >-
+            {{ kubectl }} 'kubectl delete computedomain {{ item.stdout | trim }} --ignore-not-found'
+          loop: "{{ jobs.results | selectattr('item.manifest', 'equalto', 'imex-share.yaml') | rejectattr('skipped', 'defined') | list }}"
+          loop_control:
+            label: "{{ item.stdout | trim }}"
+          changed_when: true
+
+        # As with the real driver: fabric memory needs an IMEX channel, which
+        # only a ComputeDomain's pods have.
+        - name: Without a ComputeDomain, a pod gets no fabric memory
+          when: nvidia_dra | bool
+          block:
+            - name: Run imex_share.py in a GPU pod without an IMEX channel
+              ansible.builtin.command:
+                cmd: "{{ kubectl }} 'kubectl apply -f -'"
+                stdin: |
+                  apiVersion: v1
+                  kind: Pod
+                  metadata: {name: no-imex-channel}
+                  spec:
+                    restartPolicy: Never
+                    securityContext: {runAsUser: {{ cluster_users[0].uid }}, runAsGroup: {{ cluster_users[0].uid }}}
+                    containers:
+                      - name: share
+                        image: {{ k3s_pod_image }}
+                        command: [python3, {{ home }}/examples/imex_share.py, "0", /tmp/rv]
+                        resources: {limits: {nvidia.com/gpu: 1}}
+                        volumeMounts: [{name: shared, mountPath: /shared}]
+                    volumes: [{name: shared, hostPath: {path: /shared, type: Directory}}]
+              changed_when: true
+
+            - name: Its cuMemCreate is not permitted
+              ansible.builtin.command: "{{ kubectl }} 'kubectl logs no-imex-channel'"
+              register: no_channel
+              until: no_channel.stdout is search('cuMemCreate failed')
+              retries: 24
+              delay: 5
+              changed_when: false
+              failed_when: no_channel.stdout is not search('cuMemCreate failed. CUDA_ERROR_NOT_PERMITTED')
+          always:
+            - name: Delete the pod
+              ansible.builtin.command: "{{ kubectl }} 'kubectl delete pod no-imex-channel --ignore-not-found --now'"
+              changed_when: true
 
         - name: Every pod of nvl8-hello got its own GPU
           ansible.builtin.assert:

@@ -36,6 +36,14 @@ rules:
   - apiGroups: [kueue.x-k8s.io]
     resources: [localqueues, workloads]
     verbs: [get, list, watch]
+{% if nvidia_dra | bool %}
+  - apiGroups: [resource.nvidia.com]
+    resources: [computedomains]
+    verbs: ["*"]
+  - apiGroups: [resource.k8s.io]
+    resources: [resourceclaims, resourceclaimtemplates]
+    verbs: [get, list, watch]
+{% endif %}
 {% if kuberay | bool %}
   - apiGroups: [ray.io]
     resources: [rayclusters, rayjobs, rayservices, raycronjobs]

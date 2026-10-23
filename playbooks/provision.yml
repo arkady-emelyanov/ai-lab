@@ -325,6 +325,28 @@
       changed_when: dev.rc == 0
       failed_when: dev.rc != 0 and 'already exists' not in dev.stderr
 
+    # IMEX: the management capability the IMEX daemon opens and the IMEX
+    # channel a workload needs to share memory over NVLink between trays, as
+    # the driver creates them on a GB200 node (NVIDIA's DRA driver hands
+    # them to pods; fakegpu_driver_root has their device numbers).
+    - name: Add the IMEX device nodes to GPU trays
+      ansible.builtin.command: >-
+        incus config device add {{ item.0 }} {{ item.1.name }} unix-char
+        path={{ item.1.path }} major={{ item.1.major }} minor={{ item.1.minor }} mode={{ item.1.mode }} required=false
+        --project {{ trays_project }}
+      loop: "{{ groups['workers'] | product(imex_devices) | list }}"
+      loop_control:
+        label: "{{ item.0 }} {{ item.1.path }}"
+      vars:
+        imex_devices:
+          - {name: nvidia-cap-imex, path: "/dev/nvidia-caps/nvidia-cap{{ fakegpu_imex_mgmt_minor }}",
+             major: "{{ fakegpu_caps_major }}", minor: "{{ fakegpu_imex_mgmt_minor }}", mode: "0400"}
+          - {name: imex-channel0, path: /dev/nvidia-caps-imex-channels/channel0,
+             major: "{{ fakegpu_imex_channels_major }}", minor: 0, mode: "0666"}
+      register: imex_dev
+      changed_when: imex_dev.rc == 0
+      failed_when: imex_dev.rc != 0 and 'already exists' not in imex_dev.stderr
+
     # kubelet's OOM watcher reads the kernel log; unprivileged containers
     # have no /dev/kmsg of their own.
     - name: Give Kubernetes nodes the kernel log (k3s)

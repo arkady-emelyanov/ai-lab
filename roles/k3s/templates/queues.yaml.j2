@@ -30,13 +30,17 @@ metadata:
 spec:
   namespaceSelector: {}
   resourceGroups:
-    - coveredResources: [cpu, memory, nvidia.com/gpu]
+    - coveredResources: [cpu, memory, nvidia.com/gpu{{ ', nvidia.com/imex-channel' if nvidia_dra | bool }}]
       flavors:
         - name: {{ fakegpu_type }}
           resources:
             - {name: cpu, nominalQuota: {{ limits.workers.cpu * trays }}}
             - {name: memory, nominalQuota: {{ (limits.workers.memory | regex_replace('GiB$', '') | int - 1) * trays }}Gi}
             - {name: nvidia.com/gpu, nominalQuota: {{ fakegpu_count * trays }}}
+{% if nvidia_dra | bool %}
+            # IMEX channels of ComputeDomains (DRA): one per tray.
+            - {name: nvidia.com/imex-channel, nominalQuota: {{ trays }}}
+{% endif %}
 {% for user in cluster_users %}
 {# `default` catches workloads without a queue label (Kueue's LocalQueue
    defaulting), so nothing in a user namespace bypasses the quota. #}

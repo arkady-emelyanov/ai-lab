@@ -19,6 +19,7 @@ To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, home
 | Kueue | `kueue-system` | ClusterQueue `gpu` (the trays' CPUs, memory, 8 GPUs); per user namespace a LocalQueue `gpu` and a `default` one that takes workloads without a queue label, so nothing bypasses the quota; topology-aware scheduling over topograph's labels; admits multi-pod jobs as a gang |
 | JobSet | `jobset-system` | multi-pod jobs with stable DNS names (rank 0 address for torchrun, Ray head) |
 | kube-state-metrics | `kube-system`, NodePort 30808 | cluster state for Prometheus |
+| NVIDIA DRA driver, ComputeDomains (`nvidia_dra: true`, the default) | `nvidia-dra-driver-gpu`; kubelet plugin on the trays | IMEX channels and daemons for GPU memory shared over NVLink between trays, as on GB200; GPUs stay with the device plugin ([ComputeDomains](compute-domains.md)) |
 | HAProxy ingress | `haproxy-controller`, `sched-control` ports 80 and 443 | the lab's web UIs at names under `<controller address>.nip.io`: plain HTTP (KubeRay), HTTPS only where a component requires it (Run:ai) |
 | KubeRay (`kuberay: true`, the default) | `kuberay` | operator for Ray clusters, jobs and services, its API server, dashboard at `http://kuberay.<controller address>.nip.io` and History Server (finished clusters' logs on RustFS, Ray's dashboard for them at `http://ray-history.<controller address>.nip.io`) ([KubeRay](kuberay.md)) |
 
@@ -83,6 +84,7 @@ kubectl get jobsets,workloads          # your jobs and their Kueue admission
 | `kubernetes/ray-job.yaml` | `slurm/ray-cluster.sbatch` | the same as a KubeRay `RayJob` (`kuberay: true`): KubeRay starts the Ray cluster, submits the driver and deletes the cluster when it ends; shows in the KubeRay dashboard ([KubeRay](kuberay.md)) |
 | `kubernetes/vllm-serve.yaml` | – | vLLM's OpenAI-compatible server (official image) as a Deployment and Service on one GPU; answers are empty text of exactly `max_tokens` tokens ([examples](../examples/README.md)) |
 | `kubernetes/sglang-serve.yaml` | – | SGLang's OpenAI-compatible server (official image, unmodified; the recommended inference server, see [Inference servers](inference.md)) as a Deployment and Service, on one GPU or with tensor parallelism inside a tray; answers are `"!!!..."` of exactly `max_tokens` tokens ([examples](../examples/README.md)) |
+| `kubernetes/imex-share.yaml` | – | a ComputeDomain and 2 pods (a tray each): GPU memory exported as a fabric handle on one tray, imported and read on the other, over the domain's IMEX channels ([ComputeDomains](compute-domains.md)) |
 | `kubernetes/sglang-tp8.yaml` | – | SGLang with tensor parallelism across both trays (TP=8, 2 pods × 4 GPUs); its all-reduces cross trays over NVLink, or over InfiniBand when the trays are in different NVLink partitions |
 
 Examples are JobSets (`ray-job.yaml`: a RayJob) queued in Kueue (`kueue.x-k8s.io/queue-name: gpu`); `submit` fills in your uid, gid and home (`@UID@`, `@GID@`, `@HOME@`) and a unique name. Pods use `docker.io/library/buildpack-deps:noble` (Ubuntu 24.04 with Python, so the `/shared` venv runs unchanged) and mount `/shared` and `/scratch` from the tray.
@@ -126,10 +128,10 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 
 - GPUs are allocated by the lab's own device plugin and CDI specification: NVIDIA's GPU Operator, container toolkit and device plugin need a real driver install. GPU Feature Discovery (NVIDIA), the DCGM exporter (NVIDIA, with Run:ai) and Node Feature Discovery (upstream) are the real ones.
 - Users can create pods with `hostPath` volumes in their namespace (the examples need `/shared`), which in a real cluster would be denied by Pod Security; there is no admission policy forcing pods to run as the user's uid.
-- No NVIDIA DRA driver or ComputeDomains (IMEX); NVLink placement is through Kueue topology-aware scheduling only.
+- NVIDIA's DRA driver runs with ComputeDomains only (IMEX channels); GPUs come from the lab's device plugin, not through DRA ([ComputeDomains](compute-domains.md#limitations)). NVLink placement is through Kueue topology-aware scheduling.
 - Kubernetes users authenticate with client certificates, not LDAP.
 - Fake NCCL ranks exchange only their NVLink partitions, so a pod failing does not fail its peers' collectives ([Emulated GPUs](fake-gpu.md)).
-- No GPU handover between pods. The device-plugin API the lab uses has no hook on the node after a pod ends that could reset its GPUs (DRA drivers have one; the lab does not use DRA). GPUs are reset at tray boot. After an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) so the labels pick up the new clique.
+- No GPU handover between pods. The device-plugin API the lab uses has no hook on the node after a pod ends that could reset its GPUs (DRA drivers have one; the lab's GPUs do not go through DRA). GPUs are reset at tray boot. After an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) so the labels pick up the new clique.
 
 ## References
 

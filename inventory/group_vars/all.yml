@@ -110,6 +110,16 @@ kuberay_history_domain: auto
 kuberay_history_ray_image: docker.io/rayproject/ray:2.59.0-py312-cpu
 kuberay_history_secret_key: "{{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/ray-history.s3 length=32 chars=ascii_letters,digits') }}"
 
+# ---- NVIDIA DRA driver: ComputeDomains (scheduler: k3s) --------------------------
+# NVIDIA's DRA driver for GPUs, unchanged, with its ComputeDomains only: IMEX
+# channels and daemons for memory shared over NVLink between trays, as on
+# GB200. GPUs stay with the lab's device plugin, NVIDIA's documented setup
+# next to a device plugin. It runs on the fake driver through a driver root
+# on the trays (fakegpu_driver_root). See docs/compute-domains.md.
+nvidia_dra: true
+nvidia_dra_version: 0.5.1
+nvidia_dra_chart: oci://registry.k8s.io/dra-driver-nvidia/charts/dra-driver-nvidia-gpu
+
 # ---- NVIDIA Run:ai (scheduler: k3s) ------------------------------------------------
 # Open-source NVIDIA Run:ai on the k3s cluster: its control plane (web UI, API,
 # Keycloak, PostgreSQL) and its cluster services (KAI Scheduler, operators),
@@ -249,6 +259,18 @@ nvl_domain_name: nvl8
 nvl_cluster_uuid: 7f3c2a10-5b4e-4d6a-9c1e-2b8f0e6d4a91
 nvl_clique_id: 1
 fakegpu_prefix: /usr/local
+# The fake driver laid out as NVIDIA's driver is on a host, for NVIDIA's DRA
+# driver (k3s, nvidia_dra): its libraries under their versioned names,
+# nvidia-smi, nvidia-imex and nvidia-imex-ctl, and the /proc entries the DRA
+# driver reads (devices, the IMEX management capability). Not / itself: the
+# lab's host may have a real driver whose /proc shows through.
+fakegpu_driver_root: /opt/fakegpu/driver
+# Device numbers of the IMEX device nodes on the trays (Incus creates them):
+# /dev/nvidia-caps/nvidia-cap<fakegpu_imex_mgmt_minor> (IMEX management) and
+# /dev/nvidia-caps-imex-channels/channel<n>, as the real driver's are.
+fakegpu_caps_major: 235
+fakegpu_imex_channels_major: 236
+fakegpu_imex_mgmt_minor: 1
 # Simulated operation times (kernels, copies, GEMMs, collectives): 1.0 is
 # roughly GB200 speed, 0 disables delays. Copies above copy_max_mb only cost
 # time, so big device buffers never use host RAM.
