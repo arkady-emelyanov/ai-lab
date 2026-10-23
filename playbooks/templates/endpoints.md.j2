@@ -17,6 +17,7 @@ Written by `make configure` for this machine's lab ({{ ansible_managed }}); not 
 | kube-state-metrics | http://{{ ip(ctrl) }}:{{ ksm_node_port }}/metrics | none |
 {% if kuberay | bool %}
 | KubeRay dashboard (jobs, clusters, History) and API server | http://{{ kuberay_name }} | none |
+| Ray's dashboard for finished Ray clusters | http://{{ kuberay_history_name }} | none |
 {% endif %}
 {% if runai | bool %}
 | NVIDIA Run:ai UI and API | https://{{ runai_name }} (`bin/ssh sched-control runai-api …`) | `{{ runai_admin_email }}` / `.secrets/runai-admin.pass`; certificate authority `.secrets/runai/ca.crt` |

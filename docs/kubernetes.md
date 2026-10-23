@@ -20,7 +20,7 @@ To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, home
 | JobSet | `jobset-system` | multi-pod jobs with stable DNS names (rank 0 address for torchrun, Ray head) |
 | kube-state-metrics | `kube-system`, NodePort 30808 | cluster state for Prometheus |
 | HAProxy ingress | `haproxy-controller`, `sched-control` ports 80 and 443 | the lab's web UIs at names under `<controller address>.nip.io`: plain HTTP (KubeRay), HTTPS only where a component requires it (Run:ai) |
-| KubeRay (`kuberay: true`, the default) | `kuberay` | operator for Ray clusters, jobs and services, its API server, dashboard at `http://kuberay.<controller address>.nip.io` and History Server (finished clusters' logs on RustFS) ([KubeRay](kuberay.md)) |
+| KubeRay (`kuberay: true`, the default) | `kuberay` | operator for Ray clusters, jobs and services, its API server, dashboard at `http://kuberay.<controller address>.nip.io` and History Server (finished clusters' logs on RustFS, Ray's dashboard for them at `http://ray-history.<controller address>.nip.io`) ([KubeRay](kuberay.md)) |
 
 Add-ons are installed by k3s' Helm controller from `HelmChart` manifests (`roles/k3s/templates/addons.yaml.j2`); versions are pinned in `all.yml`.
 

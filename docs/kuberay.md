@@ -14,12 +14,13 @@ KubeRay is installed from its release (1.7.1, `kuberay_version`): the operator a
 | KubeRay API server V2 (chart `kuberay-apiserver`) | namespace `kuberay`, on `sched-control` | Kubernetes' own API for Ray's resources and their events, and the Ray dashboards of KubeRay's services, for the dashboard |
 | KubeRay dashboard (`quay.io/kuberay/dashboard`) | namespace `kuberay`, on `sched-control` | web UI: Ray jobs and clusters per namespace, their state, creating and deleting them, links to each cluster's Ray dashboard |
 | KubeRay History Server (`quay.io/kuberay/historyserver`) | namespace `kuberay`, on `sched-control` | serves finished Ray clusters (nodes, jobs, tasks, actors, logs) from the RustFS bucket `ray-history`, for the dashboard's **History** pages |
+| Ray's dashboard for finished clusters (`rayproject/ray:2.59.0-py312-cpu`) | namespace `kuberay`, on `sched-control` | `http://ray-history.<controller address>.nip.io`: Ray's own dashboard with the History Server as its backend (proxy mode): a finished cluster's jobs, tasks, actors and logs as on a live one; where a finished job's **Logs** link lands |
 | Collector (`quay.io/kuberay/collector`) | a sidecar in each Ray pod that asks for it (`ray-job.yaml` does) | uploads the node's Ray logs and events to `ray-history` while the cluster runs and as it shuts down |
 | S3 user `ray-history`, Secret `ray-history-s3` | RustFS; namespaces `kuberay` and every user's | the History Server's bucket and its keys (`.secrets/ray-history.s3`), allowed on that bucket only |
 | `MutatingAdmissionPolicy` `rayjob-shutdown-after-finish` | cluster-wide | sets `shutdownAfterJobFinishes` on RayJobs created without it (the dashboard's job form), which Kueue requires |
-| Ingresses `kuberay`, `kuberay-historyserver` | HAProxy ingress (k3s add-on), `sched-control` port 80 | `http://kuberay.<controller address>.nip.io`: the API server's paths (`/apis/ray.io/`, `/apis/events.k8s.io/`, `/api/v1/`) to the API server, `/historyserver/` to the History Server, everything else to the dashboard |
+| Ingresses `kuberay`, `kuberay-historyserver`, `ray-history`, `ray-history-open` | HAProxy ingress (k3s add-on), `sched-control` port 80 | `http://kuberay.<controller address>.nip.io`: the API server's paths (`/apis/ray.io/`, `/apis/events.k8s.io/`, `/api/v1/`) to the API server, `/historyserver/` to the History Server, everything else to the dashboard; `http://ray-history.<controller address>.nip.io`: Ray's dashboard, `/open/` to the History Server |
 
-The four use about 100 MiB on the controller (the ingress controller about 190 MiB more); Ray's own pods run on the trays.
+The KubeRay services use about 100 MiB on the controller and Ray's dashboard for finished clusters about 630 MiB (Ray's head processes; its dashboard modules are idle in proxy mode but cannot be left out); the ingress controller uses about 190 MiB. Ray's own pods run on the trays.
 
 ## How it works
 
@@ -43,6 +44,10 @@ The dashboard's **History** pages list the finished clusters, and for one of the
 
 The History Server serves finished clusters only (proxying to live ones is off, upstream's default since 1.7.1) and keeps a few parsed sessions in memory (`--session-cache-max-memory=256Mi`).
 
+**Ray's dashboard for finished clusters.** Upstream's way to look at a finished cluster is Ray's own dashboard with the History Server as its backend (`ray start --proxy-server-url=<History Server>`, Ray 2.55 or later): it sends every request to the History Server and serves its own pages where the History Server has none, and a cookie the History Server sets selects the cluster. The lab runs it at `http://ray-history.<controller address>.nip.io` (`kuberay_history_domain`, image `kuberay_history_ray_image`); without a cluster selected it shows the History Server's list of clusters (`/select_cluster`). `/open/<namespace>/<cluster>` selects a cluster's latest session and opens its **Jobs** page (HAProxy turns the History Server's `/enter_cluster` answer into a redirect).
+
+A job's **Logs** link on the KubeRay dashboard's Jobs page is its cluster's live Ray dashboard (`/api/v1/namespaces/<ns>/services/<cluster>-head-svc:8265/proxy/#/jobs/<submission id>`), hard-coded in KubeRay 1.7.1's dashboard. Once the cluster is gone the API server answers 404, and HAProxy redirects the browser to `/open/<namespace>/<cluster>` on Ray's dashboard for finished clusters: the click lands on that cluster's Jobs page, and the job there opens with its logs. It cannot open the job itself: the History Server finds a job by its Ray job ID only, not by the submission ID in the link (also so on KubeRay's main branch).
+
 ### Scheduling
 
 Kueue manages `RayJob` and `RayCluster` (its Ray integrations are on by default): a Ray cluster waits suspended until Kueue admits all of its pods at once against the ClusterQueue `gpu`, like a JobSet ([Kubernetes](kubernetes.md)). The examples ask for queue `gpu`; a Ray resource without a queue label in a user namespace goes to its `default` queue. Kueue requires `shutdownAfterJobFinishes: true` on a RayJob, so its cluster's resources return to the queue when the job ends; a `MutatingAdmissionPolicy` (`rayjob-shutdown-after-finish`) sets it on RayJobs created without it, such as the dashboard's. Pod templates can carry Kueue's topology annotations (`kueue.x-k8s.io/podset-required-topology: accelerator.topograph.run/domain`) to keep a Ray cluster in one NVLink domain.
@@ -63,7 +68,7 @@ kubectl get rayjobs,rayclusters,workloads
 
 `ray-job.yaml` is the Ray example (`ray_demo.py`, one GPU task per GPU) as a `RayJob`: a head on one tray and a worker on the other, 4 GPUs each. KubeRay starts the cluster when Kueue admits it, submits the driver from a submitter pod (Job `<name>`, whose log is the driver's output), and deletes the cluster 90 s after the job ends. Its collectors keep the cluster's logs and events: the dashboard's **History** shows them after that.
 
-Open `http://kuberay.10.107.111.10.nip.io` (your bridge's prefix may differ): **Jobs** and **Clusters** list Ray's resources in the selected namespace, with their state; a running cluster links its Ray dashboard (tasks, actors, logs). **History** lists finished clusters: open one, then its nodes' logs, tasks and the driver's output.
+Open `http://kuberay.10.107.111.10.nip.io` (your bridge's prefix may differ): **Jobs** and **Clusters** list Ray's resources in the selected namespace, with their state; a running cluster links its Ray dashboard (tasks, actors, logs). **History** lists finished clusters: open one, then its nodes' logs, tasks and the driver's output. A finished job's **Logs** link opens its cluster in Ray's own dashboard at `http://ray-history.10.107.111.10.nip.io` (Jobs, then the job: its driver logs; also tasks, actors, nodes), which also lists every finished cluster by itself.
 
 To keep the history of your own Ray clusters, add the collector next to each Ray container as `ray-job.yaml` does: the container `collector`, Ray's event variables (`RAY_enable_ray_event` and the three after it), and the shared `/tmp/ray` volume. The keys come from the Secret `ray-history-s3` in your namespace. Users can also create and delete Ray jobs and clusters there; the dashboard's job form fills in `rayproject/ray` as the image (several GB to pull the first time) and no queue label, so Kueue puts the job in the namespace's `default` queue.
 
@@ -71,12 +76,13 @@ As cluster admin from your machine: `bin/kubectl get rayclusters,rayjobs -A`.
 
 ## Verification
 
-`make test` with KubeRay checks that the `ray-job` example runs as `joe` with all 8 Ray tasks after Kueue admitted its cluster, that the dashboard and the API server answer at the dashboard's name from the host, that the dashboard points the browser at the API server there, that the finished job's driver output is in the dashboard's History, read through the dashboard as its pages do, and that a Ray cluster created through the API server shows its Ray dashboard through it ([Testing](testing.md)).
+`make test` with KubeRay checks that the `ray-job` example runs as `joe` with all 8 Ray tasks after Kueue admitted its cluster, that the dashboard and the API server answer at the dashboard's name from the host, that the dashboard points the browser at the API server there, that the finished job's driver output is in the dashboard's History, read through the dashboard as its pages do, that the finished job's Logs link leads to its cluster's Jobs page in Ray's dashboard for finished clusters, listing the job, and that a Ray cluster created through the API server shows its Ray dashboard through it ([Testing](testing.md)).
 
 ## Limitations
 
 - No login: the dashboard and the API server serve anyone who reaches the controller, and the API server acts with its own service account, which can manage Ray resources in every namespace. Users' Kubernetes rights (their own namespace) apply to `kubectl`, not to the dashboard.
-- The dashboard is KubeRay's early web UI: a job's **Logs** link points at its running cluster only, finished jobs are under **History**, and jobs and clusters have no Grafana links.
+- The dashboard is KubeRay's early web UI: a finished job's **Logs** link reaches its cluster's Jobs list in Ray's dashboard, not the job's page, and jobs and clusters have no Grafana links.
+- Ray's dashboard for finished clusters takes about 630 MiB on the controller and an 870 MiB image.
 - History is kept only for Ray clusters with the collector; Ray clusters made with the dashboard's job form have none. Every namespace's Secret `ray-history-s3` holds the same keys, so users can read each other's Ray history in the bucket (as anyone can in the dashboard). Nothing expires: delete old sessions from the bucket by hand.
 - Ray's metrics are not in the lab's Prometheus or Grafana.
 - KubeRay schedules through Kueue only: with Run:ai, Ray workloads do not go through KAI (KubeRay's `batchScheduler: kai-scheduler`).

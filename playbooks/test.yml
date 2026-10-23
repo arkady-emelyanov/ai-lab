@@ -448,11 +448,14 @@
           delegate_to: localhost
           changed_when: false
 
-        - name: Work out the dashboard's name
+        - name: Work out the dashboards' names
           ansible.builtin.set_fact:
             kuberay_url: >-
               http://{{ 'kuberay.' ~ bridge.stdout.split('/')[0].rsplit('.', 1)[0] ~ '.' ~ ip_host ~ '.nip.io'
                         if kuberay_domain == 'auto' else kuberay_domain }}
+            kuberay_history_url: >-
+              http://{{ 'ray-history.' ~ bridge.stdout.split('/')[0].rsplit('.', 1)[0] ~ '.' ~ ip_host ~ '.nip.io'
+                        if kuberay_history_domain == 'auto' else kuberay_history_domain }}
 
         - name: The dashboard serves its pages
           ansible.builtin.uri:
@@ -517,6 +520,33 @@
           until: history.rc == 0 and history.stdout is search('8 tasks on')
           retries: 24
           delay: 10
+
+        # The finished job's Logs link on the Jobs page (its cluster's Ray
+        # dashboard, now gone) leads to Ray's dashboard for finished clusters
+        # on its Jobs page, with the cluster selected, listing the job.
+        - name: The finished RayJob's Logs link leads to its history in Ray's dashboard
+          vars:
+            rayjob: >-
+              {{ hostvars[groups['login'][0]].jobs.results | default([])
+                 | selectattr('item.manifest', 'equalto', 'ray-job.yaml') | rejectattr('skipped', 'defined')
+                 | map(attribute='stdout') | first | default('') | trim }}
+          when: rayjob != ''
+          ansible.builtin.shell: |
+            set -euo pipefail
+            ns={{ cluster_users[0].name }}
+            jar=$(mktemp); trap 'rm -f $jar' EXIT
+            name=$(curl -sf {{ kuberay_url }}/api/historyserver/clusters \
+                | jq -r '.[] | select(.ownerName == "{{ rayjob }}") | .name' | head -1)
+            open=$(curl -s -o /dev/null -w '%{redirect_url}' \
+                "{{ kuberay_url }}/api/v1/namespaces/$ns/services/$name-head-svc:8265/proxy/")
+            [ "$open" = "{{ kuberay_history_url }}/open/$ns/$name" ] || { echo "Logs link went to '$open'"; exit 1; }
+            landing=$(curl -s -c $jar -o /dev/null -w '%{redirect_url}' "$open")
+            [ "$landing" = "{{ kuberay_history_url }}/#/jobs" ] || { echo "/open went to '$landing'"; exit 1; }
+            curl -sf -b $jar {{ kuberay_history_url }}/api/jobs/ | jq -e 'map(.submission_id) | any(startswith("{{ rayjob }}-"))'
+          args:
+            executable: /bin/bash
+          delegate_to: localhost
+          changed_when: false
 
         # The dashboard's link to a cluster's Ray dashboard: the API server
         # proxies it from KubeRay's head service.

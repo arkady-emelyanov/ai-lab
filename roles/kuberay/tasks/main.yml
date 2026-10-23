@@ -9,11 +9,14 @@
   delegate_to: localhost
   changed_when: false
 
-- name: Work out the dashboard's name
+- name: Work out the dashboards' names
   ansible.builtin.set_fact:
     kuberay_fqdn: >-
       {{ 'kuberay.' ~ bridge.stdout.split('/')[0].rsplit('.', 1)[0] ~ '.' ~ ip_host ~ '.nip.io'
          if kuberay_domain == 'auto' else kuberay_domain }}
+    kuberay_history_fqdn: >-
+      {{ 'ray-history.' ~ bridge.stdout.split('/')[0].rsplit('.', 1)[0] ~ '.' ~ ip_host ~ '.nip.io'
+         if kuberay_history_domain == 'auto' else kuberay_history_domain }}
 
 - name: Install KubeRay
   ansible.builtin.template:
@@ -32,9 +35,9 @@
   delay: 10
   changed_when: false
 
-- name: Wait for the operator, the API server, the dashboard and the History Server
+- name: Wait for the operator, the API server, the dashboards and the History Server
   ansible.builtin.command: kubectl -n {{ kuberay_namespace }} rollout status deployment/{{ item }} --timeout=300s
-  loop: [kuberay-operator, kuberay-apiserver, kuberay-dashboard, historyserver]
+  loop: [kuberay-operator, kuberay-apiserver, kuberay-dashboard, historyserver, ray-history]
   register: rollout
   until: rollout.rc == 0
   retries: 10
@@ -43,4 +46,6 @@
 
 - name: KubeRay is ready
   ansible.builtin.debug:
-    msg: http://{{ kuberay_fqdn }} - KubeRay dashboard (Ray jobs and clusters)
+    msg: >-
+      http://{{ kuberay_fqdn }} - KubeRay dashboard (Ray jobs and clusters);
+      http://{{ kuberay_history_fqdn }} - Ray's dashboard for finished clusters

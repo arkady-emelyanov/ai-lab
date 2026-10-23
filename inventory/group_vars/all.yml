@@ -103,6 +103,11 @@ kuberay_domain: auto
 # its own (keys in .secrets/ray-history.s3); the dashboard's History pages
 # show them after the cluster is gone.
 kuberay_history_bucket: ray-history
+# Ray's own dashboard for finished clusters, backed by the History Server
+# (a finished job's Logs link lands there). auto: ray-history.<controller
+# address>.nip.io. The image's Ray matches the venv's (make frameworks).
+kuberay_history_domain: auto
+kuberay_history_ray_image: docker.io/rayproject/ray:2.59.0-py312-cpu
 kuberay_history_secret_key: "{{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/ray-history.s3 length=32 chars=ascii_letters,digits') }}"
 
 # ---- NVIDIA Run:ai (scheduler: k3s) ------------------------------------------------

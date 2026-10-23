@@ -127,11 +127,24 @@ spec:
 ---
 # One plain-HTTP name for both: Kubernetes API paths go to the API server,
 # the rest (pages and the dashboard's own /api/config) to the dashboard.
+#
+# A job's Logs link on the dashboard's Jobs page is its cluster's Ray
+# dashboard (/api/v1/namespaces/<ns>/services/<cluster>-head-svc:8265/proxy/
+# #/jobs/<id>), which is gone with the cluster: the API server answers 404.
+# Then HAProxy sends the browser to the cluster's history in Ray's dashboard
+# (ray-history below), on its Jobs page: the History Server finds a job by
+# its Ray job ID only, not by the submission ID in the link (also on
+# KubeRay's main branch).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: kuberay
   namespace: {{ kuberay_namespace }}
+  annotations:
+    haproxy.org/backend-config-snippet: |
+      http-request set-var(txn.ray_ns) path,field(5,/) if { path_reg ^/api/v1/namespaces/[^/]+/services/[^/]+-head-svc:8265/proxy/$ }
+      http-request set-var(txn.ray_cluster) path,field(7,/),regsub(-head-svc:8265$,) if { var(txn.ray_ns) -m found }
+      http-response redirect location http://{{ kuberay_history_fqdn }}/open/%[var(txn.ray_ns)]/%[var(txn.ray_cluster)] code 302 if { var(txn.ray_ns) -m found } { status 404 }
 spec:
   ingressClassName: haproxy
   rules:
@@ -264,3 +277,118 @@ spec:
             pathType: Prefix
             backend:
               service: {name: historyserver, port: {name: http}}
+---
+# ---- Ray's dashboard for finished clusters --------------------------------------
+# Ray's own dashboard with the History Server as its backend (upstream's way
+# to look at a finished cluster): it sends every request to the History
+# Server and serves its own pages where the History Server has none. A
+# cookie set by the History Server selects the cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-history
+  namespace: {{ kuberay_namespace }}
+  labels: {app.kubernetes.io/name: ray-history}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: ray-history}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: ray-history}
+    spec:
+      nodeSelector: {{ on_controller.nodeSelector | to_json }}
+      tolerations: {{ on_controller.tolerations | to_json }}
+      containers:
+        - name: ray
+          image: {{ kuberay_history_ray_image }}
+          # Not --block: ray start would stay, only to wait (200 MiB); the
+          # liveness probe restarts the pod if Ray stops. Ray's dashboard has
+          # no switch for fewer modules: they are idle here.
+          command: [bash, -c]
+          args:
+            - >-
+              ray start --head --num-cpus=0 --object-store-memory=80000000 --include-log-monitor=false
+              --disable-usage-stats --dashboard-host=0.0.0.0 --dashboard-port=8265
+              --proxy-server-url=http://historyserver.{{ kuberay_namespace }}.svc.cluster.local:8080
+              && exec sleep infinity
+          ports:
+            - {name: http, containerPort: 8265}
+          readinessProbe:
+            httpGet: {path: /api/gcs_healthz, port: http}
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet: {path: /api/gcs_healthz, port: http}
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {memory: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-history
+  namespace: {{ kuberay_namespace }}
+spec:
+  selector: {app.kubernetes.io/name: ray-history}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+# The same History Server pods for /open/ only: HAProxy keeps a service's
+# rules per backend, and these differ from the dashboard's.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ray-history-open
+  namespace: {{ kuberay_namespace }}
+spec:
+  selector: {app.kubernetes.io/name: historyserver}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+# http://ray-history.<controller address>.nip.io: Ray's dashboard; without a
+# cluster selected, the History Server's list of clusters (/select_cluster).
+# /open/<namespace>/<cluster> selects the cluster's latest session (the
+# History Server's /enter_cluster, which sets the cookies) and goes on to
+# the dashboard's Jobs page: where a finished job's Logs link lands.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ray-history
+  namespace: {{ kuberay_namespace }}
+  annotations:
+    haproxy.org/backend-config-snippet: |
+      http-request redirect location /select_cluster code 302 if { path / } !{ req.cook(cluster_name) -m found }
+spec:
+  ingressClassName: haproxy
+  rules:
+    - host: {{ kuberay_history_fqdn }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: ray-history, port: {name: http}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ray-history-open
+  namespace: {{ kuberay_namespace }}
+  annotations:
+    haproxy.org/backend-config-snippet: |
+      http-request replace-path ^/open/([^/]+)/([^/]+)/?$ /enter_cluster/\1/raycluster/\2
+      http-response set-var(txn.entered) bool(1) if { status 200 }
+      http-response set-status 302 if { var(txn.entered) -m bool }
+      http-response set-header Location "/#/jobs" if { var(txn.entered) -m bool }
+spec:
+  ingressClassName: haproxy
+  rules:
+    - host: {{ kuberay_history_fqdn }}
+      http:
+        paths:
+          - path: /open/
+            pathType: Prefix
+            backend:
+              service: {name: ray-history-open, port: {name: http}}
