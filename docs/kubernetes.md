@@ -12,7 +12,7 @@ To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, home
 |---|---|---|
 | k3s server | `sched-control` | control plane (SQLite datastore), tainted `CriticalAddonsOnly` so only add-ons run there |
 | k3s agents | `sched-worker1`, `sched-worker2` | kubelet, containerd, flannel; label `nvidia.com/gpu.present=true` |
-| `fakedp` (systemd, trays) | `fakedp/` | device plugin: advertises `nvidia.com/gpu` (4 per tray, by GPU UUID) and allocates GPUs as CDI devices |
+| `fakedp` (systemd, trays) | `fakedp/` | device plugin: advertises `nvidia.com/gpu` (4 per tray, by GPU UUID) and allocates GPUs as CDI devices; with MIG on, a GPU's MIG devices as `nvidia.com/mig-<profile>` instead ([MIG](#mig)) |
 | CDI specification | `/etc/cdi/fakegpu.json` on the trays | one device per GPU (`/dev/nvidia<n>`), plus the fake driver, its configuration, sideband and telemetry for every GPU container |
 | Node Feature Discovery + GPU Feature Discovery | `node-feature-discovery`, `gpu-feature-discovery` namespaces | NVIDIA's GFD reads the fake NVML and labels the trays: `nvidia.com/gpu.product`, `.memory`, `.count`, `.family`, `.clique` (`<ClusterUUID>.<CliqueId>`), `.machine` (`tray_product_name`, not the host's board), CUDA versions; with MIG on, the MIG devices (`nvidia.com/mig-<profile>.count`, `.memory`, `.multiprocessors`, ...: the mixed strategy) |
 | topograph | systemd on `sched-control` | labels the trays from the live fabric: `accelerator.topograph.run/domain` (NVLink domain and clique), `fabric.topograph.run/tier-0/1` (InfiniBand leaf, spine); every minute |
@@ -36,6 +36,17 @@ NVIDIA's device plugin and container toolkit need a real driver install, so the 
 - A pod asking for `nvidia.com/gpu: 2` gets two GPU device files and the lab's driver.
 - As with the real driver, the pod sees only the GPUs whose device files it has, with the tray's UUIDs.
 - Its GPU activity shows in `nvidia-smi`, the GPU exporter and the fabric telemetry, as on the tray. Processes appear with the tray's PIDs on the tray and with the pod's PIDs inside the pod.
+
+### MIG
+
+A GPU split into MIG devices ([Emulated GPUs](fake-gpu.md#mig)) is offered to pods as NVIDIA's device plugin does with its mixed strategy: `fakedp` stops advertising the GPU as `nvidia.com/gpu` and advertises each of its MIG devices under its profile, `nvidia.com/mig-1g.23gb`, `nvidia.com/mig-3g.93gb`, ... (`+me` as `.me`), the same names GPU Feature Discovery labels the node with (`nvidia.com/mig-1g.23gb.count`, ...). It reads the tray's MIG layout from `nvidia-smi` every 10 seconds, so a change reaches the node within about half a minute. A container given MIG devices gets their parent GPU (CDI) and `NVIDIA_VISIBLE_DEVICES` with their `MIG-` UUIDs, and sees only those: `nvidia-smi -L` lists the GPU and its one slice, CUDA has one device with the slice's memory and SMs.
+
+Kueue's ClusterQueue `gpu` covers each MIG resource, with a quota of what the trays' GPUs can hold of it (7 `1g.23gb` per GPU, ...); the trays' capacity decides the actual mix. Splitting GPUs is an administrator's job, as with NVIDIA's MIG manager: on a tray, `nvidia-smi -i 3 -mig 1` and `nvidia-smi mig -i 3 -cgi 3g.93gb,1g.23gb,1g.23gb -C` (or `mig-parted`); a GPU switches only while no process uses it. A pod then asks for a slice:
+
+```
+resources:
+  limits: {nvidia.com/mig-1g.23gb: 1}
+```
 
 ### Topology
 
@@ -120,6 +131,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 - the 8 single-GPU pods of `nvl8-hello` get 8 different GPUs
 - `joe` can read nodes and queues, but not `kube-system`
 - a pod can reach S3
+- a GPU split into MIG devices is offered as `nvidia.com/mig-<profile>` (and no longer as `nvidia.com/gpu`), and a pod on one `1g.23gb` sees that slice only, with 22528 MiB and 18 SMs
 - topograph's labels and the scheduler metrics are in place
 
 `make test-bmc-disruptive` cordons a tray, power-cycles it through its BMC and checks that it comes back ready with its GPUs.

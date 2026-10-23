@@ -479,6 +479,9 @@ def main(argv):
     check(nvml.nvmlInit_v2())
     if argv[:1] == ["mig"]:
         return mig(argv[1:])
+    if argv[:1] == ["--fakegpu-driver-load"]:  # lab-only: the tray's boot (MIG instances are gone)
+        nvml.fakegpu_driver_load()
+        return
     ids, fmt, fields, apps, loop, count, rest = None, "csv", None, None, None, None, []
     it = iter(argv)
     for a in it:

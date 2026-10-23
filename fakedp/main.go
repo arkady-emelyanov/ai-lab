@@ -2,6 +2,15 @@
 // advertises a tray's fake GPUs to kubelet as nvidia.com/gpu and hands each
 // container the GPUs it was allocated as CDI devices.
 //
+// MIG, as NVIDIA's plugin does with its mixed strategy: a GPU with MIG on is
+// not advertised as nvidia.com/gpu; its MIG devices are, as
+// nvidia.com/mig-<profile> (nvidia.com/mig-1g.23gb, ...; + becomes .), the
+// names GPU Feature Discovery labels nodes with. A container given MIG
+// devices gets their parent GPU's CDI device and NVIDIA_VISIBLE_DEVICES set
+// to their MIG- UUIDs, which the fake driver shows it only (in place of the
+// MIG capability nodes the real driver checks). The MIG layout is read from
+// nvidia-smi every 10 seconds (mig.go).
+//
 // NVIDIA's k8s-device-plugin cannot do this here: in CDI mode it generates
 // its own CDI specification from a real driver installation (versioned
 // libraries, nvidia-cdi-hook). The tray's specification is written by
@@ -36,6 +45,8 @@ const (
 	cdiKind      = "nvidia.com/gpu"
 	socketName   = "fakegpu.sock"
 )
+
+var refresh = 10 * time.Second
 
 // gpu is one device from the CDI specification: its UUID (the device ID
 // kubelet sees, as with NVIDIA's plugin) and its device node.
@@ -78,24 +89,16 @@ func readSpec(path string) ([]gpu, error) {
 	return gpus, nil
 }
 
+// plugin serves one resource: its devices, and what a container
+// allocated some of them gets.
 type plugin struct {
 	pluginapi.UnimplementedDevicePluginServer
-	gpus []gpu
+	resource, socket string
+	devices          func() []*pluginapi.Device
+	allocate         func(ids []string) (*pluginapi.ContainerAllocateResponse, error)
 	// watching counts kubelet's open ListAndWatch streams: without one,
-	// kubelet reports no GPUs on the node.
+	// kubelet reports no devices on the node.
 	watching atomic.Int32
-}
-
-func (p *plugin) devices() []*pluginapi.Device {
-	devs := make([]*pluginapi.Device, len(p.gpus))
-	for i, g := range p.gpus {
-		health := pluginapi.Healthy
-		if _, err := os.Stat(g.Node); err != nil {
-			health = pluginapi.Unhealthy
-		}
-		devs[i] = &pluginapi.Device{ID: g.UUID, Health: health}
-	}
-	return devs
 }
 
 func (p *plugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*pluginapi.DevicePluginOptions, error) {
@@ -103,8 +106,8 @@ func (p *plugin) GetDevicePluginOptions(context.Context, *pluginapi.Empty) (*plu
 }
 
 // ListAndWatch sends the device list, then again every 10 seconds: health
-// changes (a device node appearing or disappearing) reach kubelet, and so
-// does the full list if kubelet lost it.
+// changes (a device node appearing or disappearing) and MIG changes reach
+// kubelet, and so does the full list if kubelet lost it.
 func (p *plugin) ListAndWatch(_ *pluginapi.Empty, stream pluginapi.DevicePlugin_ListAndWatchServer) error {
 	p.watching.Add(1)
 	defer p.watching.Add(-1)
@@ -115,26 +118,17 @@ func (p *plugin) ListAndWatch(_ *pluginapi.Empty, stream pluginapi.DevicePlugin_
 		select {
 		case <-stream.Context().Done():
 			return nil
-		case <-time.After(10 * time.Second):
+		case <-time.After(refresh):
 		}
 	}
 }
 
 func (p *plugin) Allocate(_ context.Context, req *pluginapi.AllocateRequest) (*pluginapi.AllocateResponse, error) {
-	known := map[string]bool{}
-	for _, g := range p.gpus {
-		known[g.UUID] = true
-	}
 	resp := &pluginapi.AllocateResponse{}
 	for _, c := range req.ContainerRequests {
-		cr := &pluginapi.ContainerAllocateResponse{
-			Envs: map[string]string{"NVIDIA_VISIBLE_DEVICES": strings.Join(c.DevicesIds, ",")},
-		}
-		for _, id := range c.DevicesIds {
-			if !known[id] {
-				return nil, fmt.Errorf("unknown device %q", id)
-			}
-			cr.CdiDevices = append(cr.CdiDevices, &pluginapi.CDIDevice{Name: cdiKind + "=" + id})
+		cr, err := p.allocate(c.DevicesIds)
+		if err != nil {
+			return nil, err
 		}
 		resp.ContainerResponses = append(resp.ContainerResponses, cr)
 	}
@@ -147,6 +141,45 @@ func (p *plugin) GetPreferredAllocation(context.Context, *pluginapi.PreferredAll
 
 func (p *plugin) PreStartContainer(context.Context, *pluginapi.PreStartContainerRequest) (*pluginapi.PreStartContainerResponse, error) {
 	return &pluginapi.PreStartContainerResponse{}, nil
+}
+
+// gpuPlugin serves nvidia.com/gpu: the GPUs without MIG.
+func gpuPlugin(gpus []gpu, inv *inventoryCache) *plugin {
+	return &plugin{
+		resource: resourceName,
+		socket:   socketName,
+		devices: func() []*pluginapi.Device {
+			var devs []*pluginapi.Device
+			mig := inv.get()
+			for _, g := range gpus {
+				if mig.enabled[g.UUID] {
+					continue // its MIG devices are advertised instead
+				}
+				health := pluginapi.Healthy
+				if _, err := os.Stat(g.Node); err != nil {
+					health = pluginapi.Unhealthy
+				}
+				devs = append(devs, &pluginapi.Device{ID: g.UUID, Health: health})
+			}
+			return devs
+		},
+		allocate: func(ids []string) (*pluginapi.ContainerAllocateResponse, error) {
+			known := map[string]bool{}
+			for _, g := range gpus {
+				known[g.UUID] = true
+			}
+			cr := &pluginapi.ContainerAllocateResponse{
+				Envs: map[string]string{"NVIDIA_VISIBLE_DEVICES": strings.Join(ids, ",")},
+			}
+			for _, id := range ids {
+				if !known[id] {
+					return nil, fmt.Errorf("unknown device %q", id)
+				}
+				cr.CdiDevices = append(cr.CdiDevices, &pluginapi.CDIDevice{Name: cdiKind + "=" + id})
+			}
+			return cr, nil
+		},
+	}
 }
 
 // inode identifies a socket file, to notice it being recreated.
@@ -170,7 +203,7 @@ func inode(path string) uint64 {
 // registers again.
 func serve(dir string, p *plugin) error {
 	kubeletSock := filepath.Join(dir, "kubelet.sock")
-	sock := filepath.Join(dir, socketName)
+	sock := filepath.Join(dir, p.socket)
 	_ = os.Remove(sock)
 	lis, err := net.Listen("unix", sock)
 	if err != nil {
@@ -192,13 +225,13 @@ func serve(dir string, p *plugin) error {
 	defer cancel()
 	if _, err := pluginapi.NewRegistrationClient(conn).Register(ctx, &pluginapi.RegisterRequest{
 		Version:      pluginapi.Version,
-		Endpoint:     socketName,
-		ResourceName: resourceName,
+		Endpoint:     p.socket,
+		ResourceName: p.resource,
 		Options:      &pluginapi.DevicePluginOptions{},
 	}); err != nil {
 		return fmt.Errorf("register with kubelet: %w", err)
 	}
-	log.Printf("registered %d GPUs as %s", len(p.gpus), resourceName)
+	log.Printf("registered %d devices as %s", len(p.devices()), p.resource)
 
 	unwatched := time.Now()
 	for {
@@ -210,7 +243,7 @@ func serve(dir string, p *plugin) error {
 		if p.watching.Load() > 0 {
 			unwatched = time.Now()
 		} else if time.Since(unwatched) > 30*time.Second {
-			log.Printf("kubelet is not watching the GPUs; registering again")
+			log.Printf("kubelet is not watching %s; registering again", p.resource)
 			return nil
 		}
 	}
@@ -231,10 +264,28 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	p := &plugin{gpus: gpus}
+	inv := &inventoryCache{}
+	inv.update()
+	go run(*dir, gpuPlugin(gpus, inv))
+	// A plugin per MIG profile, from when the tray first has one.
+	started := map[string]bool{}
 	for {
-		if err := serve(*dir, p); err != nil {
-			log.Printf("%v; retrying", err)
+		for _, profile := range inv.get().profiles() {
+			if !started[profile] {
+				started[profile] = true
+				go run(*dir, migPlugin(profile, gpus, inv))
+			}
+		}
+		time.Sleep(refresh)
+		inv.update()
+	}
+}
+
+// run serves a plugin, registering it again whenever serve returns.
+func run(dir string, p *plugin) {
+	for {
+		if err := serve(dir, p); err != nil {
+			log.Printf("%s: %v; retrying", p.resource, err)
 			time.Sleep(5 * time.Second)
 		}
 	}

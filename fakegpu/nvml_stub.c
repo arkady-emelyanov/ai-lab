@@ -895,6 +895,13 @@ API int fakegpu_reset_gpu(unsigned idx)
     return 0;
 }
 
+/* Lab entry point for the tray's boot (nvidia-smi --fakegpu-driver-load, not
+ * an NVML API): the driver loads, so MIG instances are gone; MIG mode stays. */
+API void fakegpu_driver_load(void)
+{
+    for (int i = 0; i < FG_MAX_GPUS; i++) mig_driver_load(i);
+}
+
 typedef union { double d; int si; unsigned ui; unsigned long ul; unsigned long long ull; long long sll; unsigned short us; } nvmlValue_t;
 typedef struct {
     unsigned fieldId, scopeId;

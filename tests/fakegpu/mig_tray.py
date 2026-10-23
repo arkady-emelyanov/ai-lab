@@ -99,13 +99,13 @@ class Tray:
                 "assert cu.cuInit(0) == 0\n" + body + "\nprint(json.dumps(out, default=str))")
         return json.loads(self.py(code, env).stdout.splitlines()[-1])
 
-    def smi(self, *args, root=False, check=True):
+    def smi(self, *args, root=False, check=True, env=None):
         """nvidia-smi on the tray; root=True runs it as root of a user
         namespace (nvidia-smi -r, as mig-parted calls it)."""
         cmd = [sys.executable, str(FAKEGPU / "nvidia-smi"), *args]
         if root:
             cmd = ["unshare", "-Ur", *cmd]
-        p = subprocess.run(cmd, env=self.env, capture_output=True, text=True, timeout=60)
+        p = subprocess.run(cmd, env=dict(self.env, **(env or {})), capture_output=True, text=True, timeout=60)
         if check:
             assert p.returncode == 0, p.stdout + p.stderr
         return p

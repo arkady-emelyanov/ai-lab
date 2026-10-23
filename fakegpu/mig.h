@@ -16,7 +16,14 @@
  * MIG state is driver state: the tray's shared state (occupancy.h), seen by
  * every process, changed under a lock. As on Hopper and later, MIG mode
  * switches at once on an idle GPU; on a GPU a process uses, the switch is
- * pending until the GPU's next reset (nvidia-smi -r).
+ * pending until the GPU's next reset (nvidia-smi -r). At a driver load (the
+ * tray's boot) MIG mode stays and the instances are gone.
+ *
+ * A container given MIG devices sees only those: the real driver lets a
+ * process use the MIG devices whose capability nodes it can open, which the
+ * container toolkit adds for the MIG- UUIDs in NVIDIA_VISIBLE_DEVICES. The
+ * fake driver reads those UUIDs from NVIDIA_VISIBLE_DEVICES directly (as
+ * the lab's device plugin sets it); with none there, every MIG device.
  */
 #ifndef FAKEGPU_MIG_H
 #define FAKEGPU_MIG_H
@@ -374,6 +381,23 @@ static inline int mig_destroy_ci(int gpu, int gi, int ci)
 /* The GPU's MIG devices (one per CI), ordered by GI id, then CI id. */
 struct mig_dev { int gi, ci; };
 
+static inline void mig_uuid_str(int gpu, int gi, int ci, char *buf, size_t len);
+
+/* Whether this process may use a MIG device: listed among the MIG- UUIDs of
+ * NVIDIA_VISIBLE_DEVICES, or any when it lists none. */
+static inline int mig_visible(int gpu, int gi, int ci)
+{
+    const char *env = getenv("NVIDIA_VISIBLE_DEVICES");
+    if (!env || !strcasestr(env, "MIG-")) return 1;
+    char u[64];
+    mig_uuid_str(gpu, gi, ci, u, sizeof u);
+    for (const char *p = env; (p = strcasestr(p, "MIG-")); p += 4) {
+        size_t len = strcspn(p, ", ");
+        if (len == strlen(u) && strncasecmp(p, u, len) == 0) return 1;
+    }
+    return 0;
+}
+
 static inline int mig_devices(int gpu, struct mig_dev *out)
 {
     int n = 0;
@@ -381,8 +405,19 @@ static inline int mig_devices(int gpu, struct mig_dev *out)
     if (!m || !mig_enabled(gpu)) return 0;
     for (int g = 0; g < FG_MIG_SLOTS; g++)
         for (int c = 0; c < FG_MIG_CIS && m->gi[g].used; c++)
-            if (m->gi[g].ci[c].used) out[n++] = (struct mig_dev){g, c};
+            if (m->gi[g].ci[c].used && mig_visible(gpu, g, c)) out[n++] = (struct mig_dev){g, c};
     return n;
+}
+
+/* The driver loading (the tray's boot): MIG mode stays (a pending change
+ * takes effect), instances are gone. */
+static inline void mig_driver_load(int gpu)
+{
+    struct fg_gpu_mig *m = mig_lock(gpu);
+    if (!m) return;
+    m->current = m->pending;
+    memset(m->gi, 0, sizeof m->gi);
+    mig_unlock(m);
 }
 
 /* A MIG device's UUID: a version-5 UUID from the GPU's identity, its GI and

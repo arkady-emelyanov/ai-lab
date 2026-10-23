@@ -82,6 +82,7 @@ bin/ssh sched-control scontrol show config | grep -E 'TRES|Topology|DefMem'
 ## Limitations
 
 - Slurm 23.11 lacks the newer block-topology features (`--segment`, `BlockSizes`). It packs a job into as few blocks as possible but does not require one: with the domain split into partitions, an 8-GPU job runs across two blocks without an error. Its collectives then cross InfiniBand, as on real hardware, so it runs slower ([Emulated GPUs](fake-gpu.md#how-it-works)).
+- No MIG for jobs: the emulated GPUs split into MIG devices ([Emulated GPUs](fake-gpu.md#mig)), but Slurm cannot give a job one. Its NVML plugin (`AutoDetect=nvml`) finds a MIG device's access through `/proc/driver/nvidia-caps/mig-minors` and `/dev/nvidia-caps/nvidia-cap<minor>`, which the lab cannot provide (the trays' `/proc` is the host's). A job on a tray with MIG on sees all of that tray's MIG devices, as on a node without MIG configured in Slurm.
 - No cgroup confinement: a job can use more CPU or memory than it asked for inside its container, and `nvidia-smi` in a job lists all of the tray's GPUs.
 - After a tray is powered off (e.g. through its BMC), Slurm keeps showing it `idle` until `SlurmdTimeout` (300 s) passes, and jobs scheduled on it in the meantime fail. topograph drops the unreachable tray from `topology.conf` within a minute; both recover once the tray is powered on.
 - After the host is suspended, the controller marks the trays down for not responding; they come back with `scontrol update nodename=sched-worker[1-2] state=resume` (slurmd registers only when it starts).

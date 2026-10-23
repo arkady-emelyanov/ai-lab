@@ -939,6 +939,99 @@
               ansible.builtin.command: kubectl -n runai-{{ project }} delete raycluster {{ ray_cluster }} --ignore-not-found --wait
               changed_when: true
 
+# MIG in k3s mode: a tray's last GPU split into MIG devices, which the
+# device plugin offers as nvidia.com/mig-<profile> (and the GPU no longer as
+# nvidia.com/gpu); a pod given one 1g.23gb sees that slice only, in
+# nvidia-smi and CUDA, with its memory and SMs. Undone afterwards.
+- name: MIG devices for pods (k3s)
+  hosts: controller
+  vars:
+    tray: "{{ groups['workers'] | last }}"
+    gpu: "{{ fakegpu_count - 1 }}"
+    alloc: "{.status.allocatable.nvidia\\.com/gpu} {.status.allocatable.nvidia\\.com/mig-1g\\.23gb} {.status.allocatable.nvidia\\.com/mig-3g\\.93gb}"
+  tasks:
+    - name: MIG
+      when: scheduler == 'k3s'
+      block:
+        - name: Split the tray's last GPU into a 3g.93gb and two 1g.23gb
+          ansible.builtin.shell: |
+            set -e
+            nvidia-smi -i {{ gpu }} -mig 1 | grep -q "^Enabled MIG Mode"
+            nvidia-smi mig -i {{ gpu }} -cgi 3g.93gb,1g.23gb,1g.23gb -C
+          delegate_to: "{{ tray }}"
+          changed_when: true
+
+        - name: The tray offers the MIG devices, and that GPU no longer whole
+          ansible.builtin.command: kubectl get node {{ tray }} -o jsonpath='{{ alloc }}'
+          register: allocatable
+          until: allocatable.stdout == (fakegpu_count - 1) | string ~ ' 2 1'
+          retries: 18
+          delay: 5
+          changed_when: false
+
+        - name: Run a pod as {{ cluster_users[0].name }} on one 1g.23gb
+          ansible.builtin.command: kubectl apply -f -
+          args:
+            stdin: |
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: mig-slice
+                namespace: {{ cluster_users[0].name }}
+                labels: {kueue.x-k8s.io/queue-name: {{ k3s_queue }}}
+              spec:
+                restartPolicy: Never
+                securityContext: {runAsUser: {{ cluster_users[0].uid }}, runAsGroup: {{ cluster_users[0].uid }}}
+                containers:
+                  - name: probe
+                    image: {{ k3s_pod_image }}
+                    command: [bash, -c, 'nvidia-smi -L && echo "$PROBE" | base64 -d | python3']
+                    env: [{name: PROBE, value: "{{ lookup('file', playbook_dir ~ '/files/mig-probe.py') | b64encode }}"}]
+                    resources: {limits: {nvidia.com/mig-1g.23gb: 1}}
+          changed_when: true
+
+        - name: Wait for it
+          ansible.builtin.command: kubectl -n {{ cluster_users[0].name }} get pod mig-slice -o jsonpath={.status.phase}
+          register: phase
+          until: phase.stdout in ['Succeeded', 'Failed']
+          retries: 36
+          delay: 5
+          changed_when: false
+
+        - name: It sees its slice only, with the slice's memory and SMs
+          ansible.builtin.command: kubectl -n {{ cluster_users[0].name }} logs mig-slice
+          register: probe
+          changed_when: false
+          failed_when: >-
+            phase.stdout != 'Succeeded'
+            or probe.stdout_lines | select('search', '^  MIG ') | list | length != 1
+            or probe.stdout is not search('  MIG 1g\\.23gb +Device  0: \\(UUID: MIG-')
+            or probe.stdout is not search('cuda devices: 1\\n')
+            or probe.stdout is not search('cuda device 0: NVIDIA GB200 MIG 1g\\.23gb, 22528 MiB, 18 SMs')
+            or probe.stdout is not search('alloc within: 0, beyond: 2')
+      always:
+        - name: Delete the pod
+          ansible.builtin.command: kubectl -n {{ cluster_users[0].name }} delete pod mig-slice --ignore-not-found --wait
+          changed_when: true
+
+        - name: Undo the split
+          ansible.builtin.shell: |
+            nvidia-smi mig -i {{ gpu }} -dci >/dev/null 2>&1
+            nvidia-smi mig -i {{ gpu }} -dgi >/dev/null 2>&1
+            nvidia-smi -i {{ gpu }} -mig 0
+          delegate_to: "{{ tray }}"
+          changed_when: true
+          when: scheduler == 'k3s'
+
+        - name: The GPU is whole again
+          ansible.builtin.command: kubectl get node {{ tray }} -o jsonpath='{.status.allocatable.nvidia\.com/gpu}'
+          register: whole
+          until: whole.stdout == fakegpu_count | string
+          retries: 18
+          delay: 5
+          changed_when: false
+          when: scheduler == 'k3s'
+
 # After the example jobs: the Slurm epilog reset each job's GPUs (handover),
 # and no GPU is left needing recovery (with either scheduler).
 - name: GPU handover

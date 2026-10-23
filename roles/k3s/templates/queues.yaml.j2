@@ -30,13 +30,18 @@ metadata:
 spec:
   namespaceSelector: {}
   resourceGroups:
-    - coveredResources: [cpu, memory, nvidia.com/gpu{{ ', nvidia.com/imex-channel' if nvidia_dra | bool }}]
+    - coveredResources: [cpu, memory, nvidia.com/gpu{% for r in k3s_mig_resources %}, nvidia.com/{{ r }}{% endfor %}{{ ', nvidia.com/imex-channel' if nvidia_dra | bool }}]
       flavors:
         - name: {{ fakegpu_type }}
           resources:
             - {name: cpu, nominalQuota: {{ limits.workers.cpu * trays }}}
             - {name: memory, nominalQuota: {{ (limits.workers.memory | regex_replace('GiB$', '') | int - 1) * trays }}Gi}
             - {name: nvidia.com/gpu, nominalQuota: {{ fakegpu_count * trays }}}
+            # MIG devices (fakedp's nvidia.com/mig-<profile>): as many as the
+            # GPUs hold of each profile; the trays' capacity limits the mix.
+{% for r, per_gpu in k3s_mig_resources.items() %}
+            - {name: nvidia.com/{{ r }}, nominalQuota: {{ per_gpu * fakegpu_count * trays }}}
+{% endfor %}
 {% if nvidia_dra | bool %}
             # IMEX channels of ComputeDomains (DRA): one per tray.
             - {name: nvidia.com/imex-channel, nominalQuota: {{ trays }}}

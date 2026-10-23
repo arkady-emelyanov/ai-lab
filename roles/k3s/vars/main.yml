@@ -7,3 +7,14 @@ k3s_kubeconfig: /etc/rancher/k3s/k3s.yaml
 k3s_containerd_dir: /var/lib/rancher/k3s/agent/etc/containerd
 k3s_manifests_dir: /var/lib/rancher/k3s/server/manifests
 k3s_client_ca: /var/lib/rancher/k3s/server/tls/client-ca
+# MIG device resources the device plugin advertises (fakedp, the mixed
+# strategy: nvidia.com/mig-<profile>) and how many of each a GB200 holds:
+# the ClusterQueue's quota for them.
+k3s_mig_resources:
+  mig-1g.23gb: 7
+  mig-1g.23gb.me: 1
+  mig-1g.47gb: 4
+  mig-2g.47gb: 3
+  mig-3g.93gb: 2
+  mig-4g.93gb: 1
+  mig-7g.186gb: 1

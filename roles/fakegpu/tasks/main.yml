@@ -92,18 +92,20 @@
     dest: /etc/ld.so.preload
     mode: "0644"
 
-# A node reboot resets its GPUs, and with that applies pending NVLink
-# partition changes (the GPU takes its partition's clique at a reset).
-# Enabled for the next boot only: a reset now would hit running jobs.
+# A node reboot loads the driver and resets its GPUs: MIG instances are gone
+# (MIG mode stays), and pending NVLink partition changes take effect (the
+# GPU takes its partition's clique at a reset). Enabled for the next boot
+# only: a reset now would hit running jobs.
 - name: Reset the GPUs at boot
   ansible.builtin.copy:
     content: |
       [Unit]
-      Description=Reset the GPUs at boot (pending NVLink partition changes take effect)
+      Description=Load the driver and reset the GPUs at boot (MIG instances go, pending NVLink partition changes take effect)
       Before=slurmd.service k3s-agent.service fakedp.service nvidia_gpu_exporter.service
 
       [Service]
       Type=oneshot
+      ExecStart={{ fakegpu_prefix }}/bin/nvidia-smi --fakegpu-driver-load
       ExecStart={{ fakegpu_prefix }}/bin/nvidia-smi --gpu-reset
       RemainAfterExit=yes
 
