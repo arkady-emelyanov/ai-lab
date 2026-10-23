@@ -1,0 +1,38 @@
+# Lab endpoints
+
+Written by `make configure` for this machine's lab ({{ ansible_managed }}); not in git. Settings: `scheduler: {{ scheduler }}`{% if scheduler == 'k3s' %}, `kuberay: {{ kuberay | bool | lower }}`, `runai: {{ runai | bool | lower }}`{% endif %}. Passwords are in the files named, under `.secrets/`. All endpoints and their docs: [docs/endpoints.md](docs/endpoints.md).
+
+{% macro ip(host) %}{{ prefix }}.{{ hostvars[host].ip_host }}{% endmacro %}
+{% set ctrl = groups['controller'][0] %}
+| Service | Endpoint | Credentials |
+|---|---|---|
+| Login node (SSH) | `bin/ssh login` ({{ ip(groups['login'][0]) }}:22) | {% for u in cluster_users %}`{{ u.name }}` / `{{ u.password }}`{{ ', ' if not loop.last }}{% endfor %}, or your key |
+| Any instance as root (SSH) | `bin/ssh root@<instance>` | `.secrets/ssh/id_ed25519` |
+| Grafana | http://{{ ip(ctrl) }}:{{ grafana_port }} | `admin` / `.secrets/grafana.pass` |
+| Prometheus | http://{{ ip(ctrl) }}:9090 | none |
+{% if scheduler == 'slurm' %}
+| Slurm exporter | http://{{ ip(ctrl) }}:{{ slurm_exporter_port }}/metrics | none |
+{% else %}
+| Kubernetes API | https://{{ ip(ctrl) }}:{{ k3s_port }} (`bin/kubectl`) | admin: `.secrets/kubeconfig`; users: `~/.kube/config` on the login node |
+| kube-state-metrics | http://{{ ip(ctrl) }}:{{ ksm_node_port }}/metrics | none |
+{% if kuberay | bool %}
+| KubeRay dashboard (jobs, clusters, History) and API server | http://{{ kuberay_name }} | none |
+{% endif %}
+{% if runai | bool %}
+| NVIDIA Run:ai UI and API | https://{{ runai_name }} (`bin/ssh sched-control runai-api …`) | `{{ runai_admin_email }}` / `.secrets/runai-admin.pass`; certificate authority `.secrets/runai/ca.crt` |
+{% endif %}
+{% endif %}
+| topograph API | http://{{ ip(ctrl) }}:{{ topograph_port }} | none |
+| RustFS S3 API | http://{{ ip(storage_host) }}:{{ rustfs_port }} | admin: `.secrets/rustfs.access` / `.secrets/rustfs.secret`; users: `<name>` / `.secrets/users/<name>.s3` |
+| RustFS console | http://{{ ip(storage_host) }}:{{ rustfs_console_port }}/rustfs/console/ | as S3 API |
+{% for bmc in groups['tray_bmc'] %}
+| {{ bmc | regex_replace('-bmc$', '') }} BMC (Redfish) | https://{{ ip(bmc) }} (`bin/redfish {{ bmc | regex_replace('-bmc$', '') }} …`) | `{{ bmc_username }}` / `{{ bmc_password }}` |
+{% endfor %}
+{% for bmc in groups['bmc'] | difference(groups['tray_bmc']) %}
+| {{ bmc | regex_replace('-bmc$', '') }} BMC (Redfish, NVLink switch tray) | https://{{ ip(bmc) }} (`bin/redfish {{ bmc | regex_replace('-bmc$', '') }} …`) | `{{ bmc_username }}` / `{{ bmc_password }}` |
+{% endfor %}
+| NVLink partition controller (gRPC) | {{ ip(groups['nvswitch'][0]) }}:{{ nmxc_port }} (`bin/nvlink`) | none |
+| Fabric telemetry | http://{{ ip(groups['nvswitch'][0]) }}:{{ nmxc_metrics_port }}/metrics | none |
+| GPU exporters | {% for w in groups['workers'] %}http://{{ ip(w) }}:{{ gpu_exporter_port }}/metrics{{ ', ' if not loop.last }}{% endfor %} | none |
+
+The BMCs use self-signed certificates (`curl -k`).

@@ -133,3 +133,27 @@
 - name: NVLink switch tray host (partition controller)
   hosts: nvswitch
   roles: [ssh, fakenmxc]
+
+# A list of this lab's endpoints for this machine: addresses from the bridge,
+# only the components the settings enable. Not in git (.gitignore).
+- name: Lab endpoints (endpoints.md)
+  hosts: controller
+  gather_facts: false
+  tasks:
+    - name: Look up the bridge network
+      ansible.builtin.command: incus network get {{ incus_bridge }} ipv4.address
+      register: bridge
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Write endpoints.md
+      ansible.builtin.template:
+        src: endpoints.md.j2
+        dest: "{{ repo_root }}/endpoints.md"
+        mode: "0644"
+      delegate_to: localhost
+      vars:
+        prefix: "{{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] }}"
+        ctrl_address: "{{ prefix }}.{{ hostvars[groups['controller'][0]].ip_host }}"
+        kuberay_name: "{{ 'kuberay.' ~ ctrl_address ~ '.nip.io' if kuberay_domain == 'auto' else kuberay_domain }}"
+        runai_name: "{{ 'runai.' ~ ctrl_address ~ '.nip.io' if runai_domain == 'auto' else runai_domain }}"

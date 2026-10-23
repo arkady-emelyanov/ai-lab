@@ -48,7 +48,7 @@ make test          # end-to-end checks, ~10 minutes
 
 ### 4. Hand over
 
-Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and [Lab endpoints](docs/endpoints.md): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, in k3s mode the KubeRay dashboard at `http://kuberay.<bridge address>.10.nip.io` (no login), with Run:ai its UI at `https://runai.<bridge address>.10.nip.io` (`admin@ai-lab.local`, password in `.secrets/runai-admin.pass`, certificate authority `.secrets/runai/ca.crt` to import in the browser), `make test` to re-check.
+Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and `endpoints.md` in the repository root (written by `make up` with this lab's addresses; [Lab endpoints](docs/endpoints.md) describes them): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, in k3s mode the KubeRay dashboard at `http://kuberay.<bridge address>.10.nip.io` (no login), with Run:ai its UI at `https://runai.<bridge address>.10.nip.io` (`admin@ai-lab.local`, password in `.secrets/runai-admin.pass`, certificate authority `.secrets/runai/ca.crt` to import in the browser), `make test` to re-check.
 
 ### Rules
 

@@ -2,7 +2,7 @@
 
 # Lab endpoints
 
-Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.0/24` here; yours may differ, see `incus network get incusbr0 ipv4.address`).
+Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.0/24` here; yours may differ, see `incus network get incusbr0 ipv4.address`). `make configure` (and `make up`) writes `endpoints.md` in the repository root, not in git: this table with your lab's addresses and only the components your settings enable.
 
 | Service | Endpoint | Credentials | Docs |
 |---|---|---|---|
