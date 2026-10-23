@@ -590,6 +590,14 @@
               delay: 5
               changed_when: false
 
+            - name: Prometheus scrapes its metrics
+              ansible.builtin.uri:
+                url: http://localhost:9090/api/v1/query?query={{ ('ray_node_cpu_count{ray_io_cluster="' ~ cluster ~ '"}') | urlencode }}
+              register: ray_metrics
+              until: ray_metrics.json.data.result | length > 0
+              retries: 12
+              delay: 5
+
             - name: Its Ray dashboard answers through the API server
               ansible.builtin.uri:
                 url: "{{ kuberay_url }}/api/v1/namespaces/{{ ray_namespace }}/services/{{ cluster }}-head-svc:8265/proxy/api/version"
@@ -603,6 +611,18 @@
                 method: DELETE
                 status_code: [200, 202, 404]
               delegate_to: localhost
+
+# Ray's Grafana dashboards (KubeRay), which Ray's dashboard embeds panels
+# of: provisioned, and readable without a login as embedding needs.
+- name: Ray's Grafana dashboards
+  hosts: controller
+  tasks:
+    - name: Ray's default dashboard is in Grafana, for anonymous viewers too
+      ansible.builtin.uri:
+        url: http://localhost:{{ grafana_port }}/api/dashboards/uid/rayDefaultDashboard
+      register: ray_dashboard
+      failed_when: ray_dashboard.status != 200 or ray_dashboard.json.meta.folderTitle != 'Ray'
+      when: scheduler == 'k3s' and kuberay | bool
 
 # Run:ai (runai: true): the cluster connected to its control plane, GPU
 # metrics from the DCGM exporter in Run:ai's Prometheus, and a training

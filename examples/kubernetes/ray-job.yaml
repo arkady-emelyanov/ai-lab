@@ -2,10 +2,11 @@
 # cluster, a head pod on one tray and a worker pod on the other, each with 4
 # GPUs, submits ray_demo.py to it and deletes the cluster when the job ends;
 # Kueue admits the whole cluster at once. The job, its cluster and the
-# head's Ray dashboard show in the KubeRay dashboard while it runs; a
-# collector next to each Ray node uploads the cluster's logs and events to
-# the History Server's bucket, so they stay in the dashboard's History pages
-# after the cluster is gone. Needs the shared venv (make frameworks).
+# head's Ray dashboard (with Grafana panels of its metrics) show in the
+# KubeRay dashboard while it runs; a collector next to each Ray node uploads
+# the cluster's logs and events to the History Server's bucket, so they stay
+# in the dashboard's History pages after the cluster is gone. Needs the
+# shared venv (make frameworks).
 # Submit: ./submit --wait ray-job.yaml
 apiVersion: ray.io/v1
 kind: RayJob
@@ -56,6 +57,9 @@ spec:
                 - {name: RAY_enable_core_worker_ray_event_to_aggregator, value: "true"}
                 - {name: RAY_DASHBOARD_AGGREGATOR_AGENT_EVENTS_EXPORT_ADDR, value: "http://localhost:8084/v1/events"}
                 - {name: RAY_DASHBOARD_AGGREGATOR_AGENT_EXPOSABLE_EVENT_TYPES, value: ALL}
+              # Prometheus and Grafana for the Ray dashboard's metrics.
+              envFrom: &ray-env-from
+                - configMapRef: {name: ray-grafana}
               ports:
                 - {name: gcs-server, containerPort: 6379}
                 - {name: dashboard, containerPort: 8265}
@@ -104,6 +108,7 @@ spec:
               - name: ray-worker
                 image: docker.io/library/buildpack-deps:noble
                 env: *ray-env
+                envFrom: *ray-env-from
                 resources:
                   limits: {nvidia.com/gpu: 4}
                   requests: {cpu: "2", memory: 4Gi}

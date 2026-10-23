@@ -8,7 +8,7 @@ Written by `make configure` for this machine's lab ({{ ansible_managed }}); not 
 |---|---|---|
 | Login node (SSH) | `bin/ssh login` ({{ ip(groups['login'][0]) }}:22) | {% for u in cluster_users %}`{{ u.name }}` / `{{ u.password }}`{{ ', ' if not loop.last }}{% endfor %}, or your key |
 | Any instance as root (SSH) | `bin/ssh root@<instance>` | `.secrets/ssh/id_ed25519` |
-| Grafana | http://{{ ip(ctrl) }}:{{ grafana_port }} | `admin` / `.secrets/grafana.pass` |
+| Grafana | http://{{ ip(ctrl) }}:{{ grafana_port }} | `admin` / `.secrets/grafana.pass`{{ '; anonymous read-only (KubeRay)' if scheduler == 'k3s' and kuberay | bool }} |
 | Prometheus | http://{{ ip(ctrl) }}:9090 | none |
 {% if scheduler == 'slurm' %}
 | Slurm exporter | http://{{ ip(ctrl) }}:{{ slurm_exporter_port }}/metrics | none |

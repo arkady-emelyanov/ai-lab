@@ -84,6 +84,85 @@
     mode: "0644"
   loop: [lab-overview.json, sched-fabric.json]
 
+# KubeRay (k3s mode): Ray's own Grafana dashboards, which Ray's dashboard
+# embeds panels of. Embedding needs Grafana to allow it, and to show the
+# panels without a login: anonymous viewers (read-only), as Ray documents.
+- name: Ray's dashboards in Grafana
+  when: scheduler == 'k3s' and kuberay | bool
+  block:
+    - name: Create the drop-in directory for Grafana's unit
+      ansible.builtin.file:
+        path: /etc/systemd/system/grafana-server.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Allow embedding and anonymous viewers
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          Environment=GF_SECURITY_ALLOW_EMBEDDING=true
+          Environment=GF_AUTH_ANONYMOUS_ENABLED=true
+          Environment=GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+        dest: /etc/systemd/system/grafana-server.service.d/ray.conf
+        mode: "0644"
+      notify: Restart grafana
+
+    - name: Create the Ray dashboards directory
+      ansible.builtin.file:
+        path: /var/lib/grafana/dashboards-ray
+        state: directory
+        owner: grafana
+        group: grafana
+        mode: "0755"
+
+    - name: Provision Ray's dashboards (folder Ray)
+      ansible.builtin.copy:
+        content: |
+          apiVersion: 1
+          providers:
+            - name: ray
+              folder: Ray
+              type: file
+              options:
+                path: /var/lib/grafana/dashboards-ray
+        dest: /etc/grafana/provisioning/dashboards/ray.yaml
+        mode: "0644"
+      notify: Restart grafana
+
+    # Ray writes them for its version at start; the kuberay role's Ray (Ray's
+    # dashboard for finished clusters) has the venv's version.
+    - name: List the dashboards Ray generated
+      ansible.builtin.command: >-
+        kubectl -n kuberay exec deploy/ray-history --
+        ls /tmp/ray/session_latest/metrics/grafana/dashboards
+      register: ray_dashboards
+      changed_when: false
+
+    - name: Install them
+      ansible.builtin.shell: |
+        set -eo pipefail
+        dest=/var/lib/grafana/dashboards-ray/{{ item }}
+        kubectl -n kuberay exec deploy/ray-history -- \
+            cat /tmp/ray/session_latest/metrics/grafana/dashboards/{{ item }} > $dest.new
+        if cmp -s $dest.new $dest; then rm $dest.new; else
+            chown grafana:grafana $dest.new && chmod 0644 $dest.new && mv $dest.new $dest && echo installed
+        fi
+      args:
+        executable: /bin/bash
+      loop: "{{ ray_dashboards.stdout_lines | select('match', '.*\\.json$') | list }}"
+      register: ray_dashboard_install
+      changed_when: "'installed' in ray_dashboard_install.stdout"
+
+- name: No Ray settings without KubeRay
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/grafana-server.service.d/ray.conf
+    - /etc/grafana/provisioning/dashboards/ray.yaml
+  when: not (scheduler == 'k3s' and kuberay | bool)
+  notify: Restart grafana
+
 - name: Start Grafana
   ansible.builtin.systemd_service:
     name: grafana-server

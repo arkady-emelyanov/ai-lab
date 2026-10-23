@@ -153,11 +153,62 @@
       ansible.builtin.apt:
         name: prometheus
 
+    # KubeRay (k3s mode): Ray's pods as Prometheus targets, from kubectl
+    # every 15 seconds (Ubuntu's Prometheus has no Kubernetes discovery).
+    - name: Ray's metrics targets
+      when: scheduler == 'k3s' and kuberay | bool
+      block:
+        - name: Install ray-targets
+          ansible.builtin.copy:
+            src: ray-targets
+            dest: /usr/local/sbin/ray-targets
+            mode: "0755"
+
+        - name: Run ray-targets every 15 seconds
+          ansible.builtin.copy:
+            content: "{{ item.content }}"
+            dest: /etc/systemd/system/{{ item.name }}
+            mode: "0644"
+          loop:
+            - name: ray-targets.service
+              content: |
+                [Unit]
+                Description=Write Prometheus targets for Ray's pods
+                [Service]
+                Type=oneshot
+                ExecStart=/usr/local/sbin/ray-targets
+            - name: ray-targets.timer
+              content: |
+                [Unit]
+                Description=Write Prometheus targets for Ray's pods every 15 seconds
+                [Timer]
+                OnBootSec=30s
+                OnUnitActiveSec=15s
+                AccuracySec=1s
+                [Install]
+                WantedBy=timers.target
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Write the targets once
+          ansible.builtin.command: /usr/local/sbin/ray-targets
+          changed_when: false
+
+        - name: Enable the ray-targets timer
+          ansible.builtin.systemd_service:
+            name: ray-targets.timer
+            state: started
+            enabled: true
+            daemon_reload: true
+
+    # Prometheus keeps its old configuration when a reload fails, silently
+    # for make configure: check the new one first.
     - name: Configure Prometheus
       ansible.builtin.template:
         src: prometheus.yml.j2
         dest: /etc/prometheus/prometheus.yml
         mode: "0644"
+        validate: promtool check config %s
       notify: Reload prometheus
 
     - name: Configure scheduler recording rules

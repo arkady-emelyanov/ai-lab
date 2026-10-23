@@ -8,7 +8,7 @@ Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.
 |---|---|---|---|
 | Login node (SSH) | `bin/ssh login` (10.107.111.11:22) | `joe` / `joe`, or your key | [Identity and access](identity-and-access.md) |
 | Any instance as root (SSH) | `bin/ssh root@<instance>` | `.secrets/ssh/id_ed25519` | [Identity and access](identity-and-access.md) |
-| Grafana | http://10.107.111.10:3000 | `admin` / `.secrets/grafana.pass` | [Monitoring](monitoring.md) |
+| Grafana | http://10.107.111.10:3000 | `admin` / `.secrets/grafana.pass`; with KubeRay also anonymous read-only | [Monitoring](monitoring.md) |
 | Prometheus | http://10.107.111.10:9090 | none | [Monitoring](monitoring.md) |
 | Slurm exporter (Slurm mode) | http://10.107.111.10:9092/metrics | none | [Monitoring](monitoring.md) |
 | Kubernetes API (k3s mode) | https://10.107.111.10:6443 (`bin/kubectl`) | admin: `.secrets/kubeconfig`; users: `~/.kube/config` | [Kubernetes](kubernetes.md) |

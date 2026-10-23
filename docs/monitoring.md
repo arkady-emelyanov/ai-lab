@@ -16,6 +16,7 @@ Prometheus on `sched-control` scrapes every layer; Grafana on the same host pres
 | `redfish` | all BMCs, through the controller `:9348`, every 30 s | [idrac_exporter](https://github.com/mrlhansen/idrac_exporter) v2.6.3, a generic Redfish exporter (iDRAC, iLO, XClarity, Supermicro, OpenBMC) | out of band: tray power state, GPU temperatures, system and BMC health, machine info ([BMCs](bmc-redfish.md)) |
 | `node` (InfiniBand) | trays' node_exporter textfile collector, every 15 s | `ib-port-counters` (`roles/fakeib`) | NIC port counters under node_exporter's infiniband names: `node_infiniband_port_data_transmitted_bytes_total`, `..._received_bytes_total` `{device="mlx5_<gpu>", port="1"}`; NCCL traffic between NVLink partitions |
 | `kube-state-metrics` (k3s mode) | controller NodePort `:30808` | [kube-state-metrics](https://github.com/kubernetes/kube-state-metrics) | nodes and their allocatable GPUs, pods' GPU requests, jobs |
+| `ray` (k3s mode, `kuberay: true`) | every Ray node in KubeRay's pods, port `metrics` (8080), listed by `ray-targets` on the controller every 15 s (`file_sd`; Ubuntu's Prometheus has no Kubernetes discovery) | Ray's own metrics agent | Ray's metrics (`ray_*`: nodes, tasks, actors, object store, GPUs) with `ray_io_cluster`, `ray_io_node_type`, `namespace`, `pod` ([KubeRay](kuberay.md#metrics)) |
 
 **Slurm GPU allocation.** The Slurm exporter has no GPU metrics; `slurm-gpu-metrics` (systemd timer, every 15 s) writes them for node_exporter's textfile collector on the controller:
 
@@ -54,7 +55,7 @@ GPU metrics reflect the simulated load ([Emulated GPUs](fake-gpu.md#how-it-works
 
 | UI | URL (from your machine) | Login |
 |---|---|---|
-| Grafana | `http://10.107.111.10:3000` | `admin`, password in `.secrets/grafana.pass` |
+| Grafana | `http://10.107.111.10:3000` | `admin`, password in `.secrets/grafana.pass`; with KubeRay also anonymous viewers (read-only), for the panels Ray's dashboard embeds |
 | Prometheus | `http://10.107.111.10:9090` | none |
 
 Dashboards (folder *Lab*):
@@ -65,6 +66,7 @@ Dashboards (folder *Lab*):
 | **Scheduler & NVLink fabric** | GPUs allocated vs total, GPUs per node and user, jobs and nodes by state; unhealthy GPUs, switch ports down, partitions, NVLink and NVSwitch throughput; InfiniBand traffic per tray and NVLink vs InfiniBand for the domain |
 | **Nvidia GPU Metrics** | the GPU exporter's own dashboard (grafana.com 14574) |
 | **Node Exporter Full** | grafana.com 1860 |
+| folder **Ray** (k3s mode, `kuberay: true`) | Ray's own dashboards (default, Data, Train, Serve, Serve LLM), as the lab's Ray version generates them; filter by `Cluster` and `SessionName`, finished clusters included ([KubeRay](kuberay.md#metrics)) |
 
 Useful queries:
 

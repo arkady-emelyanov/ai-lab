@@ -11,6 +11,7 @@
 
 - name: Work out the dashboards' names
   ansible.builtin.set_fact:
+    kuberay_controller_address: "{{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] ~ '.' ~ ip_host }}"
     kuberay_fqdn: >-
       {{ 'kuberay.' ~ bridge.stdout.split('/')[0].rsplit('.', 1)[0] ~ '.' ~ ip_host ~ '.nip.io'
          if kuberay_domain == 'auto' else kuberay_domain }}

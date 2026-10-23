@@ -1,0 +1,20 @@
+#!/bin/bash
+# Prometheus targets for Ray's nodes in KubeRay's pods (any namespace): each
+# running Ray pod's metrics port, with the labels Ray's Grafana dashboards
+# expect. Prometheus reads the file (file_sd); Ubuntu's Prometheus has no
+# Kubernetes discovery. Run every 15 s by ray-targets.timer.
+set -euo pipefail
+out=/etc/prometheus/ray-targets.json
+
+kubectl get pods -A -l ray.io/is-ray-node=yes --field-selector=status.phase=Running -o json | jq '
+  [.items[] | select(.status.podIP) | {
+    targets: [.status.podIP + ":" + ([.spec.containers[0].ports[]? | select(.name == "metrics") | .containerPort][0] // 8080 | tostring)],
+    labels: {
+      ray_io_cluster: .metadata.labels["ray.io/cluster"],
+      ray_io_node_type: .metadata.labels["ray.io/node-type"],
+      namespace: .metadata.namespace,
+      pod: .metadata.name
+    }
+  }]' > "$out.new"
+
+if cmp -s "$out.new" "$out"; then rm "$out.new"; else mv "$out.new" "$out"; fi

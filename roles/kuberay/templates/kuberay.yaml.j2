@@ -392,3 +392,22 @@ spec:
             pathType: Prefix
             backend:
               service: {name: ray-history-open, port: {name: http}}
+---
+# ---- Metrics ----------------------------------------------------------------
+# The lab's Prometheus scrapes Ray's pods (monitoring role, ray-targets).
+{% for namespace in cluster_users | map(attribute='name') %}
+---
+# Where a Ray head finds Prometheus and Grafana for its dashboard's metrics
+# (envFrom in the Ray containers): from the pod by name, from the browser
+# (the embedded Grafana panels) by the controller's address.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ray-grafana
+  namespace: {{ namespace }}
+data:
+  RAY_PROMETHEUS_HOST: http://{{ groups['controller'][0] }}:9090
+  RAY_PROMETHEUS_NAME: Prometheus
+  RAY_GRAFANA_HOST: http://{{ groups['controller'][0] }}:{{ grafana_port }}
+  RAY_GRAFANA_IFRAME_HOST: http://{{ kuberay_controller_address }}:{{ grafana_port }}
+{% endfor %}
