@@ -49,7 +49,7 @@ Split across partitions, the gradient all-reduce crosses InfiniBand, so the step
 
 ## Verification
 
-`make test` runs all four examples as `joe` through the configured scheduler (Slurm batch jobs, or JobSets in k3s mode) and checks their output (topology and fabric lines, rank 7, all 8 DDP ranks, 8 Ray tasks); in Slurm mode also that every job is `COMPLETED` in accounting.
+`make test` runs all four examples as `joe` through the configured scheduler (Slurm batch jobs, or JobSets in k3s mode, plus `ray-job.yaml` as a KubeRay RayJob, [KubeRay](kuberay.md)) and checks their output (topology and fabric lines, rank 7, all 8 DDP ranks, 8 Ray tasks); in Slurm mode also that every job is `COMPLETED` in accounting.
 
 ## Configuration
 
@@ -67,5 +67,5 @@ Split across partitions, the gradient all-reduce crosses InfiniBand, so the step
 ## References
 
 - [PyTorch distributed](https://pytorch.org/docs/stable/distributed.html), [torchrun](https://pytorch.org/docs/stable/elastic/run.html)
-- [Ray on Slurm](https://docs.ray.io/en/latest/cluster/vms/user-guides/community/slurm.html)
+- [Ray on Slurm](https://docs.ray.io/en/latest/cluster/vms/user-guides/community/slurm.html), [Ray on Kubernetes (KubeRay)](https://docs.ray.io/en/latest/cluster/kubernetes/index.html)
 - Sources: `examples/` (`slurm/`, `kubernetes/`, shared `ddp_train.py`, `ray_demo.py`), `playbooks/frameworks.yml`

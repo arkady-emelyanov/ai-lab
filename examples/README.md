@@ -8,6 +8,7 @@ The same four jobs for each scheduler; use the folder that matches `scheduler` i
 | NVL8 hello | `nvl8-hello.sbatch` | `nvl8-hello.yaml` | 8 tasks or pods × 1 GPU across the NVLink domain; each reports its tray, GPU UUID and clique |
 | DDP training | `ddp-train.sbatch` | `ddp-train.yaml` | PyTorch DDP over NCCL, 2 trays × 4 GPUs with `torchrun`; runs `ddp_train.py` |
 | Ray cluster | `ray-cluster.sbatch` | `ray-cluster.yaml` | Ray head and worker, one GPU task per GPU; runs `ray_demo.py` |
+| Ray job (KubeRay) | – | `ray-job.yaml` | the same as a KubeRay `RayJob`: KubeRay starts the Ray cluster, submits `ray_demo.py` and deletes the cluster when it ends; shows in the KubeRay dashboard ([KubeRay](../docs/kuberay.md)) |
 
 `ddp_train.py` and `ray_demo.py` are shared by both versions. The DDP and Ray jobs need the frameworks venv (`make frameworks`).
 
