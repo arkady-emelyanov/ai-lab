@@ -63,6 +63,25 @@
   loop_control:
     label: "{{ item.name }}"
 
+# Every directory user, for directories they share (shared_group_dirs).
+- name: Create the group of all users
+  community.general.ldap_entry:
+    dn: cn={{ cluster_users_group }},ou=groups,{{ ldap_base }}
+    objectClass: posixGroup
+    attributes:
+      gidNumber: "{{ cluster_users_gid }}"
+    bind_dn: "{{ ldap_admin_dn }}"
+    bind_pw: "{{ ldap_admin_password }}"
+
+- name: Make every user a member
+  community.general.ldap_attrs:
+    dn: cn={{ cluster_users_group }},ou=groups,{{ ldap_base }}
+    attributes:
+      memberUid: "{{ cluster_users | map(attribute='name') | list }}"
+    state: exact
+    bind_dn: "{{ ldap_admin_dn }}"
+    bind_pw: "{{ ldap_admin_password }}"
+
 - name: Create users
   community.general.ldap_entry:
     dn: uid={{ item.name }},ou=people,{{ ldap_base }}

@@ -15,6 +15,7 @@ Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.
 | KubeRay dashboard and API server (k3s mode, `kuberay: true`) | http://kuberay.10.107.111.10.nip.io | none | [KubeRay](kuberay.md) |
 | Ray's dashboard for finished Ray clusters (k3s mode, `kuberay: true`) | http://ray-history.10.107.111.10.nip.io | none | [KubeRay](kuberay.md#history) |
 | NVIDIA Run:ai UI and API (k3s mode, `runai: true`) | https://runai.10.107.111.10.nip.io (`bin/ssh sched-control runai-api …`) | `admin@ai-lab.local` / `.secrets/runai-admin.pass`; certificate authority `.secrets/runai/ca.crt` | [NVIDIA Run:ai](runai.md) |
+| Slurm REST API (Slurm mode) | http://10.107.111.10:6820/slurm/v0.0.40/, /slurmdb/v0.0.40/ | JWT: `X-SLURM-USER-NAME` and `X-SLURM-USER-TOKEN`; users: `scontrol token` on the login node; clients on the host: `.secrets/slurm-jwt` (SlurmUser, acts for any user) | [Slurm](slurm.md#rest-api) |
 | kube-state-metrics (k3s mode) | http://10.107.111.10:30808/metrics | none | [Monitoring](monitoring.md) |
 | topograph API | http://10.107.111.10:49021 | none | [Topology discovery](topology.md) |
 | RustFS S3 API | http://10.107.111.12:9000 | admin: `.secrets/rustfs.access` / `.secrets/rustfs.secret`; users: `<name>` / `.secrets/users/<name>.s3` | [Storage](storage.md) |
@@ -27,3 +28,18 @@ Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.
 | node_exporter, JuiceFS metrics | `<cluster node>:9100/metrics`, `<cluster node>:9567/metrics` | none | [Monitoring](monitoring.md) |
 
 The BMCs use self-signed certificates (`curl -k`).
+
+## Clients on the host
+
+Services running on your machine that use the lab, such as a job scheduler or a portal (Chassis, for example), get these. The names come from settings in `inventory/group_vars/all.yml` (section "Clients on the host"):
+
+| What | Where | Setting |
+|---|---|---|
+| The host, from the instances and pods | the bridge's own address, `10.107.111.1` here (`incus network get incusbr0 ipv4.address`); a service there must listen on it or on `0.0.0.0` | |
+| Slurm REST API as any user (Slurm mode) | token `.secrets/slurm-jwt` (SlurmUser, 365 days); send `X-SLURM-USER-NAME: <user>` with it. Rotate: delete the file, `make configure`; invalidate every token: delete `.secrets/slurm-jwt.key` too | `slurm_service_token_days` |
+| Kubernetes as any directory user (k3s mode) | `.secrets/<name>-kubeconfig`: ServiceAccount `<name>` in namespace `<name>`, allowed to impersonate the directory users and their group `lab-users`, and to read nodes, namespaces, runtime, priority and storage classes, CRDs, Kueue's queues, flavors, topologies and workloads, and Deployments; no secrets | `k3s_client_accounts` (`[chassis]`) |
+| An S3 user and bucket of its own | access key `<name>`, secret `.secrets/<name>.s3`, bucket `<name>` on the RustFS S3 API; no access to other buckets | `s3_service_users` (`[chassis]`) |
+| A directory every user can write | `/shared/<name>`: group `lab-users`, setgid, default ACL, so what one user creates there the others can change | `shared_group_dirs` (`[chassis]`) |
+| uv | `/usr/local/bin/uv` and `uvx` on the login node and the trays | `uv_version` |
+| Per-job directories removed after every job (Slurm mode) | the epilog removes `/dev/shm/chassis-<job id>` and `/run/user/<uid>/chassis-<job id>` on every node of a job, for what a job's launcher keeps there when the job is killed | `slurm_epilog_cleanup` |
+| A second user and account for multi-user tests | `alice` (uid 2002, account `research`, password `alice`) next to `joe` (account `lab`) | `cluster_users`, `slurm_accounts` |

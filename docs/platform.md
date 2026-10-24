@@ -96,6 +96,8 @@ Without pinning, Incus moves containers between cores, so a tray shares cores wi
 | `ssh/id_ed25519` | admin (root) SSH key; `ssh/controller_ed25519` lets the controller run pdsh on the trays |
 | `bmc/*.crt`, `bmc/*.key`, `bmc/incus-server.crt` | tray BMC Incus client certificates, pinned Incus server certificate |
 | `users/<name>.pass`, `users/<name>.s3` | generated user passwords (when none is set) and S3 secrets |
+| `slurm-jwt.key`, `slurm-jwt` | Slurm's JWT signing key; a SlurmUser token for clients on the host (Slurm mode) |
+| `<name>.s3`, `<name>-kubeconfig` | S3 secret and kubeconfig of a client on the host (`s3_service_users`, `k3s_client_accounts`; `chassis`), and of KubeRay's History Server (`ray-history.s3`) ([Lab endpoints](endpoints.md#clients-on-the-host)) |
 
 **Secrets and data volumes belong together.** The data volumes (`/shared`, the object store, the JuiceFS metadata) outlive `make down` and even the checkout, while `.secrets/` is regenerated whenever it is missing. The object store and JuiceFS only work with the credentials they were created with.
 

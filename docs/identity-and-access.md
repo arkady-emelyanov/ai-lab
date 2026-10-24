@@ -8,11 +8,12 @@ Users exist once, in OpenLDAP on `sched-control`; every node resolves them throu
 
 - Users log in to the login node with their lab SSH key (one per user, in `.secrets/ssh/users/`, used by `bin/ssh`), their own key or their LDAP password.
 - Root logs in with the lab's admin key only.
+- Two users by default: `joe` (uid 2001, Slurm account `lab`) and `alice` (uid 2002, account `research`), passwords as their names.
 - The same user list also creates each user's S3 identity and, depending on the scheduler, their Slurm association or their Kubernetes namespace and credentials ([Kubernetes](kubernetes.md#how-it-works)).
 
 | Piece | Where | Notes |
 |---|---|---|
-| OpenLDAP (`slapd`) | `sched-control` | base `dc=example,dc=com`; `ou=people`, `ou=groups`; user private groups (GID = UID) |
+| OpenLDAP (`slapd`) | `sched-control` | base `dc=example,dc=com`; `ou=people`, `ou=groups`; user private groups (GID = UID); group `lab-users` (GID 3000, `cluster_users_group`) with every user, owning the shared directories (`shared_group_dirs`) |
 | SSSD | every cluster node | `id_provider`, `auth_provider` and `chpass_provider` = ldap |
 | sshd | every instance | root: key only; users: password or key |
 | `bin/ssh`, `bin/scp`, `bin/ssh-copy-id` | host | wrappers that resolve current addresses from Incus |

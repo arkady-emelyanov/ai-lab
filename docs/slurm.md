@@ -40,6 +40,7 @@ To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, home
 - **GPU handover.** After every job, an epilog resets the job's GPUs with `nvidia-smi --gpu-reset`, as GPUs are reset between tenants on GB200. That clears their state and applies a pending NVLink partition change.
   - It then checks that no process still uses the GPUs and none needs recovery. If the reset or the check fails, Slurm drains the node.
   - It logs to the tray's journal (`journalctl -t slurm-epilog`). `gpu_handover_reset: false` turns it off.
+  - Before that it removes the job's per-job directories (`slurm_epilog_cleanup`: `/dev/shm/chassis-<job id>`, `/run/user/<uid>/chassis-<job id>`), where a job launcher keeps what must not outlive a killed job.
 - **Users.** Directory users (LDAP) get an association with their account from `slurm_accounts`; jobs on the trays run as the user, with homes on `/shared`.
 
 ## Usage

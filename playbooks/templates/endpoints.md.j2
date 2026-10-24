@@ -58,3 +58,20 @@ Written by `make configure` for this machine's lab ({{ ansible_managed }}); not 
 {% if bmc | bool %}
 The BMCs use self-signed certificates (`curl -k`).
 {% endif %}
+
+Clients on the host ([docs/endpoints.md](docs/endpoints.md#clients-on-the-host)): instances and pods reach this machine at {{ prefix }}.1.
+{% if scheduler == 'slurm' %}
+Slurm REST API as any user: token `.secrets/slurm-jwt`.
+{% else %}
+{% for client in k3s_client_accounts %}
+Kubernetes for `{{ client }}`: `.secrets/{{ client }}-kubeconfig`.
+{% endfor %}
+{% endif %}
+{% if storage | bool %}
+{% for client in s3_service_users %}
+S3 for `{{ client }}`: access key `{{ client }}`, secret `.secrets/{{ client }}.s3`, bucket `{{ client }}`.
+{% endfor %}
+{% endif %}
+{% for d in shared_group_dirs %}
+Shared directory: `{{ shared_mount }}/{{ d }}` (group `{{ cluster_users_group }}`).
+{% endfor %}

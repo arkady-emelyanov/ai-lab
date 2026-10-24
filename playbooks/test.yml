@@ -1259,6 +1259,87 @@
           register: power
           failed_when: power.json.data.result | length != fakegpu_count * groups['workers'] | length
 
+# What clients on the host get: uv, the shared directories every user can
+# write, their S3 users, their Kubernetes service accounts (k3s), and in
+# Slurm mode the epilog's clean-up of per-job directories.
+- name: Clients on the host
+  hosts: login
+  vars:
+    users: "{{ cluster_users | map(attribute='name') | list }}"
+  tasks:
+    - name: uv is installed
+      ansible.builtin.command: uv --version
+      register: uv
+      changed_when: false
+      failed_when: uv.stdout is not search(uv_version | regex_escape)
+
+    - name: What one user creates in a shared directory the others can change
+      ansible.builtin.shell: |
+        set -e
+        d={{ shared_mount }}/{{ item }}/.lab-test
+        su - {{ users[0] }} -c "mkdir -p $d && echo a > $d/f"
+        su - {{ users[-1] }} -c "echo b > $d/f && mkdir $d/sub"
+        su - {{ users[0] }} -c "touch $d/sub/g"
+        rm -rf $d
+      loop: "{{ shared_group_dirs }}"
+      changed_when: false
+      when: users | length > 1
+
+    - name: Clients' S3 users reach their bucket and no other
+      ansible.builtin.shell: |
+        export HOME=$(mktemp -d); trap 'rm -rf $HOME' EXIT
+        rc alias set c {{ s3_endpoint }} {{ item }} "$(cat)" >/dev/null
+        echo x > $HOME/f && rc cp $HOME/f c/{{ item }}/.lab-test >/dev/null && rc rm c/{{ item }}/.lab-test >/dev/null
+        ! rc ls c/{{ users[0] }}/ >/dev/null 2>&1
+      args:
+        stdin: "{{ lookup('ansible.builtin.file', repo_root ~ '/.secrets/' ~ item ~ '.s3') }}"
+      loop: "{{ s3_service_users }}"
+      changed_when: false
+      when: storage | bool
+      no_log: true
+
+    - name: A killed job's per-job directories go with it (Slurm epilog)
+      when: scheduler == 'slurm' and slurm_epilog_cleanup | length > 0
+      vars:
+        dir: "{{ slurm_epilog_cleanup[0] | replace('%u', '$(id -u)') }}"
+      block:
+        - name: Run a job that leaves a per-job directory
+          ansible.builtin.command: >-
+            su - {{ users[0] }} -c "srun -N1 bash -c 'd={{ dir | replace('%j', '$SLURM_JOB_ID') }}; mkdir -p $d;
+            echo $SLURM_JOB_ID $(hostname) $d'"
+          register: leftover
+          changed_when: true
+
+        - name: It is gone
+          ansible.builtin.command: bin/ssh root@{{ leftover.stdout.split()[1] }} test ! -e {{ leftover.stdout.split()[2] }}
+          args:
+            chdir: "{{ repo_root }}"
+          delegate_to: localhost
+          register: gone
+          until: gone.rc == 0
+          retries: 10
+          delay: 2
+          changed_when: false
+
+- name: Clients' Kubernetes service accounts (k3s)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: A client acts as a directory user, reads the cluster, and nothing more
+      ansible.builtin.shell: |
+        set -e
+        k="{{ root }}/bin/kubectl --kubeconfig {{ root }}/.secrets/{{ item }}-kubeconfig"
+        $k get nodes -o name | grep -q sched-worker1
+        $k get clusterqueues -o name | grep -q .
+        [ "$($k --as {{ cluster_users[0].name }} --as-group lab-users -n {{ cluster_users[0].name }} auth can-i create jobs)" = yes ]
+        [ "$($k auth can-i list secrets -A)" = no ]
+      vars:
+        root: "{{ playbook_dir | dirname }}"
+      loop: "{{ k3s_client_accounts }}"
+      changed_when: false
+      when: scheduler == 'k3s'
+
 # Components switched off leave nothing running on the instances that stay.
 - name: Components switched off
   hosts: cluster

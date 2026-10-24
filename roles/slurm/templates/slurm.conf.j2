@@ -27,9 +27,10 @@ TaskPlugin=task/none
 # Sets job environment on the workers (e.g. SCRATCH), independent of the
 # submitting shell.
 TaskProlog=/etc/slurm/task_prolog.sh
-{% if gpu_handover_reset %}
-# GPU handover after every job: reset the job's GPUs and check them; a node
-# whose GPUs fail it is drained (a failing Epilog drains the node).
+{% if gpu_handover_reset or slurm_epilog_cleanup %}
+# After every job: remove its per-job directories (slurm_epilog_cleanup);
+# GPU handover: reset the job's GPUs and check them, a node whose GPUs fail
+# it is drained (a failing Epilog drains the node).
 Epilog=/etc/slurm/epilog.sh
 {% endif %}
 JobAcctGatherType=jobacct_gather/linux

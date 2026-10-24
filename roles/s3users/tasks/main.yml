@@ -92,45 +92,16 @@
     label: "{{ item.name }}"
   when: buckets.stdout is not search(' ' ~ item.name ~ '/$', multiline=True)
 
-# KubeRay's History Server (k3s mode, kuberay: true): one S3 user for the
-# collectors that upload Ray clusters' logs and for the History Server that
-# reads them, allowed everything on its bucket and nothing else.
-- name: KubeRay History Server storage
-  when: scheduler == 'k3s' and kuberay | bool
-  vars:
-    history_user: ray-history
-    bucket: "{{ kuberay_history_bucket }}"
-  block:
-    - name: Create the History Server's S3 user
-      ansible.builtin.command: rc admin user add lab/ {{ history_user }} {{ kuberay_history_secret_key }}
-      when: s3users.stdout is not search('\\b' ~ history_user ~ '\\b')
-      no_log: true
-
-    - name: Write the History Server's bucket policy
-      ansible.builtin.copy:
-        content: "{{ s3_bucket_policy | to_json }}"
-        dest: /etc/rustfs-policy-{{ history_user }}.json
-        mode: "0644"
-
-    - name: Read the History Server's policy
-      ansible.builtin.command: rc admin policy info lab/ {{ history_user }}-own --json
-      register: history_policy
-      changed_when: false
-      failed_when: history_policy.rc not in [0, 5]
-
-    - name: Create or update the History Server's policy
-      ansible.builtin.command: rc admin policy create lab/ {{ history_user }}-own /etc/rustfs-policy-{{ history_user }}.json
-      when: history_policy.rc != 0 or (history_policy.stdout | from_json).policy.policy != s3_bucket_policy
-
-    - name: Read the History Server's user
-      ansible.builtin.command: rc admin user info lab/ {{ history_user }} --json
-      register: history_user_info
-      changed_when: false
-
-    - name: Attach the History Server's policy
-      ansible.builtin.command: rc admin policy attach lab/ {{ history_user }}-own --user {{ history_user }}
-      when: history_user ~ '-own' not in (history_user_info.stdout | from_json).policies | default([], true)
-
-    - name: Create the History Server's bucket
-      ansible.builtin.command: rc mb lab/{{ kuberay_history_bucket }}
-      when: buckets.stdout is not search(' ' ~ kuberay_history_bucket ~ '/$', multiline=True)
+# S3 users of services, each allowed everything on its own bucket and
+# nothing else: KubeRay's History Server (k3s mode, kuberay: true), for the
+# collectors that upload Ray clusters' logs and the History Server that
+# reads them, and clients on the host (s3_service_users). Secret keys in
+# .secrets/<name>.s3.
+- name: Service S3 users
+  ansible.builtin.include_tasks: service-user.yml
+  loop: >-
+    {{ ([{'name': 'ray-history', 'bucket': kuberay_history_bucket}] if scheduler == 'k3s' and kuberay | bool else [])
+       + s3_service_users | map('community.general.dict_kv', 'name') | list }}
+  loop_control:
+    loop_var: service
+    label: "{{ service.name }}"

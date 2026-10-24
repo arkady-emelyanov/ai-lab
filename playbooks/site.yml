@@ -142,6 +142,10 @@
         tasks_from: "{{ 'main' if kuberay | bool else 'absent' }}"
       when: scheduler == 'k3s'
 
+- name: For clients on the host (uv, shared directories, Kubernetes service accounts)
+  hosts: cluster
+  roles: [clients]
+
 - name: Emulated InfiniBand fabric
   hosts: workers
   roles: [fakeib]

@@ -196,6 +196,9 @@ slurm_accounts:
   - name: lab
     description: AI lab
     organization: example.com
+  - name: research
+    description: Research projects
+    organization: example.com
 slurmdbd_db: slurm_acct_db
 # Must stay below the instance memory limit (MiB).
 slurm_node_memory_mb: 7500
@@ -228,6 +231,10 @@ container_registry: mirror.gcr.io
 # Image for the tests and the examples: a plain one; the fake driver's
 # nvidia-smi needs nothing from it but glibc 2.34 or later.
 container_test_image: library/ubuntu:24.04
+# Per-job directories the Slurm epilog removes on every node of a job, for
+# what a job's launcher keeps there (e.g. secrets in memory) when the job is
+# killed: %j job id, %u the job user's uid.
+slurm_epilog_cleanup: [/dev/shm/chassis-%j, /run/user/%u/chassis-%j]
 # GPU handover after every job (Slurm Epilog): reset the job's GPUs, which
 # clears their memory and state and applies a pending NVLink partition change,
 # then drain the node if a GPU is still busy or needs recovery.
@@ -251,6 +258,19 @@ cluster_users:
     comment: Joe <joe@example.com>
     account: lab
     password: joe
+  - name: alice
+    uid: 2002
+    comment: Alice <alice@example.com>
+    account: research
+    password: alice
+# A group of every directory user (LDAP; also the Kubernetes group of their
+# certificates), owning the shared directories below.
+cluster_users_group: lab-users
+cluster_users_gid: 3000
+# Directories on /shared every directory user can write and share (group
+# cluster_users_group, setgid, a default ACL: what one user creates the
+# others can change), e.g. for a job scheduler's environments and caches.
+shared_group_dirs: [chassis]
 ssh_key_dir: "{{ repo_root }}/.secrets/ssh"
 
 # Preinstalled on the login node.
@@ -422,6 +442,22 @@ frameworks_packages:
   - "ray[default]=={{ ray_version }}"
   - numpy
   - boto3
+
+# ---- Clients on the host ----------------------------------------------------------
+# Services running on the Incus host that use the lab (a job scheduler such as
+# Chassis). They reach the host at the bridge's address from the instances.
+# uv on the login node and the trays, for Python environments jobs create.
+uv_version: 0.13.5
+uv_sha256: f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f
+# S3 users of their own on RustFS (with storage: true), each with one bucket
+# of the same name and nothing else; access key the name, secret key in
+# .secrets/<name>.s3.
+s3_service_users: [chassis]
+# Kubernetes service accounts (k3s mode): namespace and ServiceAccount
+# <name>, allowed to act as the directory users (impersonation) and to read
+# nodes, runtime, priority and storage classes, CRDs, Kueue's objects and
+# Deployments; kubeconfig in .secrets/<name>-kubeconfig.
+k3s_client_accounts: [chassis]
 
 # ---- Storage: RustFS (S3) + JuiceFS ----------------------------------------------------
 storage_host: "{{ groups['storage'][0] }}"

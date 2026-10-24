@@ -1,0 +1,68 @@
+# {{ ansible_managed }}
+# Service account of {{ client }}, a client on the host: it acts as the
+# directory users (impersonation; their group: lab-users) and reads what
+# it needs to place their work.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ client }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ client }}
+  namespace: {{ client }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ client }}-token
+  namespace: {{ client }}
+  annotations: {kubernetes.io/service-account.name: {{ client }}}
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-client-{{ client }}
+rules:
+  - apiGroups: [""]
+    resources: [users]
+    verbs: [impersonate]
+    resourceNames: {{ cluster_users | map(attribute='name') | list | to_json }}
+  - apiGroups: [""]
+    resources: [groups]
+    verbs: [impersonate]
+    resourceNames: [lab-users, "system:authenticated"]
+  - apiGroups: [""]
+    resources: [nodes, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [scheduling.k8s.io]
+    resources: [priorityclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+  - apiGroups: [kueue.x-k8s.io]
+    resources: [clusterqueues, localqueues, topologies, workloads, resourceflavors]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lab-client-{{ client }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-client-{{ client }}
+subjects:
+  - {kind: ServiceAccount, name: {{ client }}, namespace: {{ client }}}

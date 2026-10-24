@@ -1,0 +1,41 @@
+# One service's S3 user and bucket (service: name, bucket; the bucket is the
+# name unless given): secret key in .secrets/<name>.s3.
+- name: The service's S3 user, policy and bucket
+  vars:
+    s3_user: "{{ service.name }}"
+    bucket: "{{ service.bucket | default(service.name) }}"
+    secret: "{{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/' ~ service.name ~ '.s3 length=32 chars=ascii_letters,digits') }}"
+  block:
+    - name: Create the S3 user
+      ansible.builtin.command: rc admin user add lab/ {{ s3_user }} {{ secret }}
+      when: s3users.stdout is not search('\\b' ~ s3_user ~ '\\b')
+
+    - name: Write its bucket policy
+      ansible.builtin.copy:
+        content: "{{ s3_bucket_policy | to_json }}"
+        dest: /etc/rustfs-policy-{{ s3_user }}.json
+        mode: "0644"
+
+    - name: Read its policy
+      ansible.builtin.command: rc admin policy info lab/ {{ s3_user }}-own --json
+      register: service_policy
+      changed_when: false
+      failed_when: service_policy.rc not in [0, 5]
+
+    - name: Create or update its policy
+      ansible.builtin.command: rc admin policy create lab/ {{ s3_user }}-own /etc/rustfs-policy-{{ s3_user }}.json
+      when: service_policy.rc != 0 or (service_policy.stdout | from_json).policy.policy != s3_bucket_policy
+
+    - name: Read the user
+      ansible.builtin.command: rc admin user info lab/ {{ s3_user }} --json
+      register: service_user_info
+      changed_when: false
+
+    - name: Attach its policy
+      ansible.builtin.command: rc admin policy attach lab/ {{ s3_user }}-own --user {{ s3_user }}
+      when: s3_user ~ '-own' not in (service_user_info.stdout | from_json).policies | default([], true)
+
+    - name: Create its bucket
+      ansible.builtin.command: rc mb lab/{{ bucket }}
+      when: buckets.stdout is not search(' ' ~ bucket ~ '/$', multiline=True)
+  no_log: true

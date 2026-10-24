@@ -67,6 +67,8 @@ Each directory user has:
 - a client certificate and `~/.kube/config` on `/shared`
 - read access to nodes, ClusterQueues and the topology
 
+Clients on the host (a job scheduler, a portal) get a service account of their own that acts as these users through impersonation, and its kubeconfig ([Lab endpoints: Clients on the host](endpoints.md#clients-on-the-host)).
+
 ### Running in containers
 
 k3s runs in the same unprivileged Incus containers as everything else. A few settings make that work: the kernel log is passed in, kubelet runs in user-namespace mode, and the host's kernel keyring quota is raised (`make check` reports it).
@@ -144,6 +146,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 - Users can create pods with `hostPath` volumes in their namespace (the examples need `/shared`), which in a real cluster would be denied by Pod Security; there is no admission policy forcing pods to run as the user's uid.
 - NVIDIA's DRA driver runs with ComputeDomains only (IMEX channels); GPUs come from the lab's device plugin, not through DRA ([ComputeDomains](compute-domains.md#limitations)). NVLink placement is through Kueue topology-aware scheduling.
 - Kubernetes users authenticate with client certificates, not LDAP.
+- Kueue gives no flavor to a workload whose pods request no CPU or memory (`no TAS flavor assigned`, the topology-aware flavor needs requests), and it waits forever: give every container resource requests, as the examples do.
 - Fake NCCL ranks exchange only their NVLink partitions, so a pod failing does not fail its peers' collectives ([Emulated GPUs](fake-gpu.md)).
 - No GPU handover between pods. The device-plugin API the lab uses has no hook on the node after a pod ends that could reset its GPUs (DRA drivers have one; the lab's GPUs do not go through DRA). GPUs are reset at tray boot, and their MIG instances go (MIG mode stays, as with the real driver: split them again after a tray's boot). After an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) so the labels pick up the new clique.
 

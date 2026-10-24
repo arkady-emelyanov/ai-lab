@@ -57,16 +57,25 @@
     mode: "0755"
   when: inventory_hostname in groups['workers']
 
-# Hands the job's GPUs to the next job, as between tenants on GB200: a GPU
-# reset clears the GPU's memory and state and applies a pending NVLink
-# partition change; afterwards the GPUs must be free and need no recovery.
-- name: Install the epilog (GPU handover)
+# After every job: its per-job directories go (slurm_epilog_cleanup: what a
+# launcher keeps there survives a killed job otherwise). Then the job's GPUs
+# go to the next job, as between tenants on GB200: a GPU reset clears the
+# GPU's memory and state and applies a pending NVLink partition change;
+# afterwards the GPUs must be free and need no recovery.
+- name: Install the epilog (per-job directories, GPU handover)
   ansible.builtin.copy:
     content: |
       #!/bin/bash
       # Slurm Epilog (root, on the job's nodes). A non-zero exit drains the node.
-      [ -n "$SLURM_JOB_GPUS" ] || exit 0
       log() { logger -t slurm-epilog "job $SLURM_JOB_ID: $*"; }
+      if [[ $SLURM_JOB_ID =~ ^[0-9]+$ && $SLURM_JOB_UID =~ ^[0-9]+$ ]]; then
+      {% for pattern in slurm_epilog_cleanup %}
+          rm -rf --one-file-system -- "{{ pattern | replace('%j', '${SLURM_JOB_ID}') | replace('%u', '${SLURM_JOB_UID}') }}"
+      {% endfor %}
+          :
+      fi
+      {% if gpu_handover_reset %}
+      [ -n "$SLURM_JOB_GPUS" ] || exit 0
       if ! out=$(nvidia-smi --gpu-reset -i "$SLURM_JOB_GPUS" 2>&1); then
           log "GPU reset of $SLURM_JOB_GPUS failed: $out"
           exit 1
@@ -78,6 +87,7 @@
           exit 1
       fi
       log "GPUs $SLURM_JOB_GPUS reset"
+      {% endif %}
     dest: /etc/slurm/epilog.sh
     mode: "0755"
   when: inventory_hostname in groups['workers']

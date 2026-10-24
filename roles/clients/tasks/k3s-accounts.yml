@@ -1,0 +1,48 @@
+# One client's service account (client: its name) and its kubeconfig for the
+# host, .secrets/<client>-kubeconfig: the API server at the controller's
+# address, the cluster's CA, the account's token.
+- name: Create the service account and its rights
+  ansible.builtin.command:
+    cmd: kubectl apply -f -
+    stdin: "{{ lookup('ansible.builtin.template', 'k3s-account.yaml.j2') }}"
+  register: account
+  changed_when: account.stdout_lines | reject('search', ' unchanged$') | list | length > 0
+
+- name: Read the token and the cluster's CA
+  ansible.builtin.command: >-
+    kubectl -n {{ client }} get secret {{ client }}-token -o "jsonpath={.data.token} {.data.ca\.crt}"
+  register: token
+  until: token.stdout.split() | length == 2
+  retries: 10
+  delay: 2
+  changed_when: false
+  no_log: true
+
+- name: Look up the bridge network
+  ansible.builtin.command: incus network get {{ incus_bridge }} ipv4.address
+  register: bridge
+  delegate_to: localhost
+  changed_when: false
+
+- name: Write its kubeconfig for the host
+  ansible.builtin.copy:
+    content: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+        - name: ai-lab
+          cluster:
+            server: https://{{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ ip_host }}:{{ k3s_port }}
+            certificate-authority-data: {{ token.stdout.split()[1] }}
+      users:
+        - name: {{ client }}
+          user:
+            token: {{ token.stdout.split()[0] | b64decode }}
+      contexts:
+        - name: {{ client }}
+          context: {cluster: ai-lab, user: {{ client }}, namespace: {{ client }}}
+      current-context: {{ client }}
+    dest: "{{ repo_root }}/.secrets/{{ client }}-kubeconfig"
+    mode: "0600"
+  delegate_to: localhost
+  no_log: true

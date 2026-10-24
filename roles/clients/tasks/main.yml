@@ -1,0 +1,67 @@
+# What the lab gives clients running on the host (a job scheduler such as
+# Chassis): uv on the login node and the trays, directories on /shared every
+# directory user shares, and (k3s mode) Kubernetes service accounts. Their
+# S3 users are the s3users role's (s3_service_users).
+
+- name: uv
+  when: inventory_hostname in groups['login'] + groups['workers']
+  block:
+    - name: Fetch uv
+      ansible.builtin.get_url:
+        url: https://github.com/astral-sh/uv/releases/download/{{ uv_version }}/uv-x86_64-unknown-linux-gnu.tar.gz
+        dest: /usr/local/src/uv-{{ uv_version }}.tar.gz
+        checksum: "sha256:{{ uv_sha256 }}"
+        mode: "0644"
+
+    - name: Install uv and uvx
+      ansible.builtin.unarchive:
+        src: /usr/local/src/uv-{{ uv_version }}.tar.gz
+        dest: /usr/local/bin
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        include: [uv-x86_64-unknown-linux-gnu/uv, uv-x86_64-unknown-linux-gnu/uvx]
+
+    - name: Check uv's version
+      ansible.builtin.command: /usr/local/bin/uv --version
+      register: uv_version_out
+      changed_when: false
+      failed_when: uv_version_out.stdout is not search(uv_version | regex_escape)
+
+# Group-owned, setgid, with a default ACL: whatever one user creates there
+# (environments, caches) the others can change, whatever their umask.
+- name: Shared directories of all users
+  when: inventory_hostname in groups['login']
+  block:
+    - name: Install the ACL tools
+      ansible.builtin.apt:
+        name: acl
+
+    - name: Create the directories
+      ansible.builtin.file:
+        path: "{{ shared_mount }}/{{ item }}"
+        state: directory
+        owner: root
+        group: "{{ cluster_users_group }}"
+        mode: "2775"
+      loop: "{{ shared_group_dirs }}"
+
+    - name: Let the group change what is created there
+      ansible.posix.acl:
+        path: "{{ shared_mount }}/{{ item.0 }}"
+        etype: "{{ item.1.etype }}"
+        entity: "{{ item.1.entity }}"
+        permissions: rwx
+        default: "{{ item.1.default }}"
+        state: present
+      loop: "{{ shared_group_dirs | product([{'etype': 'group', 'entity': cluster_users_group, 'default': true},
+                                            {'etype': 'group', 'entity': cluster_users_group, 'default': false},
+                                            {'etype': 'mask', 'entity': '', 'default': true}]) | list }}"
+      loop_control:
+        label: "{{ item.0 }}: {{ item.1.etype }} {{ item.1.entity }}{{ ' (default)' if item.1.default else '' }}"
+
+- name: Kubernetes service accounts for clients
+  when: scheduler == 'k3s' and inventory_hostname in groups['controller']
+  ansible.builtin.include_tasks: k3s-accounts.yml
+  loop: "{{ k3s_client_accounts }}"
+  loop_control:
+    loop_var: client
