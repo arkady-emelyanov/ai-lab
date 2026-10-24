@@ -26,6 +26,7 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 | Kubernetes (k3s mode) | both trays ready with 4 GPUs, the GFD clique label and topograph's domain label; the four examples as JobSets through Kueue (`examples/kubernetes/submit --wait`) with the same output checks, with KubeRay also `ray-job` as a RayJob; 8 single-GPU pods got 8 different GPUs; `joe` reads nodes and queues but not `kube-system` |
 | Jobs as `joe` (Slurm mode) | `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster` run with `sbatch --wait`; their output contains the fabric line, rank 7, all 8 DDP ranks, 8 Ray tasks |
 | Accounting (Slurm mode) | every job above is `COMPLETED` in `sacct` |
+| REST API and containers (Slurm mode) | slurmrestd answers with `joe`'s token (`scontrol token`), refuses requests without one, and runs a job submitted through it; a container sees exactly its step's GPUs with Pyxis and enroot, Apptainer (`--nv`), `srun --container` and podman with scrun, and one without GPUs has no driver |
 | GPU handover | the Slurm epilog reset the jobs' GPUs (Slurm mode); no GPU needs a reset or other recovery |
 | Shared filesystem | `/pfs` mounted on every cluster node; a file written on the login node reads back everywhere |
 | Object storage | RustFS healthy; from a job (Slurm) or a pod (k3s), `joe` writes and lists his bucket and is denied the JuiceFS bucket |

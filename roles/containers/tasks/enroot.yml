@@ -1,0 +1,109 @@
+# enroot (NVIDIA's unprivileged container runtime, with file capabilities:
+# enroot+caps) and Pyxis, its Slurm plugin: srun --container-image=... runs a
+# job step in a container of a Docker or NGC image.
+- name: Install enroot and what it uses (squashfs images, FUSE)
+  ansible.builtin.apt:
+    deb: /usr/local/src/runtimes/{{ item }}
+  loop:
+    - enroot_{{ enroot_version }}-1_amd64.deb
+    - enroot+caps_{{ enroot_version }}-1_amd64.deb
+
+- name: Install squashfuse and fuse-overlayfs
+  ansible.builtin.apt:
+    name: [squashfuse, fuse-overlayfs]
+
+# Per user, node-local: the runtime directory (no logind session under
+# Slurm, so no /run/user/<uid>), image cache and containers.
+- name: Create enroot's directories
+  ansible.builtin.copy:
+    content: |
+      d /run/enroot 1777 root root -
+      d {{ enroot_dir }} 1777 root root -
+    dest: /etc/tmpfiles.d/enroot.conf
+    mode: "0644"
+  register: enroot_tmpfiles
+
+- name: Create them now
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/enroot.conf
+  when: enroot_tmpfiles is changed
+
+# ENROOT_RESTRICT_DEV: a container gets only the device nodes its hooks
+# bring, so the NVIDIA hook decides which GPUs it has (the fake driver counts
+# the /dev/nvidia<n> it finds; it does not follow Slurm's device cgroup).
+- name: Configure enroot
+  ansible.builtin.copy:
+    content: |
+      ENROOT_RUNTIME_PATH /run/enroot/user-$(id -u)
+      ENROOT_CACHE_PATH {{ enroot_dir }}/cache-$(id -u)
+      ENROOT_DATA_PATH {{ enroot_dir }}/data-$(id -u)
+      ENROOT_RESTRICT_DEV y
+    dest: /etc/enroot/enroot.conf.d/50-lab.conf
+    mode: "0644"
+
+# Pyxis enters the container before Slurm's TaskProlog runs, so the task
+# prolog must be there too.
+- name: Bring Slurm's task prolog into containers
+  ansible.builtin.copy:
+    content: |
+      /etc/slurm/task_prolog.sh /etc/slurm/task_prolog.sh none x-create=file,bind,ro,nosuid,nodev,private,nofail,silent
+    dest: /etc/enroot/mounts.d/50-slurm.fstab
+    mode: "0644"
+
+# NVIDIA's hook (98-nvidia.sh) gives a container the GPUs named by
+# NVIDIA_VISIBLE_DEVICES, from the image (NGC images: all) or the user; this
+# one, before it, names the job step's GPUs, as the device cgroup would
+# limit them on real GPUs (the fake driver does not see the cgroup).
+- name: Install the hook naming the job's GPUs
+  ansible.builtin.copy:
+    content: |
+      #!/bin/bash
+      # The Slurm job step's GPUs for the NVIDIA hook (98-nvidia.sh), which
+      # reads NVIDIA_* from the container's environment file.
+      set -eu
+      [ -n "${SLURM_STEP_GPUS-}" ] || exit 0
+      echo "NVIDIA_VISIBLE_DEVICES=${SLURM_STEP_GPUS}" >> "${ENROOT_ENVIRON}"
+    dest: /etc/enroot/hooks.d/97-slurm-gpus.sh
+    mode: "0755"
+  when: inventory_hostname in groups['workers']
+
+# ---- Pyxis: built against the installed Slurm (SPANK plugins must be) -----------
+
+- name: Install Slurm's development headers
+  ansible.builtin.apt:
+    name: [libslurm-dev, build-essential]
+
+- name: Unpack Pyxis
+  ansible.builtin.unarchive:
+    src: /usr/local/src/runtimes/pyxis-{{ pyxis_version }}.tar.gz
+    dest: /usr/local/src
+    remote_src: true
+    creates: /usr/local/src/pyxis-{{ pyxis_version }}/Makefile
+
+- name: Build and install Pyxis
+  ansible.builtin.shell: make -s && make -s install prefix=/usr/local && touch .lab-installed
+  args:
+    chdir: /usr/local/src/pyxis-{{ pyxis_version }}
+    creates: /usr/local/src/pyxis-{{ pyxis_version }}/.lab-installed
+  notify: Restart slurmd
+
+- name: Create the SPANK plugin directory
+  ansible.builtin.file:
+    path: /etc/slurm/plugstack.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Load Pyxis in srun and slurmstepd
+  ansible.builtin.file:
+    src: /usr/local/share/pyxis/pyxis.conf
+    dest: /etc/slurm/plugstack.conf.d/pyxis.conf
+    state: link
+    force: true
+  notify: Restart slurmd
+
+- name: Read SPANK plugins from the directory
+  ansible.builtin.copy:
+    content: |
+      include /etc/slurm/plugstack.conf.d/*.conf
+    dest: /etc/slurm/plugstack.conf
+    mode: "0644"
+  notify: Restart slurmd

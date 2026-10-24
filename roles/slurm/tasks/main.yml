@@ -8,6 +8,23 @@
     name: slurmd
   when: inventory_hostname in groups['workers']
 
+# JWT as an alternative authentication (scontrol token, slurmrestd): the
+# plugin wherever slurm.conf names it, the signing key only where tokens are
+# made and checked (slurmctld; slurmdbd reads it there too).
+- name: Install the JWT authentication plugin
+  ansible.builtin.apt:
+    name: slurm-wlm-jwt-plugin
+
+- name: Install the JWT signing key
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/.secrets/slurm-jwt.key"
+    dest: "{{ slurm_jwt_key }}"
+    owner: slurm
+    group: slurm
+    mode: "0600"
+  when: inventory_hostname in groups['controller']
+  notify: Restart slurmctld
+
 - name: Write Slurm configuration
   ansible.builtin.template:
     src: "{{ item }}.j2"

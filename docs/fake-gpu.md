@@ -11,7 +11,7 @@ Each GPU tray presents four NVIDIA GB200 GPUs that do not exist. A set of stub N
 | `libcuda.so.1` | CUDA driver | devices, contexts, memory, streams, events, launches; virtual memory management, shareable handles (POSIX fd, fabric) and multicast objects; the undocumented "export tables" `libcudart` requires (ported from [ZLUDA](https://github.com/vosen/ZLUDA), plus one CUDA 13.4 runtimes need) |
 | `libnvidia-ml.so.1` | NVML | identity, PCIe, NVLink (18 links to NVSwitch), fabric cluster UUID and clique, telemetry, processes, events |
 | `libcublas`, `libcublasLt` (`.so.13` and `.so.12`), `libnccl.so.2`, `libcudnn.so.9` | CUDA libraries bundled with frameworks | preloaded through `/etc/ld.so.preload` so they win over the copies in pip wheels |
-| `nvidia-smi` | `nvidia-smi` | Python over NVML: table, `-L`, `-q`, `topo -m`, `nvlink`, `dmon`, `--query-gpu`, `--query-compute-apps`, `-l` |
+| `nvidia-smi` | `nvidia-smi` | C over NVML, loaded at run time as NVIDIA's does: table, `-L`, `-q`, `topo -m`, `nvlink`, `dmon`, `--query-gpu`, `--query-compute-apps`, `-l`, `--version`, the MIG commands |
 | `nvidia-cuda-mps-control` | MPS control daemon | C; the control daemon's socket and commands without MPS servers, for NVIDIA's GPU fractioning ([GPU fractions](#gpu-fractions)) |
 | `numactl` | `numactl` (on the trays) | Python; shows the GB200 NUMA layout (`-H`, `-s`) and pins commands to a Grace node's CPUs (`--cpunodebind`, `--physcpubind`); memory policies are accepted but not applied ([Limitations](#limitations)) |
 | `/dev/nvidia0-3`, `/dev/nvidiactl` | device nodes | character devices (major 195) created by Incus |
@@ -128,6 +128,15 @@ A container given part of a GPU (NVIDIA's GPU fractioning, with [Run:ai](runai.m
 `nvidia-cuda-mps-control` answers NVIDIA's GPU fractioning: in the foreground (`-f`) it listens on `$CUDA_MPS_PIPE_DIRECTORY/control`, logs to `$CUDA_MPS_LOG_DIRECTORY/control.log`, takes commands from clients and stdin, and stops on `quit`. It starts no MPS servers: the fake driver runs every process's work itself. NVML's per-process utilisation (`nvmlDeviceGetProcessUtilization`) splits each GPU's utilisation evenly between its processes, since busy time is kept per GPU.
 
 A GPU's UUID and serial come from the tray's name, so a pod sees the same GPUs as its tray. The PCI identity is a GB200 compute tray's (public `lspci` output from real trays): device `10de:2941`, subsystem `10de:2046`, each GPU in a PCI domain of its own on bus 1, `0008:01:00.0`, `0009:01:00.0` (on Grace 0), `0018:01:00.0`, `0019:01:00.0` (on Grace 1).
+
+### Containers
+
+On a real GPU node, NVIDIA's container toolkit brings the driver into containers. The fake driver has its own versions of the toolkit's two entry points, which bring the fake driver, from the tray's CDI specification (`/etc/cdi/fakegpu.json`, the one Kubernetes pods get): the GPUs' device nodes, the libraries, `nvidia-smi`, `/etc/fakegpu.conf`, the tray's sideband, telemetry and CUDA IPC directories, and the NCCL and fabric directories of the NVLink domain.
+
+- `nvidia-container-cli` (libnvidia-container's CLI): `configure --device=all|<indexes>|<UUIDs> ... <rootfs>` bind-mounts all of that into a container's root filesystem, in the unprivileged user namespaces enroot and Apptainer run in (it calls `mount(2)` itself, as `mount(8)` refuses to run there). The CDI specification's `LD_PRELOAD` becomes the container's `/etc/ld.so.preload`, the tray's own. `info` and `list` print the GPUs and what `configure` mounts. enroot's NVIDIA hook and Apptainer's `--nv` (with `use nvidia-container-cli = yes`) call it unchanged.
+- `nvidia-container-runtime` (CDI mode): an OCI runtime in front of crun that, for `create` and `run`, adds the GPUs the container's `NVIDIA_VISIBLE_DEVICES` names (or the Slurm step's, `SLURM_STEP_GPUS`) to the bundle's `config.json`, then runs crun. Slurm's `oci.conf` runs it ([Slurm: Containers](slurm.md#containers)).
+
+A container gets only the device nodes of the GPUs it is given, and the fake driver counts those: it does not follow device cgroups. The tools are C programs, like NVIDIA's: `nvidia-smi` runs in any image with glibc 2.34 or later (the libraries need 2.33), and `nvidia-container-cli` and `nvidia-container-runtime` run on the tray.
 
 ## Usage
 

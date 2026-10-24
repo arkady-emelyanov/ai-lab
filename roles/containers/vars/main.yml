@@ -1,0 +1,16 @@
+container_packages:
+  - file: enroot_{{ enroot_version }}-1_amd64.deb
+    url: https://github.com/NVIDIA/enroot/releases/download/v{{ enroot_version }}/enroot_{{ enroot_version }}-1_amd64.deb
+    sha256: "{{ enroot_sha256 }}"
+  - file: enroot+caps_{{ enroot_version }}-1_amd64.deb
+    url: https://github.com/NVIDIA/enroot/releases/download/v{{ enroot_version }}/enroot+caps_{{ enroot_version }}-1_amd64.deb
+    sha256: "{{ enroot_caps_sha256 }}"
+  - file: apptainer_{{ apptainer_version }}_amd64.deb
+    url: https://github.com/apptainer/apptainer/releases/download/v{{ apptainer_version }}/apptainer_{{ apptainer_version }}_amd64.deb
+    sha256: "{{ apptainer_sha256 }}"
+  - file: pyxis-{{ pyxis_version }}.tar.gz
+    url: https://github.com/NVIDIA/pyxis/archive/refs/tags/v{{ pyxis_version }}.tar.gz
+    sha256: "{{ pyxis_sha256 }}"
+# Node-local directories for enroot's images and containers: the trays'
+# scratch, elsewhere /var/tmp.
+enroot_dir: "{{ scratch_mount ~ '/enroot' if inventory_hostname in groups['workers'] else '/var/tmp/enroot' }}"

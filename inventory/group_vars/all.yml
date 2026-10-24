@@ -199,6 +199,35 @@ slurm_accounts:
 slurmdbd_db: slurm_acct_db
 # Must stay below the instance memory limit (MiB).
 slurm_node_memory_mb: 7500
+# REST API (slurmrestd on the controller) with JWT authentication: users get
+# a token with `scontrol token`; slurmctld and slurmdbd also accept JWT. The
+# key is .secrets/slurm-jwt.key.
+slurmrestd_port: 6820
+slurm_jwt_key: /etc/slurm/jwt_hs256.key
+# Lifetime of the SlurmUser token make configure writes to .secrets/slurm-jwt
+# for clients on the host (it acts for any user). Rotate it: delete the file
+# and make configure; invalidate every token: delete .secrets/slurm-jwt.key
+# too.
+slurm_service_token_days: 365
+# Container runtimes on the login node and the trays (Slurm mode): Pyxis
+# with enroot (srun --container-image), Apptainer, Slurm's own OCI support
+# (srun --container with an OCI bundle, run by crun) and scrun, Slurm's OCI
+# runtime for podman on the login node. GPUs reach containers through the
+# fake driver's nvidia-container-cli and nvidia-container-runtime, as NVIDIA's
+# container toolkit brings the real driver. See docs/slurm.md#containers.
+enroot_version: 4.2.1
+enroot_sha256: 5955c51e88df0c5ed538d87abb5264609d4bad55fa8570745ed5d4ec66c8ab91
+enroot_caps_sha256: ca22652dcbdd3ebb6e2c68df781ef4301647c79dd7a41ed62899c2fd0f692750
+pyxis_version: 0.24.0
+pyxis_sha256: 9c4cdb79a67301d8ea05951aa4d2c205f40cf6145e338214b0191add8b36d6c4
+apptainer_version: 1.5.5
+apptainer_sha256: 25095d3711504b3e8657dbb2e172ef8db9db43c4503d940c9c36b105db8dce77
+# Container registry for images from Docker Hub: Google's public Docker Hub
+# cache (anonymous Docker Hub pulls are rate-limited), as for k3s.
+container_registry: mirror.gcr.io
+# Image for the tests and the examples: a plain one; the fake driver's
+# nvidia-smi needs nothing from it but glibc 2.34 or later.
+container_test_image: library/ubuntu:24.04
 # GPU handover after every job (Slurm Epilog): reset the job's GPUs, which
 # clears their memory and state and applies a pending NVLink partition change,
 # then drain the node if a GPU is still busy or needs recovery.

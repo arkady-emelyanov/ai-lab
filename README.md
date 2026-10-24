@@ -12,7 +12,7 @@ The [documentation](docs/README.md) covers every component, with the commands in
 
 ## Use cases
 
-- **Cluster software and self-service:** develop job portals, scheduler plugins, quota and accounting tools, or user-facing CLIs against a real Slurm or Kubernetes, LDAP and S3 stack with GPU nodes.
+- **Cluster software and self-service:** develop job portals, scheduler plugins, quota and accounting tools, or user-facing CLIs against a real Slurm (with its REST API) or Kubernetes, LDAP and S3 stack with GPU nodes, and containerised jobs with Pyxis and enroot, Apptainer, Slurm's OCI support or podman with scrun.
 - **Monitoring and operations:** build dashboards, alerts and runbooks on live GPU, scheduler and NVLink fabric metrics; rehearse node power cycles, NVLink failures and partition changes through Redfish and the partition controller.
 - **Hardware management tooling:** test Redfish clients, BMC automation and topology-aware scheduling (topograph with Slurm `topology/block` or Kueue node labels) without a rack.
 - **AI pipelines:** run PyTorch DDP and Ray jobs end to end on 8 GPUs with modelled timing and memory accounting, to test orchestration, data movement and failure handling rather than numerics.

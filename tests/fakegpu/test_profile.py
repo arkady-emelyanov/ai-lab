@@ -15,8 +15,7 @@ def smi(tmp_path, *args, **profile):
     env = dict(os.environ, LD_LIBRARY_PATH=str(FAKEGPU), FAKEGPU_CONF=str(tmp_path / "none.conf"), FAKEGPU_COUNT="1",
                FAKEGPU_DEV_DIR=str(tmp_path / "dev"), FAKEGPU_STATE_PATH=str(tmp_path / "occ"),
                **{f"FAKEGPU_{k.upper()}": str(v) for k, v in profile.items()})
-    code = f"import runpy, sys; sys.argv = ['nvidia-smi', *{list(args)!r}]; runpy.run_path({str(SMI)!r}, run_name='__main__')"
-    return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout
+    return subprocess.run([str(SMI), *args], env=env, capture_output=True, text=True, check=True).stdout
 
 
 def test_default_profile(tmp_path):

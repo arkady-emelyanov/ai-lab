@@ -4,6 +4,9 @@ SlurmctldHost={{ groups['controller'][0] }}
 
 AuthType=auth/munge
 CredType=cred/munge
+# JSON Web Tokens too: `scontrol token`, the REST API (slurmrestd).
+AuthAltTypes=auth/jwt
+AuthAltParameters=jwt_key={{ slurm_jwt_key }}
 SlurmUser=slurm
 SlurmctldPidFile=/run/slurmctld.pid
 SlurmdPidFile=/run/slurmd.pid
@@ -54,5 +57,7 @@ TopologyPlugin=topology/block
 # Node-local scratch; jobs can request space with --tmp.
 TmpFS={{ scratch_mount }}
 
-NodeName={{ groups['workers'] | join(',') }} Sockets=1 CoresPerSocket={{ instance_limits.workers.cpu }} ThreadsPerCore=1 RealMemory={{ slurm_node_memory_mb }} TmpDisk={{ scratch_size_gib * 1024 }} Gres=gpu:{{ fakegpu_type }}:{{ fakegpu_count }} State=UNKNOWN
+# Features: the container runtimes every tray has (docs/slurm.md#containers),
+# for --constraint and for clients reading nodes from the REST API.
+NodeName={{ groups['workers'] | join(',') }} Features=pyxis,enroot,apptainer,oci Sockets=1 CoresPerSocket={{ instance_limits.workers.cpu }} ThreadsPerCore=1 RealMemory={{ slurm_node_memory_mb }} TmpDisk={{ scratch_size_gib * 1024 }} Gres=gpu:{{ fakegpu_type }}:{{ fakegpu_count }} State=UNKNOWN
 PartitionName={{ slurm_partition }} Nodes=ALL Default=YES MaxTime=INFINITE State=UP

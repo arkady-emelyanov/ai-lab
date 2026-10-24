@@ -1,6 +1,6 @@
 # Examples
 
-Four jobs for each scheduler, plus Kubernetes-only ones (a KubeRay `RayJob`, IMEX memory sharing, inference servers); use the folder that matches `scheduler` in `local.yml`.
+Four jobs for each scheduler, plus Kubernetes-only ones (a KubeRay `RayJob`, IMEX memory sharing, inference servers) and a Slurm-only one (container runtimes); use the folder that matches `scheduler` in `local.yml`.
 
 | Job | Slurm (`slurm/`) | Kubernetes (`kubernetes/`) | What it does |
 |---|---|---|---|
@@ -8,6 +8,7 @@ Four jobs for each scheduler, plus Kubernetes-only ones (a KubeRay `RayJob`, IME
 | NVL8 hello | `nvl8-hello.sbatch` | `nvl8-hello.yaml` | 8 tasks or pods × 1 GPU across the NVLink domain; each reports its tray, GPU UUID and clique |
 | DDP training | `ddp-train.sbatch` | `ddp-train.yaml` | PyTorch DDP over NCCL, 2 trays × 4 GPUs with `torchrun`; runs `ddp_train.py` |
 | Ray cluster | `ray-cluster.sbatch` | `ray-cluster.yaml` | Ray head and worker, one GPU task per GPU; runs `ray_demo.py` |
+| Containers | `containers.sbatch` | – | the same step with the job's 2 GPUs in Pyxis and enroot, Apptainer and Slurm's OCI support (an OCI bundle); `podman run` with scrun from the login node ([Slurm: Containers](../docs/slurm.md#containers)) |
 | IMEX memory sharing | – | `imex-share.yaml` | a ComputeDomain and a pod per tray: GPU memory exported as a fabric handle on one tray, read on the other; runs `imex_share.py`; needs `nvidia_dra` ([ComputeDomains](../docs/compute-domains.md)) |
 | Ray job (KubeRay) | – | `ray-job.yaml` | the same as a KubeRay `RayJob`: KubeRay starts the Ray cluster, submits `ray_demo.py` and deletes the cluster when it ends; shows in the KubeRay dashboard ([KubeRay](../docs/kuberay.md)) |
 

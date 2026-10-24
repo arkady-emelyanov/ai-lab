@@ -95,6 +95,105 @@
           changed_when: false
           failed_when: sacct.stdout_lines | reject('search', 'COMPLETED') | list | length > 0
 
+# The REST API with a user's token, and every container runtime with the
+# GPUs of its job step (Slurm mode).
+- name: Slurm REST API and container runtimes
+  hosts: login
+  vars:
+    user: "{{ cluster_users[0].name }}"
+    home: "{{ shared_mount }}/home/{{ cluster_users[0].name }}"
+    rest: http://{{ groups['controller'][0] }}:{{ slurmrestd_port }}
+    image: "{{ container_registry }}/{{ container_test_image }}"
+    # As joe, in a login shell; GPU lines nvidia-smi -L prints.
+    as_user: su - {{ cluster_users[0].name }} -c
+  tasks:
+    - name: Slurm
+      when: scheduler == 'slurm'
+      block:
+        - name: A user's token (scontrol token)
+          ansible.builtin.command: "{{ as_user }} 'scontrol token lifespan=600'"
+          register: token
+          changed_when: false
+          no_log: true
+
+        - name: The REST API answers with the token
+          ansible.builtin.uri:
+            url: "{{ rest }}/slurm/v0.0.40/ping"
+            headers: {X-SLURM-USER-NAME: "{{ user }}", X-SLURM-USER-TOKEN: "{{ token.stdout.split('=', 1)[1] }}"}
+          register: ping
+          failed_when: ping.json.pings | selectattr('pinged', 'equalto', 'UP') | list | length == 0
+
+        - name: and refuses requests without one
+          ansible.builtin.uri:
+            url: "{{ rest }}/slurm/v0.0.40/ping"
+            status_code: 401
+
+        - name: A job submitted through the REST API runs
+          ansible.builtin.uri:
+            url: "{{ rest }}/slurm/v0.0.40/job/submit"
+            method: POST
+            headers: {X-SLURM-USER-NAME: "{{ user }}", X-SLURM-USER-TOKEN: "{{ token.stdout.split('=', 1)[1] }}"}
+            body_format: json
+            body:
+              script: "#!/bin/bash\nnvidia-smi --query-gpu=fabric.clusterUuid --format=csv,noheader | head -1"
+              job:
+                name: rest-test
+                current_working_directory: "{{ home }}"
+                environment: [PATH=/usr/local/bin:/usr/bin:/bin]
+                tres_per_node: gres/gpu:1
+                standard_output: "{{ home }}/.rest-test-%j.out"
+          register: submitted
+          failed_when: submitted.json.errors | length > 0 or submitted.json.job_id is not defined
+
+        - name: Its output
+          ansible.builtin.command: cat {{ home }}/.rest-test-{{ submitted.json.job_id }}.out
+          register: rest_out
+          until: rest_out.rc == 0 and nvl_cluster_uuid in rest_out.stdout
+          retries: 20
+          delay: 3
+          changed_when: false
+
+        - name: Remove it
+          ansible.builtin.file:
+            path: "{{ home }}/.rest-test-{{ submitted.json.job_id }}.out"
+            state: absent
+
+        # Each runtime gives the container its step's GPUs, and only those.
+        - name: Containers see their job step's GPUs
+          ansible.builtin.command: "{{ as_user }} {{ item.cmd | quote }}"
+          loop:
+            - name: Pyxis and enroot (srun --container-image)
+              gpus: 2
+              cmd: >-
+                srun --gpus-per-node=2 --container-image={{ image | replace('/', '#', 1) }} sh -c 'nvidia-smi -L'
+            - name: Apptainer (--nv)
+              gpus: 1
+              cmd: >-
+                srun --gpus-per-node=1 apptainer exec --nv docker://{{ image }} sh -c 'nvidia-smi -L; whoami'
+            - name: Slurm's OCI support (srun --container)
+              gpus: 2
+              cmd: >-
+                b={{ home }}/.cache/lab-test/oci/{{ image | regex_replace("[/:]", "_") }}; [ -d $b/bundle ] || { mkdir -p $b && skopeo copy -q docker://{{ image }} oci:$b/image:test
+                && umoci unpack --rootless --image $b/image:test $b/bundle >/dev/null; } &&
+                srun --gpus-per-node=2 --container=$b/bundle sh -c 'nvidia-smi -L'
+            - name: podman with scrun
+              gpus: 1
+              cmd: SCRUN_GPUS_PER_NODE=1 podman run --rm {{ image }} sh -c 'nvidia-smi -L'
+          loop_control:
+            label: "{{ item.name }}"
+          register: containers
+          changed_when: false
+          failed_when: >-
+            containers.rc != 0 or containers.stdout_lines | select('match', '^GPU [0-9]+: ') | list | length != item.gpus
+            or ('Apptainer' in item.name and containers.stdout_lines[-1] != user)
+
+        - name: A container without GPUs has no driver (Pyxis)
+          ansible.builtin.command: >-
+            {{ as_user }} "srun --container-image={{ image | replace('/', '#', 1) }} sh -c 'command -v nvidia-smi || echo none'"
+          register: no_gpus
+          changed_when: false
+          failed_when: no_gpus.stdout_lines[-1] != 'none'
+
 - name: Kubernetes jobs as a cluster user
   hosts: login
   vars:

@@ -19,7 +19,7 @@ def run(tmp_path, code, **versions):
     return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout
 
 
-SMI = f"import runpy, sys; sys.argv = ['nvidia-smi', '-q']; runpy.run_path({str(FAKEGPU / 'nvidia-smi')!r}, run_name='__main__')"
+SMI = f"import subprocess; subprocess.run([{str(FAKEGPU / 'nvidia-smi')!r}, '-q'], check=True)"
 APIS = f"""
 import ctypes
 cu = ctypes.CDLL({str(FAKEGPU / 'libcuda.so.1')!r}); nvml = ctypes.CDLL({str(FAKEGPU / 'libnvidia-ml.so.1')!r})

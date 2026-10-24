@@ -1,0 +1,72 @@
+# podman on the login node with scrun as its OCI runtime: `podman run` runs
+# the container as a Slurm job on a tray (SCRUN_* variables set the job's
+# options, e.g. SCRUN_GPUS_PER_NODE). Rootless podman with storage in the
+# user's home on /shared (vfs, plain directories), which the trays reach, so
+# scrun needs not copy images.
+- name: Install podman and scrun's JSON library
+  ansible.builtin.apt:
+    name: [podman, uidmap, lua-dkjson]
+
+# Subordinate ids for rootless podman (an image's own users), one range per
+# directory user, out of the Incus container's id range.
+- name: Give directory users subordinate ids
+  ansible.builtin.lineinfile:
+    path: "{{ item.1 }}"
+    regexp: "^{{ item.0.name }}:"
+    line: "{{ item.0.name }}:{{ 200000 + item.0.uid * 65536 }}:65536"
+    create: true
+    mode: "0644"
+  loop: "{{ cluster_users | product(['/etc/subuid', '/etc/subgid']) | list }}"
+  loop_control:
+    label: "{{ item.0.name }}: {{ item.1 }}"
+
+- name: Create podman's configuration directory
+  ansible.builtin.file:
+    path: /etc/containers
+    state: directory
+    mode: "0755"
+
+# As Slurm's containers guide sets podman up for scrun: the host's
+# namespaces (Slurm places the job), scrun as the runtime, no cgroups of
+# podman's own.
+- name: Make scrun podman's runtime
+  ansible.builtin.copy:
+    content: |
+      # podman runs containers as Slurm jobs through scrun (docs/slurm.md#containers).
+      [containers]
+      apparmor_profile = "unconfined"
+      cgroupns = "host"
+      cgroups = "enabled"
+      default_sysctls = []
+      label = false
+      netns = "host"
+      no_hosts = true
+      pidns = "host"
+      utsns = "host"
+      userns = "host"
+      log_driver = "journald"
+
+      [engine]
+      runtime = "slurm"
+      runtime_supports_nocgroups = [ "slurm" ]
+      runtime_supports_json = [ "slurm" ]
+      remote = false
+
+      [engine.runtimes]
+      slurm = [ "/usr/bin/scrun" ]
+    dest: /etc/containers/containers.conf
+    mode: "0644"
+
+- name: Keep images as plain directories (the trays read them on /shared)
+  ansible.builtin.copy:
+    content: |
+      [storage]
+      driver = "vfs"
+    dest: /etc/containers/storage.conf
+    mode: "0644"
+
+- name: Install scrun's staging script
+  ansible.builtin.copy:
+    src: scrun.lua
+    dest: /etc/slurm/scrun.lua
+    mode: "0644"

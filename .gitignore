@@ -15,4 +15,6 @@ __pycache__/
 /endpoints.md
 fakegpu/nvidia-imex
 fakegpu/nvidia-imex-ctl
-fakegpu/smi-version
+fakegpu/nvidia-smi
+fakegpu/nvidia-container-cli
+fakegpu/nvidia-container-runtime

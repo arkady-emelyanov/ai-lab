@@ -13,6 +13,7 @@ Written by `make configure` for this machine's lab ({{ ansible_managed }}); not 
 | Prometheus | http://{{ ip(ctrl) }}:9090 | none |
 {% endif %}
 {% if scheduler == 'slurm' %}
+| Slurm REST API (slurmrestd) | http://{{ ip(ctrl) }}:{{ slurmrestd_port }}/slurm/v0.0.40/, /slurmdb/v0.0.40/ | JWT: `X-SLURM-USER-NAME`, `X-SLURM-USER-TOKEN` from `scontrol token` on the login node |
 {% if monitoring | bool %}
 | Slurm exporter | http://{{ ip(ctrl) }}:{{ slurm_exporter_port }}/metrics | none |
 {% endif %}

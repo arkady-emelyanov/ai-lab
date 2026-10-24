@@ -56,6 +56,22 @@
         tasks_from: "{{ 'main' if slurm_accounting | bool else 'absent' }}"
       when: scheduler == 'slurm'
 
+- name: Slurm REST API (slurmrestd, JWT)
+  hosts: controller
+  tasks:
+    - name: slurmrestd
+      ansible.builtin.include_role:
+        name: slurmrestd
+      when: scheduler == 'slurm'
+
+- name: Container runtimes for Slurm jobs (Pyxis and enroot, Apptainer, OCI, scrun)
+  hosts: login:workers
+  tasks:
+    - name: Container runtimes
+      ansible.builtin.include_role:
+        name: containers
+      when: scheduler == 'slurm'
+
 - name: Kubernetes control plane (k3s server)
   hosts: controller
   tasks:

@@ -2,9 +2,9 @@
 #   driver:     libcuda.so.1, libnvidia-ml.so.1
 #   CUDA libs:  libcublas, libcublasLt (CUDA 13 and 12 SONAMEs), libnccl.so.2,
 #               libcudnn.so.9
-#   tools:      nvidia-cuda-mps-control; for the DRA driver's driver root
-#               (roles/fakegpu) nvidia-imex, nvidia-imex-ctl and an nvidia-smi
-#               for --version
+#   tools:      nvidia-smi; nvidia-container-cli and nvidia-container-runtime
+#               (containers on the tray); nvidia-cuda-mps-control; for the DRA driver's
+#               driver root (roles/fakegpu) nvidia-imex and nvidia-imex-ctl
 #
 # symbols/*.syms list every function the real libraries export. Each gets
 # a weak "return 0" (= success) definition placed in section fg_weak; the
@@ -26,11 +26,11 @@ LIBS = $(DRIVER_LIBS) $(PRELOAD_LIBS)
 
 CU12 = -DCUBLAS_VER_MAJOR=12 -DCUBLAS_VER_MINOR=9 -DCUBLAS_VER_PATCH=1 -DCUDART_VERSION=12090
 
-TOOLS = nvidia-cuda-mps-control nvidia-imex nvidia-imex-ctl smi-version
+TOOLS = nvidia-smi nvidia-container-cli nvidia-container-runtime nvidia-cuda-mps-control nvidia-imex nvidia-imex-ctl
 
 all: $(LIBS) $(TOOLS)
 
-$(LIBS) nvidia-cuda-mps-control smi-version: glibc_compat.h
+$(LIBS) nvidia-smi nvidia-container-cli nvidia-container-runtime nvidia-cuda-mps-control: glibc_compat.h
 
 build/%_weak.c: symbols/%.syms
 	@mkdir -p build
@@ -69,8 +69,18 @@ nvidia-imex: imex.c
 nvidia-imex-ctl: imex.c
 	$(CC) -O2 -Wall -Wextra -static -DIMEX_CTL -o $@ $<
 
-# nvidia-smi --version for the driver root (smi_version.c).
-smi-version: smi_version.c
+# nvidia-smi (smi.c): loads libnvidia-ml.so.1 at run time, as NVIDIA's does;
+# glibc_compat.h keeps it running on older glibc, so in containers too.
+nvidia-smi: smi.c
+	$(CC) $(CFLAGS) -o $@ $< -ldl -lm
+
+# The NVIDIA container toolkit's entry points for container runtimes on the
+# tray (container_cli.c, container_runtime.c, json.h): the fake driver from
+# the tray's CDI specification.
+nvidia-container-cli: container_cli.c json.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+nvidia-container-runtime: container_runtime.c json.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 libcudnn.so.9: cudnn_stub.c build/cudnn_weak.c stub_common.h fakegpu.h
@@ -88,8 +98,10 @@ install: $(LIBS) $(TOOLS)
 	install -D -m 0755 nvidia-smi $(DESTDIR)$(PREFIX)/bin/nvidia-smi
 	install -D -m 0755 numactl $(DESTDIR)$(PREFIX)/bin/numactl
 	install -D -m 0755 nvidia-cuda-mps-control $(DESTDIR)$(PREFIX)/bin/nvidia-cuda-mps-control
+	install -D -m 0755 nvidia-container-cli $(DESTDIR)$(PREFIX)/bin/nvidia-container-cli
+	install -D -m 0755 nvidia-container-runtime $(DESTDIR)$(PREFIX)/bin/nvidia-container-runtime
 	install -m 0755 nvidia-imex nvidia-imex-ctl $(DESTDIR)$(LIBDIR)/driver-tools/
-	install -m 0755 smi-version $(DESTDIR)$(LIBDIR)/driver-tools/nvidia-smi
+	install -m 0755 nvidia-smi $(DESTDIR)$(LIBDIR)/driver-tools/nvidia-smi
 
 clean:
 	rm -rf build $(LIBS) $(TOOLS)

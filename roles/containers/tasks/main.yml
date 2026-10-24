@@ -1,0 +1,48 @@
+# Container runtimes for Slurm jobs (scheduler: slurm), on the login node and
+# the GPU trays, as on an NVIDIA GPU cluster: Pyxis with enroot, Apptainer,
+# Slurm's own OCI support (srun --container, crun) and scrun for podman.
+# GPUs reach containers through the fake driver's nvidia-container-cli
+# (enroot's NVIDIA hook, Apptainer's --nv) and nvidia-container-runtime
+# (crun), both from the tray's CDI specification. See docs/slurm.md#containers.
+
+# The packages from upstream releases, fetched once into the checkout's
+# .cache and checked.
+- name: Fetch the runtimes' packages
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ repo_root }}/.cache/runtimes/{{ item.file }}"
+    checksum: "sha256:{{ item.sha256 }}"
+    mode: "0644"
+  loop: "{{ container_packages }}"
+  loop_control:
+    label: "{{ item.file }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: Create the source directory
+  ansible.builtin.file:
+    path: /usr/local/src/runtimes
+    state: directory
+    mode: "0755"
+
+- name: Copy the packages
+  ansible.builtin.copy:
+    src: "{{ repo_root }}/.cache/runtimes/{{ item.file }}"
+    dest: /usr/local/src/runtimes/{{ item.file }}
+    mode: "0644"
+  loop: "{{ container_packages }}"
+  loop_control:
+    label: "{{ item.file }}"
+
+- name: enroot and Pyxis
+  ansible.builtin.include_tasks: enroot.yml
+
+- name: Apptainer
+  ansible.builtin.include_tasks: apptainer.yml
+
+- name: Slurm's OCI support (srun --container, scrun)
+  ansible.builtin.include_tasks: oci.yml
+
+- name: podman with scrun (login node)
+  ansible.builtin.include_tasks: podman.yml
+  when: inventory_hostname in groups['login']

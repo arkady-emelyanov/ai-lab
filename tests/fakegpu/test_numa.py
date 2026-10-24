@@ -18,8 +18,8 @@ def smi(tmp_path, *args, **conf):
     env = dict(os.environ, LD_LIBRARY_PATH=str(FAKEGPU), FAKEGPU_CONF=str(tmp_path / "none.conf"), FAKEGPU_COUNT="4",
                FAKEGPU_DEV_DIR=str(tmp_path / "dev"), FAKEGPU_STATE_PATH=str(tmp_path / "occ"),
                **{f"FAKEGPU_{k.upper()}": str(v) for k, v in conf.items()})
-    code = f"import runpy, sys; sys.argv = ['nvidia-smi', *{list(args)!r}]; runpy.run_path({str(FAKEGPU / 'nvidia-smi')!r}, run_name='__main__')"
-    return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True).stdout
+    return subprocess.run([str(FAKEGPU / "nvidia-smi"), *args], env=env, capture_output=True, text=True,
+                          check=True).stdout
 
 
 def columns(out):

@@ -17,7 +17,8 @@ def run(tmp_path, *args):
         (tmp_path / "dev" / f"nvidia{i}").touch()
     env = dict(os.environ, LD_LIBRARY_PATH=str(FAKEGPU), FAKEGPU_CONF=str(tmp_path / "none.conf"), FAKEGPU_COUNT="4",
                FAKEGPU_DEV_DIR=str(tmp_path / "dev"), FAKEGPU_STATE_PATH=str(tmp_path / "occ"))
-    return subprocess.run([sys.executable, *args], env=env, capture_output=True, text=True, check=True).stdout
+    cmd = list(args) if args[0].endswith("nvidia-smi") else [sys.executable, *args]
+    return subprocess.run(cmd, env=env, capture_output=True, text=True, check=True).stdout
 
 
 APIS = f"""

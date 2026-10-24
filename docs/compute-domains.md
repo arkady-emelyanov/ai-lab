@@ -30,7 +30,7 @@ On a lab built before IMEX channels existed, the trays lack the IMEX device node
 The DRA driver expects a host's NVIDIA driver at its driver root. The lab gives it one of its own, so that a real driver on the lab's host does not show through: `fakegpu_driver_root` on each tray (roles/fakegpu) has
 
 - the fake `libnvidia-ml` and `libcuda` under the driver version's names (`lib*.so.<fakegpu_driver_version>`, with `.so.1` links): the DRA driver loads NVML from there, and its CDI specifications name the libraries by version;
-- `nvidia-smi`, a small native one for `--version` (the DRA driver checks a driver root with it, in its distroless image);
+- `nvidia-smi`, the fake driver's own (the DRA driver checks a driver root with `nvidia-smi --version`, in its distroless image);
 - `nvidia-imex` and `nvidia-imex-ctl` (below);
 - `proc/devices` and `proc/driver/nvidia/capabilities/fabric-imex-mgmt`, in place of the host's: the device numbers of the IMEX device nodes (`fakegpu_caps_major`, `fakegpu_imex_channels_major`) and the minor of the IMEX management capability (`altProcDevices` in the chart);
 - the tray's GPU state (`/var/lib/fakegpu`, bind-mounted), which the fake NVML there reads for each GPU's NVLink clique (`FAKEGPU_*` variables in the plugin's container).
@@ -94,4 +94,4 @@ For your own workloads: add a ComputeDomain with `channel.resourceClaimTemplate.
 ## References
 
 - [NVIDIA DRA driver for GPUs](https://github.com/kubernetes-sigs/dra-driver-nvidia-gpu), [IMEX guide](https://docs.nvidia.com/multi-node-nvlink-systems/imex-guide/), [Kubernetes DRA](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/), [Kueue: DRA](https://kueue.sigs.k8s.io/docs/concepts/dynamic_resource_allocation/)
-- Sources: `fakegpu/imex.c`, `fakegpu/smi_version.c`, `fakegpu/vmm.c` (channel rule), `roles/fakegpu` (driver root), `roles/k3s/templates/addons.yaml.j2` (chart, Kueue mapping), `examples/kubernetes/imex-share.yaml`, `examples/imex_share.py`
+- Sources: `fakegpu/imex.c`, `fakegpu/smi.c` (`nvidia-smi`, also in the driver root), `fakegpu/vmm.c` (channel rule), `roles/fakegpu` (driver root), `roles/k3s/templates/addons.yaml.j2` (chart, Kueue mapping), `examples/kubernetes/imex-share.yaml`, `examples/imex_share.py`

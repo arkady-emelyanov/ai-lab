@@ -106,7 +106,7 @@ class Tray:
     def smi(self, *args, root=True, check=True, env=None):
         """nvidia-smi on the tray, as root of a user namespace (MIG changes,
         nvidia-smi -r as mig-parted calls it) unless root=False."""
-        cmd = [sys.executable, str(FAKEGPU / "nvidia-smi"), *args]
+        cmd = [str(FAKEGPU / "nvidia-smi"), *args]
         if root:
             cmd = ["unshare", "-Ur", *cmd]
         p = subprocess.run(cmd, env=dict(self.env, **(env or {})), capture_output=True, text=True, timeout=60)

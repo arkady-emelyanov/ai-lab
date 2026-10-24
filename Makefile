@@ -34,7 +34,7 @@ RUN      = $(INCUS_SG) '$(ANSIBLE) $$(test -f $(LOCAL) && echo --extra-vars=@$(L
 
 .PHONY: init proto check up provision configure frameworks test test-fakegpu test-fakedp test-bmc test-bmc-disruptive test-bmc-conformance stop start down purge shell shell-root shell-%
 
-init: $(LOCAL) $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/runai-admin.pass $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
+init: $(LOCAL) $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurm-jwt.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/runai-admin.pass $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
 	@chmod -R go-rwx $(SECRETS)
 
 # Local settings, not in git: created once, never overwritten.
@@ -71,6 +71,12 @@ proto:
 $(SECRETS)/munge.key:
 	mkdir -p -m 0700 $(SECRETS)
 	dd if=/dev/urandom of=$@ bs=1024 count=1 status=none
+	chmod 0600 $@
+
+# Slurm's JWT signing key (HS256): slurmctld, slurmdbd, slurmrestd.
+$(SECRETS)/slurm-jwt.key:
+	mkdir -p -m 0700 $(SECRETS)
+	dd if=/dev/urandom of=$@ bs=32 count=1 status=none
 	chmod 0600 $@
 
 $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token:

@@ -40,6 +40,17 @@ sbatch ddp-train.sbatch --steps 20000               # PyTorch DDP on 8 GPUs (nee
 squeue; sacct -X -o JobID,JobName,AllocTRES%40,State
 ```
 
+Containers in Slurm jobs (each container sees its step's GPUs; `nvidia-smi` needs glibc 2.34 or later in the image; details in `docs/slurm.md`, Containers):
+
+```
+srun --gpus-per-node=2 --container-image=mirror.gcr.io#library/ubuntu:24.04 nvidia-smi -L     # Pyxis + enroot
+srun --gpus-per-node=1 apptainer exec --nv docker://mirror.gcr.io/library/ubuntu:24.04 nvidia-smi -L
+srun --gpus-per-node=2 --container=<OCI bundle> sh -c 'nvidia-smi -L'                             # bundle: skopeo copy + umoci unpack --rootless
+SCRUN_GPUS_PER_NODE=1 podman run --rm mirror.gcr.io/library/ubuntu:24.04 nvidia-smi -L         # podman with scrun: runs as a Slurm job
+```
+
+REST API (Slurm mode): `export $(scontrol token)` on the login node, then `curl -H "X-SLURM-USER-NAME: $USER" -H "X-SLURM-USER-TOKEN: $SLURM_JWT" http://sched-control:6820/slurm/v0.0.40/jobs`.
+
 Kubernetes (k3s mode, on `bin/ssh login`; jobs are JobSets queued in Kueue):
 
 ```

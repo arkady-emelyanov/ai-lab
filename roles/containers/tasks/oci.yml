@@ -1,0 +1,90 @@
+# Slurm's own OCI support: srun --container=<OCI bundle> (and scrun) runs the
+# step in the bundle with crun, rootless, through the fake driver's
+# nvidia-container-runtime, which adds the step's GPUs to the bundle (the
+# tray's CDI specification), as NVIDIA's runtime does in front of runc.
+# skopeo and umoci make OCI bundles from images (skopeo copy, umoci unpack
+# --rootless), on the login node or in a job.
+- name: Install crun, skopeo and umoci
+  ansible.builtin.apt:
+    name: [crun, skopeo, umoci]
+
+# crun's state, per user (no logind session under Slurm, no /run/user/<uid>).
+- name: Create crun's state directory
+  ansible.builtin.copy:
+    content: |
+      d /run/crun 1777 root root -
+    dest: /etc/tmpfiles.d/crun.conf
+    mode: "0644"
+  register: crun_tmpfiles
+
+- name: Create it now
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/crun.conf
+  when: crun_tmpfiles is changed
+
+- name: Configure Slurm's OCI runtime
+  ansible.builtin.copy:
+    content: |
+      # srun --container and scrun: crun, rootless, behind the fake driver's
+      # nvidia-container-runtime (the step's GPUs). %n node, %u user, %j job,
+      # %s step, %t task, %U uid, %b bundle.
+      RunTimeQuery="{{ runtime }} --rootless=true --root=/run/crun/%U state %n.%u.%j.%s.%t"
+      RunTimeKill="{{ runtime }} --rootless=true --root=/run/crun/%U kill -a %n.%u.%j.%s.%t"
+      RunTimeDelete="{{ runtime }} --rootless=true --root=/run/crun/%U delete --force %n.%u.%j.%s.%t"
+      RunTimeRun="{{ runtime }} --rootless=true --root=/run/crun/%U run --bundle %b %n.%u.%j.%s.%t"
+    dest: /etc/slurm/oci.conf
+    mode: "0644"
+  vars:
+    runtime: "{{ fakegpu_prefix }}/bin/nvidia-container-runtime"
+  notify: Restart slurmd
+
+# Containers get the limits of the step that runs them; podman on the login
+# node asks for the login node's (1048576 open files), above slurmd's
+# default there.
+- name: Raise slurmd's open file limit
+  when: inventory_hostname in groups['workers']
+  block:
+    - name: Create slurmd's drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/slurmd.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Set the limit
+      ansible.builtin.copy:
+        content: |
+          [Service]
+          LimitNOFILE=1048576
+        dest: /etc/systemd/system/slurmd.service.d/limits.conf
+        mode: "0644"
+      notify: Restart slurmd
+
+# The fake driver's CDI specification, as the k3s mode writes it for
+# containerd: what nvidia-container-cli and nvidia-container-runtime bring.
+- name: Describe the GPUs to container runtimes (CDI)
+  when: inventory_hostname in groups['workers']
+  block:
+    - name: Read the GPUs
+      ansible.builtin.command: nvidia-smi --query-gpu=index,uuid --format=csv,noheader
+      register: gpus
+      changed_when: false
+
+    - name: Read the preload list
+      ansible.builtin.slurp:
+        src: "{{ fakegpu_prefix }}/lib/fakegpu/preload.list"
+      register: preload_list
+
+    - name: Create the CDI directory
+      ansible.builtin.file:
+        path: /etc/cdi
+        state: directory
+        mode: "0755"
+
+    - name: Write the CDI specification
+      ansible.builtin.template:
+        src: "{{ repo_root }}/roles/k3s/templates/fakegpu-cdi.json.j2"
+        dest: /etc/cdi/fakegpu.json
+        mode: "0644"
+      vars:
+        gpu_list: "{{ gpus.stdout_lines | map('split', ', ') | list }}"
+        preload: "{{ preload_list.content | b64decode | split | join(':') }}"
+        cdi_kind: nvidia.com/gpu

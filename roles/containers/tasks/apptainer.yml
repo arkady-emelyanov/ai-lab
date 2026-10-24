@@ -1,0 +1,43 @@
+# Apptainer, unprivileged (user namespaces, FUSE mounts of SIF images).
+- name: Install Apptainer
+  ansible.builtin.apt:
+    deb: /usr/local/src/runtimes/apptainer_{{ apptainer_version }}_amd64.deb
+
+# --nv through nvidia-container-cli, as NVIDIA recommends: the fake driver's
+# brings the fake driver, from the tray's CDI specification.
+- name: Bring GPUs into containers with nvidia-container-cli (--nv)
+  ansible.builtin.lineinfile:
+    path: /etc/apptainer/apptainer.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^#?\s*use nvidia-container-cli\s*=', line: "use nvidia-container-cli = yes" }
+    - { regexp: '^#?\s*nvidia-container-cli path\s*=', line: "nvidia-container-cli path = {{ fakegpu_prefix }}/bin/nvidia-container-cli" }
+    # The host's /dev would show every GPU's device node (the fake driver
+    # counts them; it does not follow Slurm's device cgroup): only the
+    # basic devices and those nvidia-container-cli brings.
+    - { regexp: '^#?\s*mount dev\s*=', line: "mount dev = minimal" }
+  loop_control:
+    label: "{{ item.line }}"
+
+# Apptainer looks the user up by the uid outside the user namespace it runs
+# in (namespaces.HostUID): in an Incus container that is the host's
+# (1000000 + uid), unknown here, so the container gets no home directory
+# and no passwd entry. A user namespace mapping the user's uid to itself
+# makes the lookup find the user again.
+- name: Install the apptainer command for Incus containers
+  ansible.builtin.copy:
+    content: |
+      #!/bin/sh
+      # Apptainer in a user namespace mapping the user's uid and gid to
+      # themselves, so it finds the user (it looks the user up by the uid
+      # outside the namespace, the Incus host's). Root needs no help. In a
+      # Slurm job step with GPUs, --nv brings the step's GPUs, as the device
+      # cgroup limits them on real GPUs.
+      if [ -n "${SLURM_STEP_GPUS-}" ] && [ -z "${NVIDIA_VISIBLE_DEVICES+x}" ]; then
+          export NVIDIA_VISIBLE_DEVICES="$SLURM_STEP_GPUS"
+      fi
+      [ "$(id -u)" -eq 0 ] && exec /usr/bin/apptainer "$@"
+      exec unshare --user --map-user="$(id -u)" --map-group="$(id -g)" /usr/bin/apptainer "$@"
+    dest: /usr/local/bin/apptainer
+    mode: "0755"

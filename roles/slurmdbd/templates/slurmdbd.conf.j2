@@ -1,5 +1,7 @@
 # {{ ansible_managed }}
 AuthType=auth/munge
+AuthAltTypes=auth/jwt
+AuthAltParameters=jwt_key={{ slurm_jwt_key }}
 DbdHost=localhost
 SlurmUser=slurm
 PidFile=/run/slurmdbd.pid
