@@ -96,6 +96,7 @@ API const char *nvmlErrorString(nvmlReturn_t r)
     case NVML_SUCCESS: return "Success";
     case NVML_ERROR_INVALID_ARGUMENT: return "Invalid Argument";
     case NVML_ERROR_NOT_SUPPORTED: return "Not Supported";
+    case MIG_NO_PERMISSION: return "Insufficient Permissions";
     case NVML_ERROR_NOT_FOUND: return "Not Found";
     case NVML_ERROR_INSUFFICIENT_SIZE: return "Insufficient Size";
     case MIG_IN_USE: return "In use by another client";
@@ -395,9 +396,11 @@ API nvmlReturn_t nvmlDeviceGetMemoryInfo(nvmlDevice_t d, nvmlMemory_t *m)
     struct mig_handle *mh = mig_dev_of(d);
     if (mh) {
         if (!m) return NVML_ERROR_INVALID_ARGUMENT;
+        /* Its GPU instance's: reserved memory (16 MiB, as nvidia-smi shows
+         * it idle) and what processes on it hold. */
         m->total = mig_dev_mem(mh);
-        m->used = 16ULL << 20; /* a MIG device's reserved memory, as nvidia-smi shows it idle */
-        m->free = m->total - m->used;
+        m->used = (16ULL << 20) + fg_gi_mem_used(fg_phys(mh->vis), mh->gi);
+        m->free = m->used < m->total ? m->total - m->used : 0;
         return NVML_SUCCESS;
     }
     CHECK_DEV(d);
@@ -621,7 +624,10 @@ static nvmlReturn_t procs(nvmlDevice_t d, unsigned *count, void *infos, int v2)
         if (!pid) continue;
         if (n < cap) {
             unsigned long long mem = __atomic_load_n(&o->proc[i].mem, __ATOMIC_RELAXED);
-            if (v2) ((nvmlProcessInfo_v2_t *)infos)[n] = (nvmlProcessInfo_v2_t){(unsigned)pid, mem, 0xFFFFFFFFu, 0xFFFFFFFFu};
+            /* The MIG device it is on, as its slot records it (none: 0xFFFFFFFF). */
+            unsigned gi = __atomic_load_n(&o->proc_mig[i].gi, __ATOMIC_RELAXED);
+            unsigned ci = __atomic_load_n(&o->proc_mig[i].ci, __ATOMIC_RELAXED);
+            if (v2) ((nvmlProcessInfo_v2_t *)infos)[n] = (nvmlProcessInfo_v2_t){(unsigned)pid, mem, gi - 1, ci - 1};
             else ((nvmlProcessInfo_v1_t *)infos)[n] = (nvmlProcessInfo_v1_t){(unsigned)pid, mem};
         }
         n++;
@@ -1507,7 +1513,7 @@ API nvmlReturn_t nvmlGpuInstanceGetComputeInstancePossiblePlacements(nvmlGpuInst
     if (!n) return NVML_ERROR_INVALID_ARGUMENT;
     if (pl) {
         if (*n < c->instances) return NVML_ERROR_INSUFFICIENT_SIZE;
-        for (unsigned k = 0; k < c->instances; k++) pl[k] = (nvmlComputeInstancePlacement_t){k * c->slices, c->slices};
+        for (unsigned k = 0; k < c->instances; k++) pl[k] = (nvmlComputeInstancePlacement_t){mig_ci_start(c, k), c->slices};
     }
     *n = c->instances;
     return NVML_SUCCESS;
@@ -1524,7 +1530,7 @@ API nvmlReturn_t nvmlGpuInstanceGetComputeInstanceRemainingCapacity(nvmlGpuInsta
     struct fg_mig_gi x = mig_state(fg_phys(h->vis))->gi[h->gi];
     unsigned count = 0;
     int s;
-    while ((s = mig_ci_fit(&x, c)) >= 0) {
+    while ((s = mig_ci_fit(&x, c, -1)) >= 0) {
         for (int i = 0; i < FG_MIG_CIS; i++)
             if (!x.ci[i].used) {
                 x.ci[i] = (struct fg_mig_ci){1, (uint8_t)c->index, (uint8_t)s, (uint8_t)c->slices};
@@ -1536,23 +1542,39 @@ API nvmlReturn_t nvmlGpuInstanceGetComputeInstanceRemainingCapacity(nvmlGpuInsta
     return NVML_SUCCESS;
 }
 
-API nvmlReturn_t nvmlGpuInstanceCreateComputeInstance(nvmlGpuInstance_t g, unsigned id, nvmlComputeInstance_t *ci)
+static nvmlReturn_t create_ci(nvmlGpuInstance_t g, unsigned id, const nvmlComputeInstancePlacement_t *pl,
+                              nvmlComputeInstance_t *ci)
 {
-    struct mig_handle *h = gi_of(g, NULL);
+    const struct mig_profile *p;
+    struct mig_handle *h = gi_of(g, &p);
     if (!h || !ci) return NVML_ERROR_INVALID_ARGUMENT;
     if (id >= MIG_CI_PROFILE_COUNT) return NVML_ERROR_INVALID_ARGUMENT;
+    int start = -1;
+    if (pl) {
+        /* A placement the profile does not have is invalid; a taken one
+         * is INSUFFICIENT_RESOURCES (mig_create_ci). */
+        const struct mig_ci_profile *c = mig_ci_profile(p, id);
+        if (!c) return NVML_ERROR_NOT_SUPPORTED;
+        if (!mig_ci_valid_start(c, pl->start, pl->size)) return NVML_ERROR_INVALID_ARGUMENT;
+        start = (int)pl->start;
+    }
     int c;
-    nvmlReturn_t rc = mig_create_ci(fg_phys(h->vis), h->gi, id, &c);
+    nvmlReturn_t rc = mig_create_ci(fg_phys(h->vis), h->gi, id, start, &c);
     if (rc == NVML_SUCCESS) *ci = ci_handle(h->vis, h->gi, c);
     return rc;
+}
+
+API nvmlReturn_t nvmlGpuInstanceCreateComputeInstance(nvmlGpuInstance_t g, unsigned id, nvmlComputeInstance_t *ci)
+{
+    return create_ci(g, id, NULL, ci);
 }
 
 API nvmlReturn_t nvmlGpuInstanceCreateComputeInstanceWithPlacement(nvmlGpuInstance_t g, unsigned id,
                                                                    const nvmlComputeInstancePlacement_t *pl,
                                                                    nvmlComputeInstance_t *ci)
 {
-    (void)pl; /* the lowest free placement: compute instances do not move memory */
-    return nvmlGpuInstanceCreateComputeInstance(g, id, ci);
+    if (!pl) return NVML_ERROR_INVALID_ARGUMENT;
+    return create_ci(g, id, pl, ci);
 }
 
 API nvmlReturn_t nvmlGpuInstanceGetComputeInstances(nvmlGpuInstance_t g, unsigned id, nvmlComputeInstance_t *cs,

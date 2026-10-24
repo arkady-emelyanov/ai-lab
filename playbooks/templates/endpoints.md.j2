@@ -32,8 +32,9 @@ Written by `make configure` for this machine's lab ({{ ansible_managed }}); not 
 {% for bmc in groups['bmc'] | difference(groups['tray_bmc']) %}
 | {{ bmc | regex_replace('-bmc$', '') }} BMC (Redfish, NVLink switch tray) | https://{{ ip(bmc) }} (`bin/redfish {{ bmc | regex_replace('-bmc$', '') }} …`) | `{{ bmc_username }}` / `{{ bmc_password }}` |
 {% endfor %}
-| NVLink partition controller (gRPC) | {{ ip(groups['nvswitch'][0]) }}:{{ nmxc_port }} (`bin/nvlink`) | none |
+| NVLink partition controller (gRPC) | {{ ip(groups['nvswitch'][0]) }}:{{ nmxc_port }} (`bin/nvlink`; plaintext, reflection) | none |
 | Fabric telemetry | http://{{ ip(groups['nvswitch'][0]) }}:{{ nmxc_metrics_port }}/metrics | none |
 | GPU exporters | {% for w in groups['workers'] %}http://{{ ip(w) }}:{{ gpu_exporter_port }}/metrics{{ ', ' if not loop.last }}{% endfor %} | none |
+| node_exporter, JuiceFS metrics | `:9100/metrics`, `:9567/metrics` on {% for h in groups['cluster'] %}{{ ip(h) }}{{ ', ' if not loop.last }}{% endfor %} | none |
 
 The BMCs use self-signed certificates (`curl -k`).

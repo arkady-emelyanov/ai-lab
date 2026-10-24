@@ -41,7 +41,7 @@ Run:ai's charts request resources for production system nodes (about 15 CPUs in 
 
 Run:ai expects NVIDIA's GPU Operator. What it reads from it, the lab provides on the emulated GPUs:
 
-- GPUs as `nvidia.com/gpu`, allocated by GPU UUID: the lab's device plugin (`fakedp`, [Kubernetes](kubernetes.md#gpus-in-pods)).
+- GPUs as `nvidia.com/gpu`, allocated by GPU UUID: the lab's device plugin (`fakedp`, [Kubernetes](kubernetes.md#gpus-in-pods)). MIG devices are `nvidia.com/mig-<profile>` ([Kubernetes](kubernetes.md#mig)): KAI schedules a pod in a project that asks for one and charges it to the project's GPU quota, but Run:ai's workload API and UI request whole GPUs or fractions only, and the lab neither sets up MIG for Run:ai nor checks MIG workloads in projects.
 - Node labels (`nvidia.com/gpu.product`, `.count`, `.memory`, `.clique`): NVIDIA's GPU Feature Discovery. Run:ai's default node pool detects the NVLink domain from `nvidia.com/gpu.clique`.
 - GPU metrics: NVIDIA's DCGM exporter (`DCGM_FI_DEV_GPU_UTIL`, `DCGM_FI_DEV_FB_USED`, `DCGM_FI_DEV_FB_FREE` and more), in namespace `gpu-operator` with the names and labels the GPU Operator gives it. It mounts the tray's fake driver as the GPU Operator's runtime class would mount the real one. Each GPU's metrics carry the pod using it (kubelet's pod resources API), so Run:ai shows GPU utilisation and memory per workload.
 
@@ -104,7 +104,7 @@ bin/kubectl get pods -n runai-backend; bin/kubectl get pods -n runai            
 bin/kubectl get --raw '/api/v1/namespaces/runai/services/prometheus-operated:9090/proxy/api/v1/query?query=count(DCGM_FI_DEV_GPU_UTIL)'
 ```
 
-`make test` with Run:ai checks that the cluster is connected with every required dependency, that Run:ai's Prometheus has DCGM metrics for every GPU, that a 2-GPU training workload submitted through the API is scheduled by Run:ai onto a tray and sees its 2 GPUs, and that two half-GPU workloads share one GPU, each held to half of its memory.
+`make test` with Run:ai checks that the cluster is connected with every required dependency, that Run:ai's Prometheus has DCGM metrics for every GPU, that a 2-GPU training workload submitted through the API is scheduled by Run:ai onto a tray and sees its 2 GPUs, and that two half-GPU workloads share one GPU, each held to half of its memory. With KubeRay and the shared venv (`make frameworks`) it also checks that a Ray cluster in the project `test` is scheduled by `runai-scheduler` as one pod group, listed by Run:ai as a running `RayCluster` workload with its 2 GPUs, and scraped by Prometheus ([KubeRay](kuberay.md)).
 
 ## Limitations
 

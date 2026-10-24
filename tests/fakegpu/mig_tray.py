@@ -1,7 +1,10 @@
 """An emulated tray for the MIG tests: its own configuration, device nodes and
 shared GPU state (what a tray's processes share), and helpers that run NVML
 (mig_nvml.py), CUDA and nvidia-smi there in fresh processes, as separate
-programs on a tray do."""
+programs on a tray do. Changing MIG state needs root, as with the real
+driver: NVML and nvidia-smi run as root of a user namespace (unshare -Ur)
+unless root=False; CUDA runs as the user, as a job or pod does."""
+import contextlib
 import json
 import os
 import subprocess
@@ -80,17 +83,18 @@ class Tray:
                         FAKEGPU_SIDEBAND_DIR=str(self.dir / "sb"), FAKEGPU_IPC_DIR=str(self.dir / "ipc"),
                         FAKEGPU_FABRIC_DIR="")
 
-    def py(self, code, env=None, check=True):
-        p = subprocess.run([sys.executable, "-c", code], env=dict(self.env, **(env or {})), capture_output=True,
-                           text=True, timeout=60)
+    def py(self, code, env=None, check=True, root=False):
+        cmd = [sys.executable, "-c", code]
+        p = subprocess.run(["unshare", "-Ur", *cmd] if root else cmd, env=dict(self.env, **(env or {})),
+                           capture_output=True, text=True, timeout=60)
         if check:
             assert p.returncode == 0, p.stderr
         return p
 
-    def nvml(self, body, env=None):
+    def nvml(self, body, env=None, root=True):
         """Runs body with `m` (mig_nvml) and `json`; returns the JSON of `out`."""
         code = "import json\nimport mig_nvml as m\n" + body + "\nprint(json.dumps(out, default=str))"
-        return json.loads(self.py(code, env).stdout.splitlines()[-1])
+        return json.loads(self.py(code, env, root=root).stdout.splitlines()[-1])
 
     def cuda(self, body, env=None):
         """Runs body with `cu` (libcuda) and `json`; returns the JSON of `out`."""
@@ -99,9 +103,9 @@ class Tray:
                 "assert cu.cuInit(0) == 0\n" + body + "\nprint(json.dumps(out, default=str))")
         return json.loads(self.py(code, env).stdout.splitlines()[-1])
 
-    def smi(self, *args, root=False, check=True, env=None):
-        """nvidia-smi on the tray; root=True runs it as root of a user
-        namespace (nvidia-smi -r, as mig-parted calls it)."""
+    def smi(self, *args, root=True, check=True, env=None):
+        """nvidia-smi on the tray, as root of a user namespace (MIG changes,
+        nvidia-smi -r as mig-parted calls it) unless root=False."""
         cmd = [sys.executable, str(FAKEGPU / "nvidia-smi"), *args]
         if root:
             cmd = ["unshare", "-Ur", *cmd]
@@ -109,6 +113,24 @@ class Tray:
         if check:
             assert p.returncode == 0, p.stdout + p.stderr
         return p
+
+    @contextlib.contextmanager
+    def holding(self, mib=1, env=None):
+        """A CUDA process (as the user) holding mib MiB on its CUDA device 0
+        while the block runs: a process on the GPU, or on its MIG device."""
+        code = ("import ctypes, sys\n"
+                "cu = ctypes.CDLL('libcuda.so.1'); cu.cuInit(0); c = ctypes.c_void_p()\n"
+                "cu.cuDevicePrimaryCtxRetain(ctypes.byref(c), 0); cu.cuCtxSetCurrent(c); p = ctypes.c_ulonglong()\n"
+                f"r = cu.cuMemAlloc_v2(ctypes.byref(p), ctypes.c_size_t({mib} << 20))\n"
+                "print('ready' if r == 0 else f'alloc {r}', flush=True); sys.stdin.read()")
+        p = subprocess.Popen([sys.executable, "-c", code], env=dict(self.env, **(env or {})), stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, text=True)
+        try:
+            assert p.stdout.readline().strip() == "ready"
+            yield p
+        finally:
+            p.stdin.close()
+            p.wait(timeout=30)
 
     def enable_mig(self, gpu=0):
         out = self.nvml(f"out = m.set_mig(m.dev({gpu}), 1)")

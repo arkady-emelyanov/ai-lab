@@ -12,6 +12,7 @@ The lab runs on the user's machine; commands run from the repository's root (the
 - The lab may be in use by the user or another session: before anything that changes state (partitions, GPU resets, power, jobs that fill the GPUs, `make configure`), check nothing is running (Slurm: `bin/ssh sched-control squeue`; k3s: `bin/kubectl get pods -A --field-selector status.phase=Running`) and say what you are about to change.
 - Leave the lab as you found it: one default NVLink partition with all 8 GPUs, GPUs reset, no test jobs left behind.
 - Power actions through the BMCs stop the tray's jobs: only when the user asks for them.
+- `make stop` / `make start` stop the lab and start it again, keeping everything.
 - `make down` / `make purge` destroy the instances (and, for purge, the data and monitoring history): only when the user asks. Apply configuration changes with `make configure`, which keeps them.
 - Long commands (`make test`, `make configure`, big jobs) run in the background with their output in a log file; give the user the `tail -f` command.
 - Never print or commit `.secrets/`.
@@ -25,7 +26,7 @@ The lab runs on the user's machine; commands run from the repository's root (the
 | `bin/kubectl` | k3s as cluster admin (k3s mode) |
 | `bin/nvlink` | NVLink domain and partitions (partition controller) |
 | `bin/redfish <tray> <path> [curl args]` | Redfish request to `<tray>-bmc` (`sched-worker1`, `sched-worker2`, `sched-nvswitch`) |
-| Grafana `http://<bridge>.10:3000` (admin, `.secrets/grafana.pass`), Prometheus `http://<bridge>.10:9090` | dashboards "Lab overview", "Scheduler & NVLink fabric"; `<bridge>` from `incus network get incusbr0 ipv4.address` (10.107.111 in the docs) |
+| Grafana `http://<bridge>.10:3000` (admin, `.secrets/grafana.pass`), Prometheus `http://<bridge>.10:9090` | dashboards "Lab overview", "Scheduler & NVLink fabric"; with KubeRay also Ray's (folder **Ray**) and read-only without a login (anonymous viewers); `<bridge>` from `incus network get incusbr0 ipv4.address` (10.107.111 in the docs) |
 
 ## Run jobs
 
@@ -49,11 +50,11 @@ kubectl get jobsets,workloads
 
 Examples (`examples/slurm/*.sbatch`, `examples/kubernetes/*.yaml`): `gpu-topology`, `nvl8-hello`, `ddp-train`, `ray-cluster`; Kubernetes only: `ray-job` (KubeRay), `sglang-serve` (the recommended inference server) and `vllm-serve` (`./submit --name <name>`), `sglang-tp8` (TP=8 across both trays); details and tray-size requirements in `docs/inference.md`. The GPUs are emulated: frameworks initialise and every call succeeds with modelled timing and telemetry, but GPU kernels never actually execute (no real GPU math).
 
-MIG: the emulated GB200s do MIG like real ones (`nvidia-smi -i 0 -mig 1`, `nvidia-smi mig -cgi 1g.23gb,3g.93gb -C`, `nvidia-smi -L` for the MIG- UUIDs, `CUDA_VISIBLE_DEVICES=MIG-...`); profiles 1g.23gb ... 7g.186gb; undo with `nvidia-smi mig -dci; nvidia-smi mig -dgi; nvidia-smi -mig 0`. GPU Feature Discovery labels them (`nvidia.com/mig-<profile>.*`). In k3s mode pods ask for a slice with `resources.limits: {nvidia.com/mig-1g.23gb: 1}` (the device plugin stops offering a MIG-enabled GPU as `nvidia.com/gpu`) and see only that slice. Slurm jobs cannot be given MIG devices. Details in `docs/fake-gpu.md` (MIG) and `docs/kubernetes.md` (MIG).
+MIG: the emulated GB200s do MIG like real ones, changes as root on the tray (`bin/ssh sched-worker1 nvidia-smi -i 0 -mig 1`, `nvidia-smi mig -i 0 -cgi 1g.23gb,3g.93gb -C`; a user gets `Insufficient Permissions`), `nvidia-smi -L` for the MIG- UUIDs, `CUDA_VISIBLE_DEVICES=MIG-...`; profiles 1g.23gb ... 7g.186gb; undo with `nvidia-smi mig -i 0 -dci; nvidia-smi mig -i 0 -dgi; nvidia-smi -i 0 -mig 0` (an instance a process uses is `In use by another client`). GPU Feature Discovery labels them (`nvidia.com/mig-<profile>.*`). In k3s mode pods ask for a slice with `resources.limits: {nvidia.com/mig-1g.23gb: 1}` (the device plugin stops offering a MIG-enabled GPU as `nvidia.com/gpu`) and see only that slice. Slurm jobs cannot be given MIG devices. Details in `docs/fake-gpu.md` (MIG) and `docs/kubernetes.md` (MIG).
 
 ComputeDomains (k3s mode, on by default with `nvidia_dra: true`): NVIDIA's DRA driver gives a ComputeDomain's pods IMEX channels and runs IMEX daemons on their trays, for GPU memory shared over NVLink between trays (fabric handles; without a channel the driver returns `CUDA_ERROR_NOT_PERMITTED`). As `joe`: `./submit --wait imex-share.yaml`, `kubectl get computedomains`. GPUs still come from the device plugin (`nvidia.com/gpu`). Details in `docs/compute-domains.md`.
 
-KubeRay (k3s mode, on by default with `kuberay: true`): Ray clusters and jobs as `RayCluster`/`RayJob` resources, admitted by Kueue; dashboard `http://kuberay.<bridge>.10.nip.io` (no login), which also links each running cluster's Ray dashboard; finished clusters' logs and tasks are under its **History** (KubeRay History Server, bucket `ray-history` on RustFS; only for Ray pods with the collector sidecar, as in `ray-job.yaml`), and in Ray's own dashboard at `http://ray-history.<bridge>.10.nip.io`, where a finished job's Logs link lands. Ray's metrics are in Prometheus (job `ray`, `ray_*{ray_io_cluster="<cluster>"}`) and Ray's dashboards in Grafana's folder **Ray**. With Run:ai, Ray resources in `runai-<project>` are Run:ai workloads scheduled by KAI (no Kueue label; History Server keys in Secret `genericsecret-ray-history-s3`). As `joe`: `cd examples/kubernetes && ./submit --wait ray-job.yaml` (driver output in `<name>.out`), `kubectl get rayjobs,rayclusters`. Details in `docs/kuberay.md`.
+KubeRay (k3s mode, on by default with `kuberay: true`): Ray clusters and jobs as `RayCluster`/`RayJob` resources, admitted by Kueue; dashboard `http://kuberay.<bridge>.10.nip.io` (no login), which also links each running cluster's Ray dashboard; finished clusters' logs and tasks are under its **History** (KubeRay History Server, bucket `ray-history` on RustFS; only for Ray pods with the collector sidecar, as in `ray-job.yaml`), and in Ray's own dashboard at `http://ray-history.<bridge>.10.nip.io`, where a finished job's Logs link lands. Ray's metrics are in Prometheus (job `ray`, `ray_*{ray_io_cluster="<cluster>"}`) and Ray's dashboards in Grafana's folder **Ray**. With Run:ai, Ray resources in `runai-<project>` are Run:ai workloads scheduled by KAI (no Kueue label; History Server keys in Secret `genericsecret-ray-history-s3`), created as cluster admin (`bin/kubectl`): `joe` has no rights there. As `joe`: `cd examples/kubernetes && ./submit --wait ray-job.yaml` (driver output in `<name>.out`), `kubectl get rayjobs,rayclusters`. Details in `docs/kuberay.md`.
 
 NVIDIA Run:ai (k3s mode with `runai: true` in `local.yml`; UI `https://runai.<bridge>.10.nip.io`, `admin@ai-lab.local`, password in `.secrets/runai-admin.pass`). Its workloads run in namespace `runai-<project>`, scheduled by KAI (`runai-scheduler`); `runai-api` on the controller is the REST API as the administrator:
 
@@ -122,6 +123,7 @@ idrac_system_power_on                                       # tray power from th
 - `make test`: end to end (jobs, storage, BMCs, partitions, metrics, KubeRay and Run:ai when enabled), ~10 minutes.
 - `make test-bmc`: BMC and partition integration tests, ~30 s; `make test-bmc-disruptive` power-cycles a tray (ask first).
 - `make test-fakegpu`: the fake GPU libraries on the host, no lab needed.
+- `make test-fakedp`: the GPU device plugin's unit tests on the host, no lab needed.
 
 ## More
 

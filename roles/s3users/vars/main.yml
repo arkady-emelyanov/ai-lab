@@ -1,0 +1,8 @@
+# A bucket's policy: everything on the bucket and nothing else (bucket is
+# set by the task using it).
+s3_bucket_policy:
+  Version: "2012-10-17"
+  Statement:
+    - Effect: Allow
+      Action: ["s3:*"]
+      Resource: ["arn:aws:s3:::{{ bucket }}", "arn:aws:s3:::{{ bucket }}/*"]

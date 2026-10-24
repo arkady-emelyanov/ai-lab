@@ -35,4 +35,4 @@
 
 ## Testing
 
-- [Testing](testing.md): `make test`, the GPU library tests and the BMC integration tests
+- [Testing](testing.md): `make test`, the GPU library and device plugin tests and the BMC integration tests

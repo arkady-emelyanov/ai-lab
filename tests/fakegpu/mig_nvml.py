@@ -9,7 +9,7 @@ from pathlib import Path
 
 FAKEGPU = Path(__file__).resolve().parents[2] / "fakegpu"
 
-SUCCESS, INVALID_ARGUMENT, NOT_SUPPORTED, NOT_FOUND = 0, 2, 3, 6
+SUCCESS, INVALID_ARGUMENT, NOT_SUPPORTED, NO_PERMISSION, NOT_FOUND = 0, 2, 3, 4, 6
 INSUFFICIENT_RESOURCES, IN_USE, RESET_REQUIRED = 23, 19, 16
 
 u32, u64, dev_t = ctypes.c_uint, ctypes.c_ulonglong, ctypes.c_void_p
@@ -186,10 +186,26 @@ def ci_profile_v(gi, index, engine=0):
     return ret, _info(i)
 
 
-def create_ci(gi, profile_id):
+def create_ci(gi, profile_id, placement=None):
     ci = dev_t()
-    ret = nvml.nvmlGpuInstanceCreateComputeInstance(gi, u32(profile_id), ctypes.byref(ci))
+    if placement is None:
+        ret = nvml.nvmlGpuInstanceCreateComputeInstance(gi, u32(profile_id), ctypes.byref(ci))
+    else:
+        p = Placement(*placement)
+        ret = nvml.nvmlGpuInstanceCreateComputeInstanceWithPlacement(gi, u32(profile_id), ctypes.byref(p),
+                                                                     ctypes.byref(ci))
     return ret, ci
+
+
+def ci_placements(gi, profile_id):
+    """GetComputeInstancePossiblePlacements: the count first, then the list."""
+    n = u32(0)
+    ret = nvml.nvmlGpuInstanceGetComputeInstancePossiblePlacements(gi, u32(profile_id), None, ctypes.byref(n))
+    if ret != SUCCESS:
+        return ret, []
+    buf = (Placement * max(n.value, 1))()
+    ret = nvml.nvmlGpuInstanceGetComputeInstancePossiblePlacements(gi, u32(profile_id), buf, ctypes.byref(n))
+    return ret, [(p.start, p.size) for p in buf[:n.value]]
 
 
 def ci_info(ci):

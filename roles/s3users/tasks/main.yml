@@ -36,22 +36,49 @@
 
 - name: Write per-user bucket policies
   ansible.builtin.copy:
-    content: "{{ {'Version': '2012-10-17', 'Statement': [{'Effect': 'Allow', 'Action': ['s3:*'], 'Resource': ['arn:aws:s3:::' ~ item.name, 'arn:aws:s3:::' ~ item.name ~ '/*']}]} | to_json }}"
+    content: "{{ s3_bucket_policy | to_json }}"
     dest: /etc/rustfs-policy-{{ item.name }}.json
     mode: "0644"
+  vars:
+    bucket: "{{ item.name }}"
   loop: "{{ cluster_users }}"
   loop_control:
     label: "{{ item.name }}"
-  register: policies
 
-- name: Create and attach policies
-  ansible.builtin.shell: |
-    rc admin policy create lab/ {{ item.item.name }}-own /etc/rustfs-policy-{{ item.item.name }}.json
-    rc admin policy attach lab/ {{ item.item.name }}-own --user {{ item.item.name }}
-  loop: "{{ policies.results }}"
+# From RustFS' state, not the files: a policy missing, different or not
+# attached (rc exits 5 for a policy it does not know) is created or attached.
+- name: Read the per-user policies
+  ansible.builtin.command: rc admin policy info lab/ {{ item.name }}-own --json
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: user_policies
+  changed_when: false
+  failed_when: user_policies.rc not in [0, 5]
+
+- name: Create or update per-user policies
+  ansible.builtin.command: rc admin policy create lab/ {{ item.item.name }}-own /etc/rustfs-policy-{{ item.item.name }}.json
+  vars:
+    bucket: "{{ item.item.name }}"
+  loop: "{{ user_policies.results }}"
   loop_control:
     label: "{{ item.item.name }}"
-  when: item.changed
+  when: item.rc != 0 or (item.stdout | from_json).policy.policy != s3_bucket_policy
+
+- name: Read the users' policies
+  ansible.builtin.command: rc admin user info lab/ {{ item.name }} --json
+  loop: "{{ cluster_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: user_infos
+  changed_when: false
+
+- name: Attach per-user policies
+  ansible.builtin.command: rc admin policy attach lab/ {{ item.item.name }}-own --user {{ item.item.name }}
+  loop: "{{ user_infos.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.item.name ~ '-own' not in (item.stdout | from_json).policies | default([], true)
 
 - name: List buckets
   ansible.builtin.command: rc ls lab/
@@ -72,6 +99,7 @@
   when: scheduler == 'k3s' and kuberay | bool
   vars:
     history_user: ray-history
+    bucket: "{{ kuberay_history_bucket }}"
   block:
     - name: Create the History Server's S3 user
       ansible.builtin.command: rc admin user add lab/ {{ history_user }} {{ kuberay_history_secret_key }}
@@ -80,19 +108,28 @@
 
     - name: Write the History Server's bucket policy
       ansible.builtin.copy:
-        content: >-
-          {{ {'Version': '2012-10-17', 'Statement': [{'Effect': 'Allow', 'Action': ['s3:*'],
-              'Resource': ['arn:aws:s3:::' ~ kuberay_history_bucket, 'arn:aws:s3:::' ~ kuberay_history_bucket ~ '/*']}]}
-             | to_json }}
+        content: "{{ s3_bucket_policy | to_json }}"
         dest: /etc/rustfs-policy-{{ history_user }}.json
         mode: "0644"
-      register: history_policy
 
-    - name: Create and attach the History Server's policy
-      ansible.builtin.shell: |
-        rc admin policy create lab/ {{ history_user }}-own /etc/rustfs-policy-{{ history_user }}.json
-        rc admin policy attach lab/ {{ history_user }}-own --user {{ history_user }}
-      when: history_policy.changed
+    - name: Read the History Server's policy
+      ansible.builtin.command: rc admin policy info lab/ {{ history_user }}-own --json
+      register: history_policy
+      changed_when: false
+      failed_when: history_policy.rc not in [0, 5]
+
+    - name: Create or update the History Server's policy
+      ansible.builtin.command: rc admin policy create lab/ {{ history_user }}-own /etc/rustfs-policy-{{ history_user }}.json
+      when: history_policy.rc != 0 or (history_policy.stdout | from_json).policy.policy != s3_bucket_policy
+
+    - name: Read the History Server's user
+      ansible.builtin.command: rc admin user info lab/ {{ history_user }} --json
+      register: history_user_info
+      changed_when: false
+
+    - name: Attach the History Server's policy
+      ansible.builtin.command: rc admin policy attach lab/ {{ history_user }}-own --user {{ history_user }}
+      when: history_user ~ '-own' not in (history_user_info.stdout | from_json).policies | default([], true)
 
     - name: Create the History Server's bucket
       ansible.builtin.command: rc mb lab/{{ kuberay_history_bucket }}

@@ -9,11 +9,15 @@ The driver allows fabric handles only to a process with an IMEX channel
 ComputeDomain gets one (imex-share.yaml); without it, cuMemCreate fails with
 CUDA_ERROR_NOT_PERMITTED. Needs no frameworks, only the driver (ctypes).
 
+The ranks meet in RENDEZVOUS_DIR, which rank 0 removes at the end. A rank
+whose peer failed, or did not get there within 5 minutes, stops with an error.
+
     python3 imex_share.py RANK RENDEZVOUS_DIR
 """
 import ctypes
 import glob
 import os
+import shutil
 import socket
 import sys
 import time
@@ -21,7 +25,8 @@ import time
 RANK, RV = int(sys.argv[1]), sys.argv[2]
 SIZE, FABRIC = 2 << 20, 0x8
 PATTERN = bytes(range(256)) * 16
-HANDLE, DONE = os.path.join(RV, "handle"), os.path.join(RV, "done")
+HANDLE, DONE, FAILED = (os.path.join(RV, f) for f in ("handle", "done", "failed"))
+DEADLINE = time.monotonic() + 300  # for the other rank to start and reach each step
 u64 = ctypes.c_ulonglong
 
 
@@ -45,10 +50,22 @@ cu.cuGetErrorName.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
 
 
 def check(name, rc):
-    if rc:
+    if rc:  # tell the other rank, so that it does not wait for us
         err = ctypes.c_char_p()
         cu.cuGetErrorName(rc, ctypes.byref(err))
+        os.makedirs(RV, exist_ok=True)
+        open(FAILED, "w").close()
         sys.exit(f"rank {RANK} on {socket.gethostname()}: {name} failed: {(err.value or b'?').decode()}")
+
+
+def wait_for(path):
+    while not os.path.exists(path):
+        failed = os.path.exists(FAILED)
+        if failed or time.monotonic() > DEADLINE:
+            shutil.rmtree(RV, ignore_errors=True)  # the other rank is gone: we are the last
+            sys.exit(f"rank {RANK} on {socket.gethostname()}: "
+                     + ("the other rank failed" if failed else f"gave up waiting for {path} after 300 s"))
+        time.sleep(0.2)
 
 
 def mapped(h):
@@ -81,11 +98,10 @@ if RANK == 0:
         f.write(handle.raw)
     os.rename(HANDLE + ".tmp", HANDLE)
     print(f"rank 0 on {socket.gethostname()}: exported {SIZE >> 20} MiB as a fabric handle", flush=True)
-    while not os.path.exists(DONE):  # the memory lives as long as its creator holds it
-        time.sleep(0.2)
+    wait_for(DONE)  # the memory lives as long as its creator holds it
+    shutil.rmtree(RV)
 else:
-    while not os.path.exists(HANDLE):
-        time.sleep(0.2)
+    wait_for(HANDLE)
     with open(HANDLE, "rb") as f:
         handle = ctypes.create_string_buffer(f.read(), 64)
     h = u64()

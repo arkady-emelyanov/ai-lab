@@ -16,7 +16,7 @@ Prometheus on `sched-control` scrapes every layer; Grafana on the same host pres
 | `redfish` | all BMCs, through the controller `:9348`, every 30 s | [idrac_exporter](https://github.com/mrlhansen/idrac_exporter) v2.6.3, a generic Redfish exporter (iDRAC, iLO, XClarity, Supermicro, OpenBMC) | out of band: tray power state, GPU temperatures, system and BMC health, machine info ([BMCs](bmc-redfish.md)) |
 | `node` (InfiniBand) | trays' node_exporter textfile collector, every 15 s | `ib-port-counters` (`roles/fakeib`) | NIC port counters under node_exporter's infiniband names: `node_infiniband_port_data_transmitted_bytes_total`, `..._received_bytes_total` `{device="mlx5_<gpu>", port="1"}`; NCCL traffic between NVLink partitions |
 | `kube-state-metrics` (k3s mode) | controller NodePort `:30808` | [kube-state-metrics](https://github.com/kubernetes/kube-state-metrics) | nodes and their allocatable GPUs, pods' GPU requests, jobs |
-| `ray` (k3s mode, `kuberay: true`) | every Ray node in KubeRay's pods, port `metrics` (8080), listed by `ray-targets` on the controller every 15 s (`file_sd`; Ubuntu's Prometheus has no Kubernetes discovery) | Ray's own metrics agent | Ray's metrics (`ray_*`: nodes, tasks, actors, object store, GPUs) with `ray_io_cluster`, `ray_io_node_type`, `namespace`, `pod` ([KubeRay](kuberay.md#metrics)) |
+| `ray` (k3s mode, `kuberay: true`) | every Ray node in KubeRay's running pods (not those being deleted), port `metrics` (8080), listed by `ray-targets` on the controller every 15 s (`file_sd`; Ubuntu's Prometheus has no Kubernetes discovery) | Ray's own metrics agent | Ray's metrics (`ray_*`: nodes, tasks, actors, object store, GPUs) with `ray_io_cluster`, `ray_io_node_type`, `namespace`, `pod` ([KubeRay](kuberay.md#metrics)) |
 
 **Slurm GPU allocation.** The Slurm exporter has no GPU metrics; `slurm-gpu-metrics` (systemd timer, every 15 s) writes them for node_exporter's textfile collector on the controller:
 
@@ -87,7 +87,7 @@ curl -s 'http://10.107.111.10:9090/api/v1/query?query=sched_gpus_alloc' | jq '.d
 curl -s 'http://10.107.111.10:9348/metrics?target=sched-worker1-bmc' | grep power_on          # the exporter, scraping a BMC now
 ```
 
-`make test` checks that every target is up, that GPU power is reported for all 8 GPUs, that the scheduler (`sched_*`), fabric and BMC power series exist and that Grafana serves the dashboards.
+`make test` checks that every target is up, that GPU power is reported for all 8 GPUs, that the scheduler (`sched_*`), fabric and BMC power series exist and that Grafana serves the dashboards; with KubeRay, that a Ray cluster's metrics reach Prometheus (job `ray`) and that Ray's default dashboard is in Grafana's folder **Ray** for anonymous viewers ([KubeRay](kuberay.md#verification)).
 
 ## Configuration
 
@@ -104,4 +104,4 @@ curl -s 'http://10.107.111.10:9348/metrics?target=sched-worker1-bmc' | grep powe
 
 - [Prometheus](https://prometheus.io/docs/), [Grafana provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/)
 - [nvidia_gpu_exporter](https://github.com/utkuozdemir/nvidia_gpu_exporter), [idrac_exporter](https://github.com/mrlhansen/idrac_exporter), [rivosinc/prometheus-slurm-exporter](https://github.com/rivosinc/prometheus-slurm-exporter), [JuiceFS monitoring](https://juicefs.com/docs/community/administration/monitoring/)
-- Roles: `roles/monitoring` (exporters, Redfish exporter, `slurm-gpu-metrics`, Prometheus), `roles/grafana`
+- Roles: `roles/monitoring` (exporters, Redfish exporter, `slurm-gpu-metrics`, `ray-targets`, Prometheus), `roles/grafana` (dashboards; with KubeRay, Ray's dashboards provider and the unit drop-in for embedding and anonymous viewers)

@@ -92,7 +92,8 @@ scratch_mount: /scratch
 # ---- KubeRay (scheduler: k3s) ------------------------------------------------------
 # Ray on Kubernetes: the KubeRay operator (RayCluster, RayJob, RayService),
 # its API server and its web dashboard, on the controller; Ray's pods run on
-# the trays, admitted by Kueue. See docs/kuberay.md.
+# the trays, admitted by Kueue (in Run:ai project namespaces, with runai:
+# true, scheduled by KAI). See docs/kuberay.md.
 kuberay: true
 kuberay_version: 1.7.1
 kuberay_chart_repo: https://kuberay-project.github.io/kuberay-helm/
@@ -105,9 +106,10 @@ kuberay_domain: auto
 kuberay_history_bucket: ray-history
 # Ray's own dashboard for finished clusters, backed by the History Server
 # (a finished job's Logs link lands there). auto: ray-history.<controller
-# address>.nip.io. The image's Ray matches the venv's (make frameworks).
+# address>.nip.io. The image's Ray is the venv's (ray_version, make
+# frameworks).
 kuberay_history_domain: auto
-kuberay_history_ray_image: docker.io/rayproject/ray:2.59.0-py312-cpu
+kuberay_history_ray_image: docker.io/rayproject/ray:{{ ray_version }}-py312-cpu
 kuberay_history_secret_key: "{{ lookup('ansible.builtin.password', repo_root ~ '/.secrets/ray-history.s3 length=32 chars=ascii_letters,digits') }}"
 
 # ---- NVIDIA DRA driver: ComputeDomains (scheduler: k3s) --------------------------
@@ -344,9 +346,12 @@ grafana_dashboards:
 # ---- Frameworks (make frameworks) -------------------------------------------------------
 frameworks_venv: /shared/venv
 torch_index: https://download.pytorch.org/whl/cu130
+# Ray in the venv, and in the image of Ray's dashboard for finished clusters
+# (KubeRay): the same version, so it reads what the venv's Ray wrote.
+ray_version: 2.59.0
 frameworks_packages:
   - torch
-  - "ray[default]"
+  - "ray[default]=={{ ray_version }}"
   - numpy
   - boto3
 

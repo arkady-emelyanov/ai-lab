@@ -1,9 +1,14 @@
-"""MIG in a container given MIG devices (the lab's device plugin gives a pod
-a slice as NVIDIA's does: its parent GPU, and NVIDIA_VISIBLE_DEVICES=MIG-
-<uuid>): NVML, nvidia-smi and CUDA show that slice only, as the real driver
-shows a container the MIG devices whose capability nodes it has. And at a
-driver load (a tray's boot) MIG mode stays but the instances are gone."""
+"""MIG in a container given MIG devices: NVML, nvidia-smi and CUDA show
+those slices only, as the real driver shows a container the MIG devices
+whose capability nodes it has. The fake driver takes them from the MIG-
+UUIDs in NVIDIA_VISIBLE_DEVICES or, as the lab's device plugin hands them
+out (NVIDIA's volume-mounts strategy), from the files named after them in
+/var/run/nvidia-container-devices. And at a driver load (a tray's boot) MIG
+mode stays but the instances are gone."""
+import json
 import re
+import subprocess
+import sys
 
 import pytest
 
@@ -43,6 +48,25 @@ def test_several_slices_and_the_tray_sees_all(tray):
     assert len(tray.cuda(DEVICES, env=env)) == 2
     assert len(tray.cuda(DEVICES)) == 3
     assert len(tray.cuda(DEVICES, env={"NVIDIA_VISIBLE_DEVICES": "all"})) == 3
+
+
+def test_slices_from_volume_mounts(tray):
+    """NVIDIA's volume-mounts strategy: a file per device under
+    /var/run/nvidia-container-devices (NVIDIA_VISIBLE_DEVICES names that
+    directory): those slices only, several adding up. Run in a mount
+    namespace with its own /run."""
+    script = ("mount -t tmpfs none /run && mkdir /run/nvidia-container-devices && "
+              'for u in "$@"; do touch /run/nvidia-container-devices/$u; done && '
+              f"exec {sys.executable} -c \"$CODE\"")
+    code = ("import ctypes, json\ncu = ctypes.CDLL('libcuda.so.1'); cu.cuInit(0)\n" + DEVICES +
+            "\nprint(json.dumps(out))")
+    p = subprocess.run(["unshare", "-Urm", "sh", "-c", script, "sh", tray.uuids[0], tray.uuids[2]],
+                       env=dict(tray.env, CODE=code, NVIDIA_VISIBLE_DEVICES="/var/run/nvidia-container-devices"),
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    assert [d[0] for d in out] == ["NVIDIA GB200 MIG 3g.93gb", "NVIDIA GB200 MIG 1g.23gb"]
+    assert "MIG-" + out[1][3] == tray.uuids[2]
 
 
 def test_driver_load_keeps_mig_mode_not_instances(tray):

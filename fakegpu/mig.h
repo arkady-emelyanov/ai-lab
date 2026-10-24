@@ -10,30 +10,40 @@
  * slots over the memory slices (a tree: the whole GPU is 0, halves 1-2,
  * quarters 3-6, eighths 7-14: the first 1g nvidia-smi creates on GB200 is
  * GI 13, at slot 6). An instance created without a placement takes the
- * highest free one. Sub-CIs' SM counts are not published for GB200: they
- * are the GI's split by slices.
+ * highest free one. A compute instance of c slices has the SMs of a c-slice
+ * GPU instance (as A100's 1c.3g.20gb has a 1g.5gb's 14 and GB200's
+ * 1c.1g.47gb a 1g.23gb's 18), and takes the lowest free of its placements:
+ * starts aligned to its size rounded up to a power of two, a 3-slice CI's
+ * at 0 and 4 (go-nvml's B200 and H100 MIG tables).
  *
  * MIG state is driver state: the tray's shared state (occupancy.h), seen by
  * every process, changed under a lock. As on Hopper and later, MIG mode
  * switches at once on an idle GPU; on a GPU a process uses, the switch is
  * pending until the GPU's next reset (nvidia-smi -r). At a driver load (the
- * tray's boot) MIG mode stays and the instances are gone.
+ * tray's boot) MIG mode stays and the instances are gone. Changing MIG
+ * state needs root (NVML_ERROR_NO_PERMISSION otherwise), and an instance a
+ * process uses cannot be destroyed (NVML_ERROR_IN_USE): processes' slots
+ * record the MIG device they are on.
  *
  * A container given MIG devices sees only those: the real driver lets a
  * process use the MIG devices whose capability nodes it can open, which the
- * container toolkit adds for the MIG- UUIDs in NVIDIA_VISIBLE_DEVICES. The
- * fake driver reads those UUIDs from NVIDIA_VISIBLE_DEVICES directly (as
- * the lab's device plugin sets it); with none there, every MIG device.
+ * container toolkit adds for the MIG- UUIDs in NVIDIA_VISIBLE_DEVICES or,
+ * with the device plugin's volume-mounts strategy, the files named by them
+ * in /var/run/nvidia-container-devices. The fake driver reads those UUIDs
+ * from both directly (the lab's device plugin mounts the files: they add up
+ * when a container gets several resources, where kubelet keeps one value of
+ * an environment variable); with none there, every MIG device.
  */
 #ifndef FAKEGPU_MIG_H
 #define FAKEGPU_MIG_H
 
+#include <dirent.h>
 #include <stddef.h>
 #include "occupancy.h"
 
 /* NVML return codes the MIG calls use. */
-enum { MIG_OK = 0, MIG_INVALID = 2, MIG_NOT_SUPPORTED = 3, MIG_NOT_FOUND = 6, MIG_INSUFFICIENT_SIZE = 7,
-       MIG_IN_USE = 19, MIG_INSUFFICIENT_RESOURCES = 23 };
+enum { MIG_OK = 0, MIG_INVALID = 2, MIG_NOT_SUPPORTED = 3, MIG_NO_PERMISSION = 4, MIG_NOT_FOUND = 6,
+       MIG_INSUFFICIENT_SIZE = 7, MIG_IN_USE = 19, MIG_INSUFFICIENT_RESOURCES = 23 };
 
 #define MIG_PROFILE_COUNT 18     /* NVML_GPU_INSTANCE_PROFILE_COUNT */
 #define MIG_CI_PROFILE_COUNT 9   /* NVML_COMPUTE_INSTANCE_PROFILE_COUNT */
@@ -57,15 +67,17 @@ struct mig_profile {
     struct mig_ci_profile ci[5];
 };
 
+/* Compute instance SMs: a c-slice CI has a c-slice GI's (1g 18, 2g 38, 3g
+ * 72, 4g 76), the full one its GI's. */
 static const struct mig_profile mig_profiles[] = {
     {0, 19, "1g.23gb", 1, 1, 7, 18, 2, 1, 0, 1, 0, 22528, 7, {0, 1, 2, 3, 4, 5, 6}, 1, {{0, 1, 1, 18}}},
     {7, 20, "1g.23gb+me", 1, 1, 1, 18, 2, 1, 0, 1, 1, 22528, 7, {0, 1, 2, 3, 4, 5, 6}, 1, {{0, 1, 1, 18}}},
     {9, 15, "1g.47gb", 1, 2, 4, 32, 2, 1, 0, 1, 0, 46592, 4, {0, 2, 4, 6}, 2, {{0, 1, 1, 18}, {7, 1, 1, 32}}},
-    {1, 14, "2g.47gb", 2, 2, 3, 38, 4, 2, 0, 2, 0, 46592, 3, {0, 2, 4}, 2, {{0, 1, 2, 19}, {1, 2, 1, 38}}},
-    {2, 9, "3g.93gb", 3, 4, 2, 72, 6, 3, 0, 3, 0, 93696, 2, {0, 4}, 3, {{0, 1, 3, 24}, {1, 2, 1, 48}, {2, 3, 1, 72}}},
-    {3, 5, "4g.93gb", 4, 4, 1, 76, 8, 4, 0, 4, 1, 93696, 1, {0}, 3, {{0, 1, 4, 19}, {1, 2, 2, 38}, {3, 4, 1, 76}}},
+    {1, 14, "2g.47gb", 2, 2, 3, 38, 4, 2, 0, 2, 0, 46592, 3, {0, 2, 4}, 2, {{0, 1, 2, 18}, {1, 2, 1, 38}}},
+    {2, 9, "3g.93gb", 3, 4, 2, 72, 6, 3, 0, 3, 0, 93696, 2, {0, 4}, 3, {{0, 1, 3, 18}, {1, 2, 1, 38}, {2, 3, 1, 72}}},
+    {3, 5, "4g.93gb", 4, 4, 1, 76, 8, 4, 0, 4, 1, 93696, 1, {0}, 3, {{0, 1, 4, 18}, {1, 2, 2, 38}, {3, 4, 1, 76}}},
     {4, 0, "7g.186gb", 7, 8, 1, 152, 16, 7, 0, 7, 2, 188416, 1, {0}, 5,
-     {{0, 1, 7, 21}, {1, 2, 3, 43}, {2, 3, 2, 65}, {3, 4, 1, 86}, {4, 7, 1, 152}}},
+     {{0, 1, 7, 18}, {1, 2, 3, 38}, {2, 3, 2, 72}, {3, 4, 1, 76}, {4, 7, 1, 152}}},
 };
 #define MIG_NPROFILES ((int)(sizeof mig_profiles / sizeof *mig_profiles))
 
@@ -120,6 +132,9 @@ static inline int mig_slot(unsigned start, unsigned size)
 
 /* ---- state --------------------------------------------------------------------- */
 
+/* MIG changes need root, as with the real driver. */
+static inline int mig_root(void) { return geteuid() == 0; }
+
 static inline struct fg_gpu_mig *mig_state(int gpu)
 {
     struct fg_occupancy *o = fg_occupancy();
@@ -173,10 +188,23 @@ static inline int mig_has_gi(const struct fg_gpu_mig *m)
     return 0;
 }
 
+/* Whether a live process (this one too) uses MIG device (gi, ci) of a GPU;
+ * ci -1: any compute instance of GI gi. */
+static inline int mig_instance_busy(int gpu, int gi, int ci)
+{
+    struct fg_occupancy *o = fg_occupancy();
+    if (!o) return 0;
+    fg_proc_cleanup(0);
+    for (int i = 0; i < FG_MAX_PROCS; i++)
+        if (o->proc[i].gpu == gpu && fg_slot_on(o, i, gi, ci) && fg_slot_alive(o, i)) return 1;
+    return 0;
+}
+
 /* nvmlDeviceSetMigMode: returns the call's result, *act the activation. */
 static inline int mig_set_mode(int gpu, unsigned mode, int *act)
 {
     if (mode > 1) return MIG_INVALID;
+    if (!mig_root()) return MIG_NO_PERMISSION;
     struct fg_gpu_mig *m = mig_lock(gpu);
     if (!m) return MIG_NOT_SUPPORTED;
     int rc = MIG_OK;
@@ -258,6 +286,7 @@ static inline int mig_valid_start(const struct mig_profile *p, unsigned start, u
 /* nvmlDeviceCreateGpuInstance(WithPlacement): start -1 for any placement. */
 static inline int mig_create_gi(int gpu, const struct mig_profile *p, int start, int *gi)
 {
+    if (!mig_root()) return MIG_NO_PERMISSION;
     struct fg_gpu_mig *m = mig_lock(gpu);
     if (!m) return MIG_NOT_SUPPORTED;
     int rc = MIG_OK;
@@ -294,6 +323,7 @@ static inline int mig_gi_exists(int gpu, int gi, const struct mig_profile **p)
 
 static inline int mig_destroy_gi(int gpu, int gi)
 {
+    if (!mig_root()) return MIG_NO_PERMISSION;
     struct fg_gpu_mig *m = mig_lock(gpu);
     if (!m) return MIG_NOT_SUPPORTED;
     int rc = MIG_OK;
@@ -302,21 +332,33 @@ static inline int mig_destroy_gi(int gpu, int gi)
     } else {
         for (int c = 0; c < FG_MIG_CIS; c++)
             if (m->gi[gi].ci[c].used) rc = MIG_IN_USE;
+        if (rc == MIG_OK && mig_instance_busy(gpu, gi, -1)) rc = MIG_IN_USE;
         if (rc == MIG_OK) memset(&m->gi[gi], 0, sizeof m->gi[gi]);
     }
     mig_unlock(m);
     return rc;
 }
 
-/* Where a CI of profile c fits in GI x (lowest free start), or -1. */
-static inline int mig_ci_fit(const struct fg_mig_gi *x, const struct mig_ci_profile *c)
+/* Placement k of a CI profile in its GI: starts aligned to the CI's size
+ * rounded up to a power of two (a 3-slice CI of a 7g at 0 and 4). */
+static inline unsigned mig_ci_start(const struct mig_ci_profile *c, unsigned k)
+{
+    unsigned align = 1;
+    while (align < c->slices) align <<= 1;
+    return k * align;
+}
+
+/* Where a CI of profile c fits in GI x (start -1: the lowest free
+ * placement), or -1. */
+static inline int mig_ci_fit(const struct fg_mig_gi *x, const struct mig_ci_profile *c, int start)
 {
     unsigned n = 0;
     for (int i = 0; i < FG_MIG_CIS; i++)
         if (x->ci[i].used && x->ci[i].profile == c->index) n++;
     if (n >= c->instances) return -1;
     for (unsigned k = 0; k < c->instances; k++) {
-        unsigned s = k * c->slices;
+        unsigned s = mig_ci_start(c, k);
+        if (start >= 0 && (unsigned)start != s) continue;
         int free = 1;
         for (int i = 0; i < FG_MIG_CIS; i++) {
             const struct fg_mig_ci *y = &x->ci[i];
@@ -327,8 +369,20 @@ static inline int mig_ci_fit(const struct fg_mig_gi *x, const struct mig_ci_prof
     return -1;
 }
 
-static inline int mig_create_ci(int gpu, int gi, unsigned ci_index, int *ci)
+/* Whether start:size is a placement of CI profile c. */
+static inline int mig_ci_valid_start(const struct mig_ci_profile *c, unsigned start, unsigned size)
 {
+    if (size != c->slices) return 0;
+    for (unsigned k = 0; k < c->instances; k++)
+        if (mig_ci_start(c, k) == start) return 1;
+    return 0;
+}
+
+/* nvmlGpuInstanceCreateComputeInstance(WithPlacement): start -1 for any
+ * placement. */
+static inline int mig_create_ci(int gpu, int gi, unsigned ci_index, int start, int *ci)
+{
+    if (!mig_root()) return MIG_NO_PERMISSION;
     struct fg_gpu_mig *m = mig_lock(gpu);
     if (!m) return MIG_NOT_SUPPORTED;
     int rc = MIG_OK;
@@ -339,7 +393,7 @@ static inline int mig_create_ci(int gpu, int gi, unsigned ci_index, int *ci)
     } else if (!c) {
         rc = MIG_NOT_SUPPORTED;
     } else {
-        int s = mig_ci_fit(x, c), id = -1;
+        int s = mig_ci_fit(x, c, start), id = -1;
         for (int i = 0; i < FG_MIG_CIS && id < 0; i++)
             if (!x->ci[i].used) id = i;
         if (s < 0 || id < 0) {
@@ -367,12 +421,13 @@ static inline int mig_ci_exists(int gpu, int gi, int ci, const struct mig_profil
 
 static inline int mig_destroy_ci(int gpu, int gi, int ci)
 {
+    if (!mig_root()) return MIG_NO_PERMISSION;
     struct fg_gpu_mig *m = mig_lock(gpu);
     if (!m) return MIG_NOT_SUPPORTED;
     int rc = MIG_INVALID;
     if (gi >= 0 && gi < FG_MIG_SLOTS && ci >= 0 && ci < FG_MIG_CIS && m->gi[gi].used && m->gi[gi].ci[ci].used) {
-        memset(&m->gi[gi].ci[ci], 0, sizeof m->gi[gi].ci[ci]);
-        rc = MIG_OK;
+        rc = mig_instance_busy(gpu, gi, ci) ? MIG_IN_USE : MIG_OK;
+        if (rc == MIG_OK) memset(&m->gi[gi].ci[ci], 0, sizeof m->gi[gi].ci[ci]);
     }
     mig_unlock(m);
     return rc;
@@ -384,18 +439,28 @@ struct mig_dev { int gi, ci; };
 static inline void mig_uuid_str(int gpu, int gi, int ci, char *buf, size_t len);
 
 /* Whether this process may use a MIG device: listed among the MIG- UUIDs of
- * NVIDIA_VISIBLE_DEVICES, or any when it lists none. */
+ * NVIDIA_VISIBLE_DEVICES or of /var/run/nvidia-container-devices, or any
+ * when neither lists one. */
 static inline int mig_visible(int gpu, int gi, int ci)
 {
-    const char *env = getenv("NVIDIA_VISIBLE_DEVICES");
-    if (!env || !strcasestr(env, "MIG-")) return 1;
     char u[64];
     mig_uuid_str(gpu, gi, ci, u, sizeof u);
-    for (const char *p = env; (p = strcasestr(p, "MIG-")); p += 4) {
+    int listed = 0;
+    const char *env = getenv("NVIDIA_VISIBLE_DEVICES");
+    for (const char *p = env; p && (p = strcasestr(p, "MIG-")); p += 4) {
         size_t len = strcspn(p, ", ");
+        listed = 1;
         if (len == strlen(u) && strncasecmp(p, u, len) == 0) return 1;
     }
-    return 0;
+    DIR *d = opendir("/var/run/nvidia-container-devices");
+    int found = 0;
+    for (struct dirent *e; d && !found && (e = readdir(d)); )
+        if (strncasecmp(e->d_name, "MIG-", 4) == 0) {
+            listed = 1;
+            found = strcasecmp(e->d_name, u) == 0;
+        }
+    if (d) closedir(d);
+    return found || !listed;
 }
 
 static inline int mig_devices(int gpu, struct mig_dev *out)
@@ -420,8 +485,9 @@ static inline void mig_driver_load(int gpu)
     mig_unlock(m);
 }
 
-/* A MIG device's UUID: a version-5 UUID from the GPU's identity, its GI and
- * CI, and when the GI was created (a new instance gets a new UUID). */
+/* A MIG device's UUID: an FNV-1a hash of the GPU's identity, its GI and CI,
+ * and when the GI was created (a new instance gets a new UUID), formatted
+ * with RFC 4122 version 5 bits as real MIG UUIDs have them. */
 static inline void mig_uuid(int gpu, int gi, int ci, unsigned char out[16])
 {
     struct fg_gpu_mig *m = mig_state(gpu);

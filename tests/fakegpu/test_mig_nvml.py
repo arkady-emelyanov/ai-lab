@@ -12,7 +12,7 @@ import pytest
 from mig_tray import (BY_NAME, CI_PROFILE_COUNT, CI_PROFILES, CI_SLICES, FULL_CI, PLACEMENTS, PROFILE_COUNT,
                       PROFILES, UNSUPPORTED, Tray, go_nvlib_name)
 
-SUCCESS, INVALID_ARGUMENT, NOT_SUPPORTED, NOT_FOUND = 0, 2, 3, 6
+SUCCESS, INVALID_ARGUMENT, NOT_SUPPORTED, NO_PERMISSION, NOT_FOUND = 0, 2, 3, 4, 6
 IN_USE, INSUFFICIENT_RESOURCES = 19, 23
 
 
@@ -70,6 +70,21 @@ def test_enable_while_in_use_is_pending_until_a_reset(tray):
         holder.wait(timeout=30)
     tray.smi("-r", "-i", "00000008:01:00.0", root=True)
     assert tray.nvml("out = m.mig_mode(m.dev(0))") == [SUCCESS, 1, 1]
+
+
+def test_changes_need_root(tray):
+    """As with the real driver, MIG changes need root: NO_PERMISSION for a
+    user (mode, GPU and compute instances, destroying them); reading works."""
+    user = "d = m.dev(0); out = [m.set_mig(d, 1)[0], m.mig_mode(d)]"
+    assert tray.nvml(user, root=False) == [NO_PERMISSION, [SUCCESS, 0, 0]]
+    tray.enable_mig()
+    tray.nvml("d = m.dev(0); r, gi = m.create_gi(d, 19); r, ci = m.create_ci(gi, 0); out = r")
+    out = tray.nvml("""
+d = m.dev(0); r, gi = m.gi_by_id(d, 13); r, ci = m.ci_by_id(gi, 0)
+out = [m.create_gi(d, 19)[0], m.create_ci(gi, 0)[0], m.destroy_ci(ci), m.destroy_gi(gi), m.set_mig(d, 0)[0],
+       len(m.mig_devices(d))]
+""", root=False)
+    assert out == [NO_PERMISSION] * 5 + [1]
 
 
 def test_disable_is_refused_while_gpu_instances_exist(tray):
@@ -285,6 +300,63 @@ out = [rets, [(i['id'], i['profileId'], i['placement']) for i in infos], len(m.c
     assert listed == 7 and missing == NOT_FOUND
 
 
+def test_compute_instance_sms_are_a_gpu_instances_of_their_slices(tray):
+    """A c-slice compute instance has the SMs of a c-slice GPU instance (A100:
+    1c.3g.20gb 14 like 1g.5gb; GB200: 1c.1g.47gb 18 like 1g.23gb), never
+    more than a smaller GPU instance."""
+    tray.enable_mig()
+    out = tray.nvml("d = m.dev(0); r, gi = m.create_gi(d, 0); "
+                    "out = {m.ci_profile(gi, j)[1]['sliceCount']: m.ci_profile(gi, j)[1]['multiprocessorCount'] "
+                    "for j in range(5)}")
+    gi_sms = {v[2]: v[4] for v in PROFILES.values() if v[0] != "1g.47gb"}
+    assert out == {str(c): gi_sms[c] for c in (1, 2, 3, 4, 7)} == {"1": 18, "2": 38, "3": 72, "4": 76, "7": 152}
+
+
+def test_compute_instance_placements(tray):
+    """GetComputeInstancePossiblePlacements: starts aligned to the size
+    rounded up to a power of two (a 3-slice CI of a 7g at 0 and 4, as in
+    go-nvml's B200/H100 tables); CreateComputeInstanceWithPlacement takes
+    one: elsewhere INVALID_ARGUMENT, taken or overlapping
+    INSUFFICIENT_RESOURCES."""
+    tray.enable_mig()
+    out = tray.nvml("""
+d = m.dev(0); r, gi = m.create_gi(d, 0)
+places = {j: m.ci_placements(gi, j) for j in range(5)}
+r3, ci3 = m.create_ci(gi, 2, (4, 3))
+out = [places, r3, m.ci_info(ci3)[1]['placement'], m.create_ci(gi, 2, (3, 3))[0], m.create_ci(gi, 2, (4, 2))[0],
+       m.create_ci(gi, 2, (4, 3))[0], m.create_ci(gi, 0, (5, 1))[0], m.create_ci(gi, 0, (3, 1))[0],
+       m.create_ci(gi, 2)[0], m.create_ci(gi, 2)[0]]
+""")
+    places, r3, placed, misaligned, wrong_size, taken, overlapping, free, lowest, full = out
+    assert places == {"0": [SUCCESS, [[s, 1] for s in range(7)]], "1": [SUCCESS, [[0, 2], [2, 2], [4, 2]]],
+                      "2": [SUCCESS, [[0, 3], [4, 3]]], "3": [SUCCESS, [[0, 4]]], "4": [SUCCESS, [[0, 7]]]}
+    assert (r3, placed) == (SUCCESS, [4, 3])
+    assert (misaligned, wrong_size) == (INVALID_ARGUMENT, INVALID_ARGUMENT)
+    assert (taken, overlapping, free) == (INSUFFICIENT_RESOURCES, INSUFFICIENT_RESOURCES, SUCCESS)
+    assert (lowest, full) == (SUCCESS, INSUFFICIENT_RESOURCES)  # the other 3-slice placement, at 0
+
+
+def test_instances_in_use_cannot_be_destroyed(tray):
+    """A compute instance a process uses is IN_USE (as nvidia-smi mig -dci
+    with a CUDA process on it), its GPU instance too; the GPU's processes
+    list it with its GI and CI ids. Once the process ends both go."""
+    tray.enable_mig()
+    tray.nvml("d = m.dev(0)\nfor p in (19, 19):\n    r, gi = m.create_gi(d, p); m.create_ci(gi, 0)\nout = 0")
+    uuids = tray.nvml("d = m.dev(0); out = [m.uuid(h)[1] for h in m.mig_devices(d)]")
+    destroy = "d = m.dev(0); r, gi = m.gi_by_id(d, {g}); r, ci = m.ci_by_id(gi, 0); out = [m.destroy_ci(ci), m.destroy_gi(gi)]"
+    with tray.holding(env={"CUDA_VISIBLE_DEVICES": uuids[1]}):  # GI 13 (slot 6); uuids[0] is GI 12
+        assert tray.nvml(destroy.format(g=13)) == [IN_USE, IN_USE]
+        procs = tray.py("import ctypes, sys\nsys.path.insert(0, '.')\nimport mig_nvml as m\n"
+                        "class P(ctypes.Structure): _fields_ = [('pid', ctypes.c_uint), ('mem', ctypes.c_ulonglong), "
+                        "('gi', ctypes.c_uint), ('ci', ctypes.c_uint)]\n"
+                        "n = ctypes.c_uint(8); b = (P * 8)()\n"
+                        "assert m.nvml.nvmlDeviceGetComputeRunningProcesses_v3(m.dev(0), ctypes.byref(n), b) == 0\n"
+                        "print([(p.gi, p.ci) for p in b[:n.value]])").stdout.strip()
+        assert procs == "[(13, 0)]"
+        assert tray.nvml(destroy.format(g=12)) == [SUCCESS, SUCCESS]  # the other slice is free
+    assert tray.nvml(destroy.format(g=13)) == [SUCCESS, SUCCESS]
+
+
 def test_destroy_order(tray):
     """A GPU instance with compute instances is IN_USE (mig-parted's
     ClearMigConfig and the DRA driver destroy CIs first); then both go."""
@@ -330,8 +402,9 @@ out = [[r for r, _ in hs], [[m.is_mig(h)[1], m.parent(h)[1].value == d.value, m.
 
 
 def test_mig_device_identity(tray):
-    """A MIG device's UUID (MIG-, a version-5 UUID) is found by
-    GetHandleByUUID (device plugin health checks, dcgm-exporter); its name is
+    """A MIG device's UUID (MIG-, a hash with the RFC 4122 version-5 bits
+    real ones have) is found by GetHandleByUUID (device plugin health
+    checks, dcgm-exporter); its name is
     the GPU's plus the profile ('NVIDIA GB200 MIG 1g.23gb': Slurm's gres
     type); memory and attributes are its GPU instance's (go-nvlib
     GetProfile: attributes.memorySizeMB equals the profile's), SMs its

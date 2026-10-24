@@ -7,12 +7,15 @@
 #   make frameworks  shared PyTorch + Ray venv on /shared (several GB)
 #   make test        end-to-end checks (Slurm, GPUs, NCCL, Ray, BMC, metrics)
 #   make test-fakegpu  fake GPU library tests on this machine, no lab needed (NCCL
-#                    across NVLink partitions, InfiniBand counters)
+#                    across NVLink partitions, InfiniBand counters, MIG)
+#   make test-fakedp GPU device plugin unit tests (Go) on this machine, no lab needed
 #   make test-bmc    BMC integration tests (pytest); -disruptive power-cycles a tray,
 #                    -conformance checks the known gaps to real GB200 behaviour
 #   make shell       login node as joe          make shell-root   login node as root
 #   make shell-NODE  root shell on any instance (e.g. make shell-sched-worker1)
 #   bin/ssh login    ssh as joe to the login node (root@login, sched-control, sched-worker1, ...)
+#   make stop        stop all instances (kept, with their data)
+#   make start       start them again
 #   make down        delete instances (volumes kept)
 #   make purge       delete instances and volumes
 #
@@ -29,7 +32,7 @@ LOCAL    := local.yml
 # The checkout's own settings (local.yml) override everything else.
 RUN      = $(INCUS_SG) '$(ANSIBLE) $$(test -f $(LOCAL) && echo --extra-vars=@$(LOCAL)) $(1) </dev/null'
 
-.PHONY: init proto check up provision configure frameworks test test-fakegpu test-bmc test-bmc-disruptive test-bmc-conformance down purge shell shell-root shell-%
+.PHONY: init proto check up provision configure frameworks test test-fakegpu test-fakedp test-bmc test-bmc-disruptive test-bmc-conformance stop start down purge shell shell-root shell-%
 
 init: $(LOCAL) $(VENV)/.done fakebmc/fakebmc fakenmxc/fakenmxc fakedp/fakedp .cache/topograph/topograph $(SECRETS)/munge.key $(SECRETS)/slurmdbd.pass $(SECRETS)/ldap-admin.pass $(SECRETS)/redis.pass $(SECRETS)/grafana.pass $(SECRETS)/rustfs.access $(SECRETS)/rustfs.secret $(SECRETS)/k3s.token $(SECRETS)/runai-admin.pass $(SECRETS)/ssh/id_ed25519 $(SECRETS)/ssh/controller_ed25519 check
 	@chmod -R go-rwx $(SECRETS)
@@ -158,6 +161,11 @@ $(PYTEST): $(VENV)/.done
 test-fakegpu: $(PYTEST)
 	$(PYTEST) tests/fakegpu $(PYTEST_ARGS)
 
+# Unit tests of the GPU device plugin (fakedp/*_test.go).
+test-fakedp:
+	@command -v go >/dev/null || { echo "ERROR: Go is required to test fakedp"; exit 1; }
+	cd fakedp && go vet ./... && go test -race ./...
+
 test-bmc: init $(PYTEST)
 	$(INCUS_SG) '$(PYTEST) tests/bmc $(PYTEST_ARGS) </dev/null'
 
@@ -166,6 +174,13 @@ test-bmc-disruptive: init $(PYTEST)
 
 test-bmc-conformance: init $(PYTEST)
 	$(INCUS_SG) '$(PYTEST) tests/bmc --conformance -m conformance -rfxX --tb=line $(PYTEST_ARGS) </dev/null'
+
+# Stop and start the instances, keeping them (playbooks/power.yml).
+stop: init
+	$(call RUN,playbooks/power.yml -e power=stop)
+
+start: init
+	$(call RUN,playbooks/power.yml -e power=start)
 
 down: init
 	$(call RUN,playbooks/destroy.yml)

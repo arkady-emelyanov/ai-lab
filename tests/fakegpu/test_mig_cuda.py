@@ -1,8 +1,10 @@
 """MIG through CUDA (R570 and later, as the MIG user guide describes it):
 a MIG-enabled GPU shows as its MIG devices, one per GPU instance, not as
 itself, and none while it has no compute instance; CUDA_VISIBLE_DEVICES
-takes MIG- UUIDs; a MIG device has its GPU instance's memory and its compute
-instance's SMs, as a container given a MIG slice sees it."""
+takes MIG- UUIDs (any compute instance's); a MIG device has its GPU
+instance's memory, shared by its compute instances and the processes on
+them, and its compute instance's SMs, as a container given a MIG slice sees
+it."""
 import pytest
 
 from mig_tray import Tray
@@ -84,6 +86,41 @@ free, total = ctypes.c_size_t(), ctypes.c_size_t(); cu.cuMemGetInfo_v2(ctypes.by
 out = [fits, beyond, total.value >> 20]
 """)
     assert out == [0, 2, 22528]
+
+
+def test_visible_devices_names_a_later_compute_instance(tray):
+    """CUDA_VISIBLE_DEVICES may name any compute instance of a GPU instance,
+    not only the first (which CUDA shows by default): that one, with its
+    SMs and its GPU instance's memory."""
+    tray.smi("-mig", "1")
+    tray.smi("mig", "-cgi", "9")
+    tray.smi("mig", "-cci", "0,0,0", "-gi", "2")
+    uuids = mig_uuids(tray)
+    assert len(uuids) == 3
+    assert [d[3] for d in tray.cuda(DEVICES)] == [uuids[0][4:]]  # by default the GI's first CI
+    out = tray.cuda(DEVICES, env={"CUDA_VISIBLE_DEVICES": uuids[2]})
+    assert len(out) == 1 and out[0][:3] == ["NVIDIA GB200 MIG 1c.3g.93gb", 93696, 18] and "MIG-" + out[0][3] == uuids[2]
+
+
+def test_memory_is_the_gpu_instances_across_processes(tray):
+    """The compute instances of a GPU instance share its memory: what one
+    process holds on it, another cannot have (cuMemGetInfo counts it);
+    another GPU instance's memory is its own."""
+    tray.smi("-mig", "1")
+    tray.smi("mig", "-cgi", "9,9")
+    tray.smi("mig", "-cci", "0,0", "-gi", "2")
+    tray.smi("mig", "-cci", "0", "-gi", "1")
+    uuids = mig_uuids(tray)  # GI 1: one CI; GI 2: two
+    alloc = """
+c = ctypes.c_void_p(); cu.cuDevicePrimaryCtxRetain(ctypes.byref(c), 0); cu.cuCtxSetCurrent(c)
+free, total = ctypes.c_size_t(), ctypes.c_size_t(); cu.cuMemGetInfo_v2(ctypes.byref(free), ctypes.byref(total))
+p = ctypes.c_ulonglong()
+out = [free.value >> 30, cu.cuMemAlloc_v2(ctypes.byref(p), ctypes.c_size_t(40 << 30))]
+"""
+    with tray.holding(mib=60 << 10, env={"CUDA_VISIBLE_DEVICES": uuids[1]}):  # 60 GiB of GI 2's 91.5
+        assert tray.cuda(alloc, env={"CUDA_VISIBLE_DEVICES": uuids[2]}) == [31, 2]  # out of memory
+        assert tray.cuda(alloc, env={"CUDA_VISIBLE_DEVICES": uuids[0]}) == [91, 0]
+    assert tray.cuda(alloc, env={"CUDA_VISIBLE_DEVICES": uuids[2]}) == [91, 0]
 
 
 def test_slices_are_slower(tray):

@@ -70,7 +70,7 @@ Outputs no kernel computed hold whatever their memory held. Fresh GPU allocation
 
 ## Requirements
 
-- **Tray size.** The default k3s trays (4 CPU, 10 GiB) fit one-GPU servers. Tensor parallelism over a tray's four GPUs runs a server process per GPU plus the API server, and the TP=4 and TP=8 examples request 4 CPU and 14 GiB per pod. Raise the trays in `local.yml` and run `make down && make up` (volumes are kept):
+- **Tray size.** The default k3s trays (4 CPU, 10 GiB) fit one-GPU servers. Tensor parallelism over a tray's four GPUs runs a server process per GPU plus the API server, and the TP=4 and TP=8 examples request 4 CPU and 14 GiB per pod. Raise the trays in `local.yml` and run `make provision`, which applies the new limits to the running trays:
 
   ```yaml
   instance_limits_k3s:

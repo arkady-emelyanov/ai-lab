@@ -89,7 +89,8 @@ typedef struct {
 /* Provided by cuda_stub.c */
 void fg_vmm_track(uintptr_t base, size_t n, int dev, int phys);
 void fg_vmm_untrack(uintptr_t base);
-void fg_vmm_account(int phys, int64_t delta);
+void fg_vmm_account(int dev, int phys, int64_t delta);
+int fg_vmm_mem_fits(int dev, int phys, uint64_t n);
 int fg_vmm_phys(CUdevice dev);
 int fg_vmm_current_dev(void);
 
@@ -178,7 +179,7 @@ static struct obj *obj_of(CUmemGenericAllocationHandle h)
 static void obj_put(struct obj *o)
 {
     if (--o->refs > 0) return;
-    if (o->accounted) fg_vmm_account(o->phys, -(int64_t)o->size);
+    if (o->accounted) fg_vmm_account(o->dev, o->phys, -(int64_t)o->size);
     if (o->path[0]) unlink(o->path);
     close(o->fd);
     for (struct binding *b = o->bindings, *next; b; b = next) {
@@ -295,12 +296,12 @@ API CUresult cuMemCreate(CUmemGenericAllocationHandle *h, size_t size, const mem
     if (!h || !prop || !round_ok(size) || prop->location.type != LOCATION_DEVICE) return CUDA_ERROR_INVALID_VALUE;
     int phys = fg_vmm_phys(prop->location.id);
     if (phys < 0) return CUDA_ERROR_INVALID_DEVICE;
-    if (!fg_mem_fits(phys, size)) return CUDA_ERROR_OUT_OF_MEMORY;
+    if (!fg_vmm_mem_fits(prop->location.id, phys, size)) return CUDA_ERROR_OUT_OF_MEMORY;
     struct obj *o;
     CUresult rc = create(h, OBJ_MEM, size, (unsigned)prop->requestedHandleTypes, prop->location.id, &o);
     if (rc != CUDA_SUCCESS) return rc;
     o->accounted = 1;
-    fg_vmm_account(phys, (int64_t)size);
+    fg_vmm_account(prop->location.id, phys, (int64_t)size);
     return CUDA_SUCCESS;
 }
 

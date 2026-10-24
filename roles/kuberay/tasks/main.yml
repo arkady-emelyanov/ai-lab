@@ -52,35 +52,70 @@
 # genericsecret-ray-history-s3 there.
 - name: The History Server's keys for Run:ai projects
   when: runai | bool
+  vars:
+    ray_history_s3:
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT: "{{ storage_host }}:{{ rustfs_port }}"
+      S3DISABLE_SSL: "true"
+      S3FORCE_PATH_STYLE: "true"
+      S3_REGION: us-east-1
+      S3_BUCKET: "{{ kuberay_history_bucket }}"
+      AWS_ACCESS_KEY_ID: ray-history
+      AWS_SECRET_ACCESS_KEY: "{{ kuberay_history_secret_key }}"
+    runai_cluster_uuid: >-
+      {{ runai_clusters.stdout | from_json | selectattr('name', 'equalto', runai_cluster_name)
+         | map(attribute='uuid') | first | default('') }}
+    ray_history_asset_id: >-
+      {{ (runai_credentials.stdout | from_json).entries
+         | selectattr('meta.name', 'equalto', 'ray-history-s3') | selectattr('meta.scope', 'equalto', 'cluster')
+         | selectattr('meta.clusterId', 'equalto', runai_cluster_uuid) | map(attribute='meta.id') | first | default('') }}
+    ray_history_asset_body: >-
+      {{ {'meta': {'name': 'ray-history-s3', 'scope': 'cluster', 'clusterId': runai_cluster_uuid},
+          'spec': {'keyValuePairs': ray_history_s3 | dict2items(key_name='key', value_name='value')}} | to_json }}
   block:
-    - name: Look up the Run:ai cluster and its credentials
-      ansible.builtin.shell: |
-        set -eo pipefail
-        runai-api GET /v1/k8s/clusters | jq -r '.[] | select(.name == "{{ runai_cluster_name }}") | .uuid'
-        runai-api GET /api/v1/asset/credentials/generic-secret | jq -r '.entries[].meta.name'
-      args:
-        executable: /bin/bash
+    - name: Look up the Run:ai cluster
+      ansible.builtin.command: runai-api GET /v1/k8s/clusters
+      register: runai_clusters
+      changed_when: false
+
+    - name: The Run:ai cluster is registered
+      ansible.builtin.assert:
+        that: runai_cluster_uuid != ''
+        fail_msg: Run:ai has no cluster {{ runai_cluster_name }} (the runai role registers it)
+        quiet: true
+
+    - name: Look up the credentials assets
+      ansible.builtin.command: runai-api GET /api/v1/asset/credentials/generic-secret
       register: runai_credentials
       changed_when: false
 
+    # Run:ai's API masks the asset's keys and cannot change them: compare
+    # the Secret it made in its namespace, and replace the asset if it differs.
+    - name: Read the keys Run:ai distributes
+      ansible.builtin.shell: |
+        set -eo pipefail
+        kubectl -n runai get secret genericsecret-ray-history-s3 --ignore-not-found -o json \
+            | jq -c '.data // {} | map_values(@base64d)'
+      args:
+        executable: /bin/bash
+      register: ray_history_secret
+      when: ray_history_asset_id != ''
+      changed_when: false
+      no_log: true
+
+    - name: Delete the credentials asset ray-history-s3 with outdated keys
+      ansible.builtin.command: runai-api DELETE /api/v1/asset/credentials/generic-secret/{{ ray_history_asset_id }}
+      register: ray_history_deleted
+      when:
+        - ray_history_asset_id != ''
+        - ray_history_secret.stdout not in ['', '{}']
+        - ray_history_secret.stdout | from_json != ray_history_s3
+      no_log: true
+
     - name: Create the credentials asset ray-history-s3
       ansible.builtin.command:
-        argv:
-          - runai-api
-          - POST
-          - /api/v1/asset/credentials/generic-secret
-          - >-
-            {{ {'meta': {'name': 'ray-history-s3', 'scope': 'cluster', 'clusterId': runai_credentials.stdout_lines[0]},
-                'spec': {'keyValuePairs': [
-                  {'key': 'STORAGE_BACKEND', 'value': 's3'},
-                  {'key': 'S3_ENDPOINT', 'value': storage_host ~ ':' ~ rustfs_port},
-                  {'key': 'S3DISABLE_SSL', 'value': 'true'},
-                  {'key': 'S3FORCE_PATH_STYLE', 'value': 'true'},
-                  {'key': 'S3_REGION', 'value': 'us-east-1'},
-                  {'key': 'S3_BUCKET', 'value': kuberay_history_bucket},
-                  {'key': 'AWS_ACCESS_KEY_ID', 'value': 'ray-history'},
-                  {'key': 'AWS_SECRET_ACCESS_KEY', 'value': kuberay_history_secret_key}]}} | to_json }}
-      when: "'ray-history-s3' not in runai_credentials.stdout_lines[1:]"
+        argv: [runai-api, POST, /api/v1/asset/credentials/generic-secret, "{{ ray_history_asset_body }}"]
+      when: ray_history_asset_id == '' or ray_history_deleted is changed
       no_log: true
 
 - name: KubeRay is ready

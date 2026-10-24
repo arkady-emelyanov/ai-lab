@@ -1,0 +1,32 @@
+# Stops or starts every lab instance, keeping them and their data:
+# `make stop` (power=stop), `make start` (power=start). Starts in dependency
+# order (storage, the switch tray, the BMCs, the controller, the login node,
+# the GPU trays) and stops in the reverse order.
+- name: Stop or start the lab's instances
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    boot_order: "{{ groups['storage'] + groups['nvswitch'] + groups['bmc'] + groups['controller'] + groups['login'] + groups['workers'] }}"
+  tasks:
+    - name: Check the requested action
+      ansible.builtin.assert:
+        that: power | default('') in ['stop', 'start']
+        fail_msg: "power must be stop or start (make stop, make start)"
+
+    - name: Read the instances' state
+      ansible.builtin.command: incus query /1.0/instances/{{ item }}?project={{ hostvars[item].ansible_incus_project }}
+      loop: "{{ boot_order }}"
+      register: instances
+      changed_when: false
+      failed_when: instances.rc != 0 and 'not found' not in instances.stderr
+
+    # Instances that do not exist are left out: `make up` creates them.
+    - name: "{{ power | capitalize }} the instances"
+      ansible.builtin.command: incus {{ power }} {{ item.item }} --project {{ hostvars[item.item].ansible_incus_project }}
+      loop: "{{ instances.results if power == 'start' else instances.results | reverse }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when:
+        - item.rc == 0
+        - (item.stdout | from_json).status == ('Stopped' if power == 'start' else 'Running')

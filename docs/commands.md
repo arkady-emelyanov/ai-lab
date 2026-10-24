@@ -12,6 +12,7 @@ All from the repository's root.
 | `make up` | build the lab |
 | `make configure` | apply changed settings (`local.yml`) to the running lab |
 | `make frameworks` | install PyTorch and Ray into the lab (several GB) |
+| `make stop`, `make start` | stop the lab's instances and start them again; everything is kept |
 | `make down` | delete the instances; volumes are kept |
 | `make purge` | delete everything, including the lab's data |
 
@@ -41,6 +42,7 @@ All from the repository's root.
 |---|---|
 | `make test` | end-to-end checks of the running lab |
 | `make test-fakegpu` | the GPU library tests, on this machine, no lab needed |
+| `make test-fakedp` | the GPU device plugin's unit tests, on this machine, no lab needed |
 | `make test-bmc` | BMC and partition controller integration tests |
 | `make test-bmc-disruptive` | the same, plus power-cycling a tray |
 | `make test-bmc-conformance` | GB200 behaviour the lab does not model yet |

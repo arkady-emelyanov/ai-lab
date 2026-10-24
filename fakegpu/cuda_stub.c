@@ -9,8 +9,10 @@
  *
  * CUDA_VISIBLE_DEVICES is honoured (indices, GPU- or MIG- UUIDs), like the
  * real driver, so Slurm GPU allocation is reflected in what a job sees. A
- * GPU with MIG on shows as its MIG devices (mig.h), one per GPU instance,
- * each with its slice's memory and SMs.
+ * GPU with MIG on shows as its MIG devices (mig.h): by default one per GPU
+ * instance (CUDA_VISIBLE_DEVICES may name any compute instance by its MIG-
+ * UUID), each with its GPU instance's memory, shared by the processes on
+ * it, and its compute instance's SMs.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -192,12 +194,27 @@ static int current_dev(void)
     return c && c->magic == CTX_MAGIC ? c->dev : 0;
 }
 
-/* The memory of the MIG device the current context is on, 0 for a whole GPU
- * (occupancy.h: allocations beyond it fail). */
-uint64_t fg_mig_mem_limit(void)
+/* The GPU instance CUDA device dev is on and its memory (*gi -1 for a whole
+ * GPU): allocations on a MIG device share its GI's memory (occupancy.h). */
+static void dev_gi(CUdevice dev, int *gi, int *ci, uint64_t *bytes)
 {
     const struct mig_profile *p;
-    return vis_mig(current_dev(), &p, NULL) ? p->mib << 20 : 0;
+    *gi = *ci = -1;
+    *bytes = 0;
+    if (vis_mig(dev, &p, NULL)) {
+        *gi = vis_gi[dev];
+        *ci = vis_ci[dev];
+        *bytes = p->mib << 20;
+    }
+}
+
+/* Whether n more bytes of device memory fit on CUDA device dev. */
+static int dev_mem_fits(CUdevice dev, int phys, uint64_t n)
+{
+    int gi, ci;
+    uint64_t bytes;
+    dev_gi(dev, &gi, &ci, &bytes);
+    return fg_mem_fits(phys, gi, bytes, n);
 }
 
 /* How much slower work runs on the current context's device than on the
@@ -535,14 +552,22 @@ API CUresult cuCtxGetFlags(unsigned *flags)
 
 API CUresult cuMemGetInfo_v2(size_t *free_b, size_t *total_b)
 {
-    uint64_t limit = fg_mem_limit(), mig = fg_mig_mem_limit();
-    if (mig && (!limit || mig < limit)) limit = mig;
-    if (limit) {
+    int gi, ci, phys = fg_current_phys();
+    uint64_t mig, limit = fg_mem_limit();
+    dev_gi(current_dev(), &gi, &ci, &mig);
+    if (limit && (gi < 0 || limit < mig)) {
         /* A GPU fraction: its limit, less what this process holds. */
         uint64_t total = limit < fg_mem_bytes() ? limit : fg_mem_bytes();
-        uint64_t used = fg_own_mem(fg_current_phys());
+        uint64_t used = fg_own_mem(phys);
         if (free_b) *free_b = used < total ? total - used : 0;
         if (total_b) *total_b = total;
+        return CUDA_SUCCESS;
+    }
+    if (gi >= 0) {
+        /* A MIG device: its GPU instance's memory, less what its processes hold. */
+        uint64_t used = fg_gi_mem_used(phys, gi);
+        if (free_b) *free_b = used < mig ? mig - used : 0;
+        if (total_b) *total_b = mig;
         return CUDA_SUCCESS;
     }
     if (free_b) *free_b = fg_mem_bytes() - (512ULL << 20);
@@ -578,11 +603,19 @@ static pthread_mutex_t alloc_lock = PTHREAD_MUTEX_INITIALIZER;
 static void occupancy_exit(void) { fg_proc_cleanup(1); }
 static void atexit_register(void) { atexit(occupancy_exit); }
 
-static void account(int phys, int64_t delta)
+/* Device memory of CUDA device dev (on physical GPU phys) in this process's
+ * slot for it: per MIG device on a MIG-enabled GPU. */
+static void account(int dev, int phys, int64_t delta)
 {
     static pthread_once_t once = PTHREAD_ONCE_INIT;
     pthread_once(&once, atexit_register);
-    struct fg_proc *slot = fg_proc_slot(phys);
+    int gi = -1, ci = -1;
+    pthread_once(&vis_once, vis_init);
+    if (dev >= 0 && dev < vis_count && vis_map[dev] == phys) {
+        gi = vis_gi[dev];
+        ci = vis_ci[dev];
+    }
+    struct fg_proc *slot = fg_proc_slot(phys, gi, ci);
     if (slot) __atomic_add_fetch(&slot->mem, (uint64_t)delta, __ATOMIC_RELAXED);
 }
 
@@ -592,7 +625,7 @@ static void *track(size_t n, int type)
     int phys = fg_current_phys();
     if (type == MEM_DEVICE) {
         fg_proc_cleanup(0);
-        if (!fg_mem_fits(phys, n)) return NULL; /* out of GPU memory, or over the limit */
+        if (!dev_mem_fits(current_dev(), phys, n)) return NULL; /* out of GPU or MIG memory, or over the limit */
     }
     int mapped = type == MEM_DEVICE ? MAPPED_OWN : MAPPED_NO;
     void *m = mapped ? mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0)
@@ -608,7 +641,7 @@ static void *track(size_t n, int type)
                             .mapped = mapped, .id = ++alloc_seq, .next = allocs, .ipc_fd = -1};
     allocs = r;
     pthread_mutex_unlock(&alloc_lock);
-    if (type == MEM_DEVICE) account(phys, (int64_t)n);
+    if (type == MEM_DEVICE) account(current_dev(), phys, (int64_t)n);
     return m;
 }
 
@@ -634,7 +667,7 @@ static void untrack(void *m)
         free(dead);
         return;
     }
-    if (dead->type == MEM_DEVICE) account(dead->phys, -(int64_t)dead->size);
+    if (dead->type == MEM_DEVICE) account(dead->dev, dead->phys, -(int64_t)dead->size);
     if (dead->mapped) munmap(m, dead->size); else free(m);
     if (dead->ipc_fd >= 0) {
         char path[sizeof fg_cfg.ipc_dir + 32];
@@ -671,7 +704,8 @@ void fg_vmm_track(uintptr_t base, size_t n, int dev, int phys)
 }
 
 void fg_vmm_untrack(uintptr_t base) { untrack((void *)base); }
-void fg_vmm_account(int phys, int64_t delta) { account(phys, delta); }
+void fg_vmm_account(int dev, int phys, int64_t delta) { account(dev, phys, delta); }
+int fg_vmm_mem_fits(int dev, int phys, uint64_t n) { return dev_mem_fits(dev, phys, n); }
 int fg_vmm_phys(CUdevice dev) { return phys(dev); }
 int fg_vmm_current_dev(void) { return current_dev(); }
 

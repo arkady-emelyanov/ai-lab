@@ -14,14 +14,14 @@ Reachable from the host machine. Addresses are on the Incus bridge (`10.107.111.
 | Kubernetes API (k3s mode) | https://10.107.111.10:6443 (`bin/kubectl`) | admin: `.secrets/kubeconfig`; users: `~/.kube/config` | [Kubernetes](kubernetes.md) |
 | KubeRay dashboard and API server (k3s mode, `kuberay: true`) | http://kuberay.10.107.111.10.nip.io | none | [KubeRay](kuberay.md) |
 | Ray's dashboard for finished Ray clusters (k3s mode, `kuberay: true`) | http://ray-history.10.107.111.10.nip.io | none | [KubeRay](kuberay.md#history) |
-| NVIDIA Run:ai UI and API (`runai: true`) | https://runai.10.107.111.10.nip.io (`bin/ssh sched-control runai-api …`) | `admin@ai-lab.local` / `.secrets/runai-admin.pass`; certificate authority `.secrets/runai/ca.crt` | [NVIDIA Run:ai](runai.md) |
+| NVIDIA Run:ai UI and API (k3s mode, `runai: true`) | https://runai.10.107.111.10.nip.io (`bin/ssh sched-control runai-api …`) | `admin@ai-lab.local` / `.secrets/runai-admin.pass`; certificate authority `.secrets/runai/ca.crt` | [NVIDIA Run:ai](runai.md) |
 | kube-state-metrics (k3s mode) | http://10.107.111.10:30808/metrics | none | [Monitoring](monitoring.md) |
 | topograph API | http://10.107.111.10:49021 | none | [Topology discovery](topology.md) |
 | RustFS S3 API | http://10.107.111.12:9000 | admin: `.secrets/rustfs.access` / `.secrets/rustfs.secret`; users: `<name>` / `.secrets/users/<name>.s3` | [Storage](storage.md) |
 | RustFS console | http://10.107.111.12:9001/rustfs/console/ | as S3 API | [Storage](storage.md) |
 | GPU tray BMCs (Redfish) | https://10.107.111.31, https://10.107.111.32 (`bin/redfish sched-worker1 …`) | `root` / `0penBmc` | [BMCs](bmc-redfish.md) |
 | NVLink switch tray BMC (Redfish) | https://10.107.111.33 (`bin/redfish sched-nvswitch …`) | `root` / `0penBmc` | [BMCs](bmc-redfish.md) |
-| NVLink partition controller (gRPC) | 10.107.111.34:9370 (plaintext, reflection) | none | [NVLink partitions](nvlink-partitions.md) |
+| NVLink partition controller (gRPC) | 10.107.111.34:9370 (`bin/nvlink`; plaintext, reflection) | none | [NVLink partitions](nvlink-partitions.md) |
 | Fabric telemetry | http://10.107.111.34:9372/metrics | none | [NVLink partitions](nvlink-partitions.md) |
 | GPU exporters | http://10.107.111.21:9835/metrics, http://10.107.111.22:9835/metrics | none | [Monitoring](monitoring.md) |
 | node_exporter, JuiceFS metrics | `<cluster node>:9100/metrics`, `<cluster node>:9567/metrics` | none | [Monitoring](monitoring.md) |

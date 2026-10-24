@@ -32,7 +32,7 @@
 struct fg_proc {
     int32_t pid;          /* 0 = free slot; PID in the owner's namespace */
     int32_t gpu;          /* physical GPU index */
-    uint64_t mem;         /* bytes allocated by this process on this GPU */
+    uint64_t mem;         /* bytes allocated by this process on this GPU and MIG device (proc_mig[i]) */
 };
 
 /* Layout is read by fakenmxc (switch-side telemetry): keep in sync with
@@ -89,6 +89,13 @@ struct fg_gpu_mig {
     struct fg_mig_gi gi[FG_MIG_SLOTS];
 };
 
+/* The MIG device a process slot is on (the slot is per process, GPU and
+ * MIG device): GI and CI id plus one, 0 for the whole GPU. */
+struct fg_proc_mig {
+    uint8_t gi, ci;
+    uint8_t pad[6];
+};
+
 /* Fields added later go after everything older versions map, so processes
  * still running an older library never read or clear them. */
 struct fg_occupancy {
@@ -98,6 +105,7 @@ struct fg_occupancy {
     struct fg_gpu_reset reset[FG_MAX_GPUS];
     struct fg_gpu_net net[FG_MAX_GPUS];
     struct fg_gpu_mig mig[FG_MAX_GPUS];
+    struct fg_proc_mig proc_mig[FG_MAX_PROCS];
 };
 
 static inline uint64_t fg_now_ns(void)
@@ -188,10 +196,19 @@ static inline int fg_slot_alive(struct fg_occupancy *o, int i)
     return kill(pid, 0) == 0 || errno == EPERM;
 }
 
-/* Slot for (this process, gpu), created on first use. A free slot is taken
- * by locking it first: nobody live holds it then, and readers stop
- * reclaiming it. */
-static inline struct fg_proc *fg_proc_slot(int gpu)
+/* Whether slot i is on MIG device (gi, ci) of its GPU; gi -1: the whole
+ * GPU, ci -1: any compute instance of GI gi. */
+static inline int fg_slot_on(struct fg_occupancy *o, int i, int gi, int ci)
+{
+    const struct fg_proc_mig *m = &o->proc_mig[i];
+    int sgi = (int)__atomic_load_n(&m->gi, __ATOMIC_ACQUIRE) - 1, sci = (int)__atomic_load_n(&m->ci, __ATOMIC_ACQUIRE) - 1;
+    return sgi == gi && (ci < 0 || sci == ci);
+}
+
+/* Slot for (this process, gpu, MIG device gi/ci: -1 for the whole GPU),
+ * created on first use. A free slot is taken by locking it first: nobody
+ * live holds it then, and readers stop reclaiming it. */
+static inline struct fg_proc *fg_proc_slot(int gpu, int gi, int ci)
 {
     struct fg_occupancy *o = fg_occupancy();
     if (!o) return NULL;
@@ -199,7 +216,7 @@ static inline struct fg_proc *fg_proc_slot(int gpu)
     /* Threads share the locks (one open file description): claim one at a time. */
     pthread_mutex_lock(&fg_occ_claim);
     for (int i = 0; i < FG_MAX_PROCS && !found; i++)
-        if (fg_slot_mine(o, i) && o->proc[i].gpu == gpu)
+        if (fg_slot_mine(o, i) && o->proc[i].gpu == gpu && fg_slot_on(o, i, gi, ci))
             found = &o->proc[i];
     for (int i = 0; i < FG_MAX_PROCS && !found; i++) {
         if (fg_slot_alive(o, i) || fg_slot_lock(o, i, F_WRLCK) != 0) continue;
@@ -209,6 +226,8 @@ static inline struct fg_proc *fg_proc_slot(int gpu)
         if (__atomic_compare_exchange_n(&o->proc[i].pid, &cur, getpid(), 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             __atomic_store_n(&o->pidns[i], fg_pidns(), __ATOMIC_RELEASE);
             __atomic_store_n(&o->proc[i].mem, 0, __ATOMIC_RELEASE);
+            __atomic_store_n(&o->proc_mig[i].gi, (uint8_t)(gi + 1), __ATOMIC_RELEASE);
+            __atomic_store_n(&o->proc_mig[i].ci, (uint8_t)(gi < 0 ? 0 : ci + 1), __ATOMIC_RELEASE);
             __atomic_store_n(&o->proc[i].gpu, gpu, __ATOMIC_RELEASE);
             found = &o->proc[i];
         } else {
@@ -248,15 +267,29 @@ static inline uint64_t fg_gpu_mem_used(int gpu)
     return sum;
 }
 
-/* This process's GPU memory on a GPU. */
+/* This process's GPU memory on a GPU (all its MIG devices there). */
 static inline uint64_t fg_own_mem(int gpu)
 {
     struct fg_occupancy *o = fg_occupancy();
+    uint64_t sum = 0;
     if (!o) return 0;
     for (int i = 0; i < FG_MAX_PROCS; i++)
         if (o->proc[i].gpu == gpu && fg_slot_mine(o, i))
-            return __atomic_load_n(&o->proc[i].mem, __ATOMIC_ACQUIRE);
-    return 0;
+            sum += __atomic_load_n(&o->proc[i].mem, __ATOMIC_ACQUIRE);
+    return sum;
+}
+
+/* Memory in use on GPU instance gi of a GPU: every live process's on its
+ * compute instances (they share the GI's memory). */
+static inline uint64_t fg_gi_mem_used(int gpu, int gi)
+{
+    struct fg_occupancy *o = fg_occupancy();
+    uint64_t sum = 0;
+    if (!o) return 0;
+    for (int i = 0; i < FG_MAX_PROCS; i++)
+        if (o->proc[i].gpu == gpu && fg_slot_on(o, i, gi, -1) && fg_slot_alive(o, i))
+            sum += __atomic_load_n(&o->proc[i].mem, __ATOMIC_ACQUIRE);
+    return sum;
 }
 
 /* GPU memory limit of this process in bytes, 0 for none. A container given
@@ -281,19 +314,15 @@ static inline uint64_t fg_mem_limit(void)
     return fg_limit;
 }
 
-/* The memory of the MIG device this process's current context is on, 0 when
- * it is a whole GPU (libcuda, cuda_stub.c; absent from NVML). */
-uint64_t fg_mig_mem_limit(void) __attribute__((weak));
-
 /* Whether n more bytes of device memory fit on a GPU for this process: in
- * the GPU's memory, within the process's limit, and within its MIG device. */
-static inline int fg_mem_fits(int gpu, uint64_t n)
+ * the GPU's memory, within the process's limit, and, on GPU instance gi
+ * (-1: the whole GPU) of gi_bytes, in what the GI's processes leave of it. */
+static inline int fg_mem_fits(int gpu, int gi, uint64_t gi_bytes, uint64_t n)
 {
     if (fg_gpu_mem_used(gpu) + n > fg_mem_bytes()) return 0;
     uint64_t limit = fg_mem_limit();
     if (limit && fg_own_mem(gpu) + n > limit) return 0;
-    uint64_t mig = fg_mig_mem_limit ? fg_mig_mem_limit() : 0;
-    return !mig || fg_own_mem(gpu) + n <= mig;
+    return gi < 0 || fg_gi_mem_used(gpu, gi) + n <= gi_bytes;
 }
 
 #endif

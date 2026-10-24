@@ -10,14 +10,16 @@ Everything runs on a single Linux host as Incus system containers, created and c
 
 | Command | What it does |
 |---|---|
-| `make init` | Prepares the host side: `.venv` with Ansible, collections in `.collections/`, secrets in `.secrets/`, builds `fakebmc`, `fakenmxc`, `fakedp` and topograph, checks host prerequisites. Every other target runs it first. |
+| `make init` | Prepares the host side: `.venv` with Ansible, collections in `.collections/`, secrets in `.secrets/`, builds `fakebmc`, `fakenmxc`, `fakedp` and topograph, checks host prerequisites. Every target that works on the lab runs it first. |
 | `make up` | `init` + `provision` + `configure`: a complete cluster. |
 | `make provision` | `playbooks/provision.yml`: Incus project, containers, static addresses, volumes, device nodes, sideband and telemetry wiring, BMC certificates. |
 | `make configure` | `playbooks/site.yml`: configures every instance (idempotent; re-run after changing variables). |
 | `make frameworks` | `playbooks/frameworks.yml`: PyTorch and Ray venv on `/shared` (several GB). |
 | `make test` | `playbooks/test.yml`: end-to-end checks ([Testing](testing.md)). |
 | `make test-fakegpu` | Fake GPU library tests on this machine, without the lab (pytest, `tests/fakegpu`; [Testing](testing.md#fake-gpu-library-tests)). |
+| `make test-fakedp` | Unit tests of the GPU device plugin on this machine, without the lab (`go vet`, `go test -race` in `fakedp`; [Testing](testing.md#device-plugin-tests)). |
 | `make test-bmc`, `make test-bmc-disruptive`, `make test-bmc-conformance` | BMC integration tests from the host (pytest, `tests/bmc`; [Testing](testing.md#bmc-integration-tests)). |
+| `make stop`, `make start` | `playbooks/power.yml`: stops every instance, GPU trays first and storage last, or starts them in the reverse order. Instances, data and monitoring history are kept; the services take a minute or two to come back after `make start`. |
 | `make down` | Deletes all instances; volumes (homes and venv, object data and its JuiceFS metadata, scratch), secrets and caches stay. |
 | `make purge` | Also deletes volumes, the scratch pool, the `trays` project and BMC certificates. |
 | `make shell` / `make shell-root` / `make shell-<instance>` | Shells via `incus exec` ([Identity & access](identity-and-access.md)). |
@@ -31,7 +33,7 @@ Commands that need the Incus socket run under `sg incus-admin`, so a group membe
 - `local.yml`: your own values (created by `make init`, git-ignored); it overrides `all.yml`.
 - `inventory/hosts.yml`: the instances, groups, static addresses (`ip_host`) and tray numbers.
 
-After a change, run `make configure`, or `make provision` for instance settings such as limits and devices (it applies changed CPU and memory limits to running instances and restarts k3s there, so its nodes report their new capacity). The exception is `scheduler` (`slurm` or `k3s`): it decides what is installed, so changing it takes `make down` and `make up` (volumes are kept).
+After a change, run `make configure`, or `make provision` for instance settings such as limits and devices (it applies changed CPU and memory limits to running instances and restarts k3s there, so its nodes report their new capacity). The exceptions are `scheduler` (`slurm` or `k3s`), which decides what is installed, and turning `kuberay` or `nvidia_dra` off: `make configure` does not remove what they installed, so these take `make down` and `make up` (volumes are kept).
 
 | Group | Instances |
 |---|---|

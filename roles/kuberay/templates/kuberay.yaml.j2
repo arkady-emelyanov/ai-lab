@@ -20,7 +20,7 @@ spec:
   chart: kuberay-operator
   version: {{ kuberay_version }}
   targetNamespace: {{ kuberay_namespace }}
-  # The chart's requests equal its limits (512 MiB); it uses about 25 MiB.
+  # The chart's requests equal its limits (512 MiB); it uses about 30 MiB.
   valuesContent: |-
     {{ on_controller | combine({'resources': {'limits': {'cpu': '100m', 'memory': '512Mi'},
                                               'requests': {'cpu': '20m', 'memory': '64Mi'}}}) | to_json }}

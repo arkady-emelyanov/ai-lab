@@ -19,6 +19,10 @@ In k3s mode the lab runs NVIDIA's DRA driver unchanged (`nvidia_dra: true`, the 
 
 The controller and each tray's plugin use about 10 MiB each.
 
+On a lab built before IMEX channels existed, the trays lack the IMEX device nodes, which Incus adds (`playbooks/provision.yml`): run `make provision`, then `make configure`. Without them fabric memory fails with `CUDA_ERROR_NOT_PERMITTED` everywhere, also in Slurm jobs.
+
+`nvidia_dra: false` in `local.yml` leaves the DRA driver out; turning it off on a built lab takes `make down` and `make up`, [as for `scheduler`](platform.md#configuration).
+
 ## How it works
 
 ### The driver on the fake GPUs
@@ -64,6 +68,8 @@ rank 0 on imex-share-…-rank-0-0: exported 2 MiB as a fabric handle
 rank 1 on imex-share-…-rank-0-1: imported the fabric handle, read the pattern
 ```
 
+The ranks meet in `~/.imex-<name>`, which rank 0 removes at the end. A rank whose peer failed, or did not arrive within 5 minutes, stops with an error.
+
 While a ComputeDomain's pods run: `kubectl get computedomain <name> -o yaml` shows the domain `Ready` with its nodes and clique; as cluster admin, `bin/kubectl -n nvidia-dra-driver-gpu exec <computedomain-daemon pod> -- nvidia-imex-ctl -c /imexd/imexd.cfg -N` shows the IMEX domain:
 
 ```
@@ -76,14 +82,14 @@ For your own workloads: add a ComputeDomain with `channel.resourceClaimTemplate.
 
 ## Verification
 
-`make test` in k3s mode runs `imex-share.yaml` as `joe` (rank 1 reads the pattern rank 0 wrote on the other tray) and checks that a GPU pod without a channel gets `CUDA_ERROR_NOT_PERMITTED` for fabric memory ([Testing](testing.md)). `make test-fakegpu` checks the channel rule in the fake driver.
+`make test` in k3s mode runs `imex-share.yaml` as `joe` (rank 1 reads the pattern rank 0 wrote on the other tray), checks that Kueue admitted it with its 2 channels as `nvidia.com/imex-channel`, and checks that a GPU pod without a channel gets `CUDA_ERROR_NOT_PERMITTED` for fabric memory ([Testing](testing.md)). `make test-fakegpu` checks the channel rule in the fake driver.
 
 ## Limitations
 
 - GPUs through DRA (`resources.gpus.enabled`, the DRA driver's own GPU allocation) are off: on the fake NVML the plugin's GPU discovery fails (MIG queries the fake NVML answers as supported), and the lab's device plugin also gives pods the fake driver's configuration and state, which the DRA driver's CDI specifications would not. So there is still no GPU reset between pods ([Kubernetes](kubernetes.md#limitations)).
-- One channel per tray (`channel0`, the default `Single` allocation mode): `allocationMode: All` (all 2048 channels) is not available, and one ComputeDomain's pods per tray at a time get a channel.
+- One channel per tray (`channel0`, the default `Single` allocation mode): `allocationMode: All` (all 2048 channels) is not available, and each pod's claim takes the tray's channel, so only one pod with a channel runs on a tray at a time, whichever its ComputeDomain (Kueue's `nvidia.com/imex-channel` quota is one per tray).
 - The fake IMEX daemon only shows the domain's state: memory moves through `/shared`, whether or not the daemons are connected.
-- Untested with Run:ai: KAI and pods with resource claims in project namespaces.
+- With `runai: true`, `make test` passes (it runs `imex-share` in `joe`'s namespace, under Kueue); ComputeDomains and channel claims in Run:ai project namespaces, scheduled by KAI, are untested.
 
 ## References
 

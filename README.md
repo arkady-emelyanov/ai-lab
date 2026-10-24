@@ -76,6 +76,8 @@ kubectl get nodes -L nvidia.com/gpu.clique      # two trays, 4 GPUs and an NVLin
 
 Then open Grafana at `http://10.107.111.10:3000` (user `admin`, password in `.secrets/grafana.pass`) and watch the **Lab overview** while a job runs, for example `ddp-train` from the [examples](examples/README.md).
 
+`make up` writes `endpoints.md` in the repository root: every web UI, API and login of your lab, with its addresses ([Lab endpoints](docs/endpoints.md)).
+
 ## Disclaimer
 
 This is an independent, personal research and education project. It is not affiliated with, endorsed by, sponsored by or supported by NVIDIA Corporation.

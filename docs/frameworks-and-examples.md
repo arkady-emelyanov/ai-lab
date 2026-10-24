@@ -8,7 +8,7 @@
 
 ## Usage
 
-The examples are in `examples/` ([overview](../examples/README.md)): the same four jobs in `slurm/` and `kubernetes/`, sharing the Python programs. Copy them to the cluster and submit from the login node:
+The examples are in `examples/` ([overview](../examples/README.md)): four jobs in both `slurm/` and `kubernetes/`, sharing the Python programs, and Kubernetes-only ones: a KubeRay `RayJob`, `imex-share` (GPU memory shared between the trays over a ComputeDomain's IMEX channels; needs `nvidia_dra`, [ComputeDomains](compute-domains.md)) and inference servers. Copy them to the cluster and submit from the login node:
 
 ```
 bin/scp -r examples login:
@@ -49,7 +49,7 @@ Split across partitions, the gradient all-reduce crosses InfiniBand, so the step
 
 ## Verification
 
-`make test` runs all four examples as `joe` through the configured scheduler (Slurm batch jobs, or JobSets in k3s mode, plus `ray-job.yaml` as a KubeRay RayJob, [KubeRay](kuberay.md)) and checks their output (topology and fabric lines, rank 7, all 8 DDP ranks, 8 Ray tasks); in Slurm mode also that every job is `COMPLETED` in accounting.
+`make test` runs the four shared examples as `joe` through the configured scheduler (Slurm batch jobs, or JobSets in k3s mode, plus `ray-job.yaml` as a KubeRay RayJob, [KubeRay](kuberay.md), and with `nvidia_dra` `imex-share.yaml`, [ComputeDomains](compute-domains.md)) and checks their output (topology and fabric lines, rank 7, all 8 DDP ranks, 8 Ray tasks, the fabric memory read on the other tray); in Slurm mode also that every job is `COMPLETED` in accounting.
 
 ## Configuration
 
@@ -57,7 +57,8 @@ Split across partitions, the gradient all-reduce crosses InfiniBand, so the step
 |---|---|
 | `frameworks_venv` | `/shared/venv` |
 | `torch_index` | `https://download.pytorch.org/whl/cu130` |
-| `frameworks_packages` | `torch`, `ray[default]`, `numpy`, `boto3` |
+| `ray_version` | `2.59.0` (also the Ray of KubeRay's dashboard for finished clusters) |
+| `frameworks_packages` | `torch`, `ray[default]==<ray_version>`, `numpy`, `boto3` |
 
 ## Limitations
 

@@ -48,10 +48,11 @@ make test          # end-to-end checks, ~10 minutes
 
 ### 4. Hand over
 
-Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and `endpoints.md` in the repository root (written by `make up` with this lab's addresses; [Lab endpoints](docs/endpoints.md) describes them): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, in k3s mode the KubeRay dashboard at `http://kuberay.<bridge address>.10.nip.io` (no login), with Run:ai its UI at `https://runai.<bridge address>.10.nip.io` (`admin@ai-lab.local`, password in `.secrets/runai-admin.pass`, certificate authority `.secrets/runai/ca.crt` to import in the browser), `make test` to re-check.
+Tell the user what they have and how to use it, from the README's [Quickstart](README.md#quickstart) and `endpoints.md` in the repository root (written by `make up` with this lab's addresses; [Lab endpoints](docs/endpoints.md) describes them): `bin/ssh login` (the login node as user `joe`), the example jobs (`bin/scp -r examples login:`), Grafana at `http://<bridge address>.10:3000` with the password in `.secrets/grafana.pass`, in k3s mode the KubeRay dashboard at `http://kuberay.<bridge address>.10.nip.io` and Ray's dashboard for finished clusters at `http://ray-history.<bridge address>.10.nip.io` (no login), with Run:ai its UI at `https://runai.<bridge address>.10.nip.io` (`admin@ai-lab.local`, password in `.secrets/runai-admin.pass`, certificate authority `.secrets/runai/ca.crt` to import in the browser), `make test` to re-check.
 
 ### Rules
 
+- `make stop` and `make start` stop the lab's instances and start them again, keeping everything: use them to free the host's memory and CPUs.
 - `make down` deletes the instances (data volumes are kept) and `make purge` deletes everything, including volumes: run them only when the user asks.
 - Do not commit or print the contents of `.secrets/`.
 - The lab's addresses come from the Incus bridge; the docs show `10.107.111.x`, the user's bridge may differ (`incus network get incusbr0 ipv4.address`).
@@ -64,17 +65,17 @@ Tell the user what they have and how to use it, from the README's [Quickstart](R
 AGENTS.md                instructions for AI coding agents (deploying the lab for a user; CLAUDE.md points to it)
 skills/ai-lab/           installable agent skill for operating the lab (jobs, GPUs, partitions, BMCs, metrics)
 local.yml                your settings, overriding inventory/group_vars/all.yml (created by make init, not in git)
-Makefile                 entry points (init, up, configure, frameworks, test, down, purge, shell)
+Makefile                 entry points (init, up, configure, frameworks, test, stop, start, down, purge, shell)
 bin/                     ssh / scp / ssh-copy-id wrappers, redfish, nvlink, kubectl and grpcurl helpers
 inventory/               instances and groups (hosts.yml), all tunables and their defaults (group_vars/all.yml)
-playbooks/               provision (Incus), site (configuration), frameworks, test, destroy
+playbooks/               provision (Incus), site (configuration), frameworks, test, power (stop, start), destroy
 roles/                   one role per component (see the component pages)
 fakegpu/                 fake NVIDIA userspace: C stubs, symbol lists, nvidia-smi
 fakebmc/                 Redfish BMC service (Go): GPU tray and switch tray roles
 fakenmxc/                NVLink partition controller and fabric telemetry (Go, gRPC)
 fakeib/                  ibnetdiscover look-alike for the emulated InfiniBand fabric
 fakedp/                  Kubernetes GPU device plugin (Go, CDI) for the k3s scheduler
-examples/                the same four jobs (topology, scheduling, DDP, Ray) for slurm/ and kubernetes/
+examples/                four jobs (topology, scheduling, DDP, Ray) for slurm/ and kubernetes/, plus Kubernetes-only ones (RayJob, IMEX sharing, inference)
 tests/bmc/               BMC integration tests (pytest)
 tests/fakegpu/           fake GPU library tests on the host, no lab needed (pytest)
 docs/                    component documentation
@@ -82,7 +83,7 @@ docs/                    component documentation
 .cache/                  build tools, topograph checkout, k3s binary (git-ignored)
 ```
 
-- Tests: `make test-fakegpu` (fake GPU libraries, on the host, no lab), `make test-bmc` (BMC integration tests against the running lab; `-disruptive` power-cycles a tray), `make test` (end to end). See [Testing](docs/testing.md).
+- Tests: `make test-fakegpu` (fake GPU libraries, on the host, no lab), `make test-fakedp` (GPU device plugin unit tests, on the host, no lab), `make test-bmc` (BMC integration tests against the running lab; `-disruptive` power-cycles a tray), `make test` (end to end). See [Testing](docs/testing.md).
 - Commits keep `inventory/group_vars/all.yml` at the shared defaults (`scheduler: slurm`); local choices belong in the uncommitted `local.yml`. Tools that read settings without Ansible (`bin/redfish`, `bin/nvlink`, `tests/bmc`, the Makefile) read `all.yml` and then `local.yml`, last value wins; new ones must do the same.
 - Changes to roles or playbooks apply to a running lab with `make configure`; it keeps data and monitoring history, unlike `make down` + `make up`.
 - Markdown: never hard-wrap prose; one line per paragraph or list item.

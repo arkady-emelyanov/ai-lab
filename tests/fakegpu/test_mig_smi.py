@@ -11,6 +11,36 @@ from mig_tray import PLACEMENTS, PROFILES, Tray
 
 BUS0 = "00000008:01:00.0"
 
+# nvidia-smi mig -lgip on a GB200, verbatim (mig-parted#227).
+LGIP = """\
++-------------------------------------------------------------------------------+
+| GPU instance profiles:                                                        |
+| GPU   Name               ID    Instances   Memory     P2P    SM    DEC   ENC  |
+|                                Free/Total   GiB              CE    JPEG  OFA  |
+|===============================================================================|
+|   0  MIG 1g.23gb         19     7/7        22.00      No     18     1     0   |
+|                                                               2     1     0   |
++-------------------------------------------------------------------------------+
+|   0  MIG 1g.23gb+me      20     1/1        22.00      No     18     1     0   |
+|                                                               2     1     1   |
++-------------------------------------------------------------------------------+
+|   0  MIG 1g.47gb         15     4/4        45.50      No     32     1     0   |
+|                                                               2     1     0   |
++-------------------------------------------------------------------------------+
+|   0  MIG 2g.47gb         14     3/3        45.50      No     38     2     0   |
+|                                                               4     2     0   |
++-------------------------------------------------------------------------------+
+|   0  MIG 3g.93gb          9     2/2        91.50      No     72     3     0   |
+|                                                               6     3     0   |
++-------------------------------------------------------------------------------+
+|   0  MIG 4g.93gb          5     1/1        91.50      No     76     4     0   |
+|                                                               8     4     1   |
++-------------------------------------------------------------------------------+
+|   0  MIG 7g.186gb         0     1/1        184.00     No     152    7     0   |
+|                                                              16     7     2   |
++-------------------------------------------------------------------------------+
+"""
+
 
 @pytest.fixture
 def tray(tmp_path):
@@ -48,12 +78,74 @@ def test_list_gpu_instance_profiles(tray):
     assert re.search(r"1g\.[1-9]+gb", out).group(0) == "1g.23gb"
 
 
+def test_list_gpu_instance_profiles_verbatim(tray):
+    """mig -lgip as a GB200 prints it, character for character: profiles in
+    nvidia-smi's order (by size), the 81-column box."""
+    assert tray.smi("mig", "-lgip", "-i", "0").stdout == LGIP
+
+
 def test_list_placements(tray):
+    """In nvidia-smi's order (the MIG user guide's -lgipp: 19, 20, 15, 14, 9,
+    5, 0)."""
     out = tray.smi("mig", "-lgipp", "-i", "0").stdout
+    expected = ""
     for pid, places in PLACEMENTS.items():
         starts = ",".join(str(s) for s, _ in places)
         label = "Placement :" if len(places) == 1 else "Placements:"
-        assert f"GPU  0 Profile ID {pid:2d} {label} {{{starts}}}:{places[0][1]}\n" in out, pid
+        expected += f"GPU  0 Profile ID {pid:2d} {label} {{{starts}}}:{places[0][1]}\n"
+    assert out == expected
+
+
+def test_changes_need_root(tray):
+    """As a user nvidia-smi passes NVML's NO_PERMISSION on: 'Insufficient
+    Permissions', exit code 4 (the real tool's for permissions)."""
+    p = tray.smi("-i", "0", "-mig", "1", root=False, check=False)
+    assert p.returncode == 4
+    assert p.stdout == (f"Unable to enable MIG Mode for GPU {BUS0}: Insufficient Permissions\n"
+                        "Terminating early due to previous errors.\n")
+    tray.smi("-i", "0", "-mig", "1")
+    p = tray.smi("mig", "-cgi", "19", "-C", root=False, check=False)
+    assert p.returncode == 4
+    assert p.stdout == ("Unable to create a GPU instance on GPU  0 using profile 19: Insufficient Permissions\n"
+                        "Failed to create GPU instances: Insufficient Permissions\n")
+    tray.smi("mig", "-cgi", "19", "-C")
+    p = tray.smi("mig", "-dci", root=False, check=False)
+    assert p.returncode == 4 and "Insufficient Permissions" in p.stdout
+    assert "MIG 1g.23gb" in tray.smi("mig", "-lgi", root=False).stdout  # listing needs no root
+
+
+def test_pending_mode_while_in_use_then_reset(tray):
+    """-mig 1 on a GPU a process uses: the real tool's pending warning, the
+    mode pending; once the process is gone, nvidia-smi -r applies it."""
+    with tray.holding():
+        p = tray.smi("-i", "0", "-mig", "1")
+        assert p.stdout == (f"Warning: MIG mode is in pending enable state for GPU {BUS0}:In use by another client\n"
+                            f"{BUS0} is currently being used by one or more other processes (e.g. CUDA application or "
+                            "a monitoring application such as another instance of nvidia-smi). Please first kill all "
+                            "processes using the device and retry the command or reboot the system to make MIG mode "
+                            "effective.\nAll done.\n")
+        q = tray.smi("--query-gpu=mig.mode.current,mig.mode.pending", "--format=csv,noheader").stdout
+        assert q == "Disabled, Enabled\n"
+        assert tray.smi("-r", check=False).returncode != 0  # refused while the process runs
+    assert tray.smi("-r", "-i", "0").stdout == f"GPU {BUS0} was successfully reset.\nAll done.\n"
+    q = tray.smi("--query-gpu=mig.mode.current,mig.mode.pending", "--format=csv,noheader").stdout
+    assert q == "Enabled, Enabled\n"
+
+
+def test_destroy_in_use(tray):
+    """mig -dci on a compute instance a process uses: In use by another
+    client; the other instances go."""
+    tray.smi("-mig", "1")
+    tray.smi("mig", "-cgi", "19,19", "-C")
+    uuid = tray.nvml("d = m.dev(0); out = m.uuid(m.mig_devices(d)[1])[1]")  # GI 13
+    with tray.holding(env={"CUDA_VISIBLE_DEVICES": uuid}):
+        p = tray.smi("mig", "-dci", check=False)
+        assert p.returncode == 19
+        assert p.stdout == ("Successfully destroyed compute instance ID  0 from GPU  0 GPU instance ID 12\n"
+                            "Unable to destroy compute instance ID  0 from GPU  0 GPU instance ID 13: "
+                            "In use by another client\n"
+                            "Failed to destroy compute instances: In use by another client\n")
+    assert tray.smi("mig", "-dci").returncode == 0
 
 
 def test_create_list_and_destroy(tray):
@@ -115,11 +207,123 @@ def test_query_shows_mig_mode_and_devices(tray):
 
 
 def test_list_compute_instance_profiles(tray):
+    """mig -lcip as a GB200 prints it for a 1g.47gb (dra-driver-nvidia-gpu
+    #1454, verbatim but for the GPU instance id: 6 here, 4 there)."""
     tray.smi("-mig", "1")
     tray.smi("mig", "-cgi", "15")
     out = tray.smi("mig", "-lcip").stdout
-    assert re.search(r"\|\s+0\s+\d+\s+MIG 1g\.47gb\s+0\s+1/1\s+18\s+", out), out
-    assert re.search(r"\|\s+0\s+\d+\s+MIG 1g\.47gb\s+7\*\s+1/1\s+32\s+", out), out
+    assert out == """\
++--------------------------------------------------------------------------------------+
+| Compute instance profiles:                                                           |
+| GPU     GPU       Name             Profile  Instances   Exclusive       Shared       |
+|       Instance                       ID     Free/Total     SM       DEC   ENC   OFA  |
+|         ID                                                          CE    JPEG       |
+|======================================================================================|
+|   0      6       MIG 1g.47gb          0      1/1           18        1     0     0   |
+|                                                                      2     1         |
++--------------------------------------------------------------------------------------+
+|   0      6       MIG 1g.47gb          7*     1/1           32        1     0     0   |
+|                                                                      2     1         |
++--------------------------------------------------------------------------------------+
+"""
+
+
+def test_list_gpu_instances_layout(tray):
+    """mig -lgi in the MIG user guide's layout, ordered as profiles are
+    listed, then by id."""
+    tray.smi("-mig", "1")
+    tray.smi("mig", "-cgi", "14,19,19")
+    assert tray.smi("mig", "-lgi").stdout == """\
++----------------------------------------------------+
+| GPU instances:                                     |
+| GPU   Name          Profile  Instance   Placement  |
+|                       ID       ID       Start:Size |
+|====================================================|
+|   0  MIG 1g.23gb      19       10          3:1     |
++----------------------------------------------------+
+|   0  MIG 1g.23gb      19       13          6:1     |
++----------------------------------------------------+
+|   0  MIG 2g.47gb      14        5          4:2     |
++----------------------------------------------------+
+"""
+
+
+def test_create_compute_instances(tray):
+    """mig -cci names no compute instance id (the MIG user guide's
+    output); 1c.3g.93gb has a 1g's SMs."""
+    tray.smi("-mig", "1")
+    tray.smi("mig", "-cgi", "9")
+    out = tray.smi("mig", "-cci", "0,0,0", "-gi", "2").stdout
+    assert out == ("Successfully created compute instance on GPU  0 GPU instance ID  2 using profile "
+                   "MIG 1c.3g.93gb (ID  0)\n") * 3
+    assert tray.nvml("d = m.dev(0); out = [m.attributes(h)[1]['multiprocessorCount'] for h in m.mig_devices(d)]") \
+        == [18, 18, 18]
+
+
+def mig_section(out):
+    """The default output's MIG devices section, its rows from index 7."""
+    lines = out.splitlines()
+    i = lines.index("| MIG devices:" + " " * 76 + "|") - 1
+    return lines[i:lines.index("", i)]
+
+
+def test_default_table_without_mig(tray):
+    out = tray.smi().stdout
+    assert "MIG devices:" not in out
+    row = [line for line in out.splitlines() if line.startswith("|   0  NVIDIA GB200")][0]
+    assert out.splitlines()[out.splitlines().index(row) + 2] == "|" + " " * 41 + "|" + " " * 24 + "|" + "Disabled".rjust(21) + " |"
+
+
+def test_default_table_with_mig(tray):
+    """MIG M. Enabled, GPU-Util N/A, and the MIG devices section as a
+    GB200's (dra-driver-nvidia-gpu#1454: a 1g.47gb with its 18-SM compute
+    instance, there at GI 4 with 46848 MiB on another driver); compute
+    instances of one GPU instance share its memory cell."""
+    tray.smi("-mig", "1")
+    tray.smi("mig", "-cgi", "15")
+    tray.smi("mig", "-cci", "0", "-gi", "6")
+    out = tray.smi().stdout
+    lines = out.splitlines()
+    gpu = lines.index([line for line in lines if line.startswith("|   0  NVIDIA GB200")][0])
+    assert lines[gpu].endswith("|                   On |")
+    assert lines[gpu + 1].endswith("|     N/A      Default |")
+    assert lines[gpu + 2] == "|                                         |                        |              Enabled |"
+    assert mig_section(out) == """\
++-----------------------------------------------------------------------------------------+
+| MIG devices:                                                                            |
++------------------+----------------------------------+-----------+-----------------------+
+| GPU  GI  CI  MIG |              Shared Memory-Usage |        Vol|        Shared         |
+|      ID  ID  Dev |                Shared BAR1-Usage | SM     Unc| CE ENC  DEC  OFA  JPG |
+|                  |                                  |        ECC|                       |
+|==================+==================================+===========+=======================|
+|  0    6   0   0  |              16MiB / 46592MiB    | 18      0 |  2   0    1    0    1 |
+|                  |               0MiB / 18225MiB    |           |                       |
++------------------+----------------------------------+-----------+-----------------------+""".splitlines()
+    tray.smi("mig", "-cgi", "9")
+    tray.smi("mig", "-cci", "0,0", "-gi", "1")  # the 3g at 0:4
+    rows = mig_section(tray.smi().stdout)[7:]
+    assert rows[:5] == ["|  0    1   0   0  |              16MiB / 93696MiB    | 18      0 |  6   0    3    0    3 |",
+                        "|                  |               0MiB / 36650MiB    |           |                       |",
+                        "+------------------+                                  +-----------+-----------------------+",
+                        "|  0    1   1   1  |                                  | 18      0 |  6   0    3    0    3 |",
+                        "|                  |                                  |           |                       |"]
+
+
+def test_default_table_mig_without_devices(tray):
+    tray.smi("-mig", "1")
+    rows = mig_section(tray.smi().stdout)[7:]
+    assert rows == ["|  No MIG devices found" + " " * 67 + "|", "+" + "-" * 89 + "+"]
+
+
+def test_processes_on_mig_devices(tray):
+    """The process table names a process's GPU and compute instance."""
+    tray.smi("-mig", "1")
+    tray.smi("mig", "-cgi", "19", "-C")
+    uuid = tray.nvml("d = m.dev(0); out = m.uuid(m.mig_devices(d)[0])[1]")
+    with tray.holding(mib=100, env={"CUDA_VISIBLE_DEVICES": uuid}) as p:
+        out = tray.smi().stdout
+        assert re.search(rf"\|    0   13    0 +{p.pid} +C +\S+ +100MiB \|", out), out
+        assert "|  0   13   0   0  |             116MiB / 22528MiB    |" in out
 
 
 def test_reset_by_bus_id(tray):

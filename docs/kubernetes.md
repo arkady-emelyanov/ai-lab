@@ -16,7 +16,7 @@ To switch a built lab: `make down`, change `scheduler`, `make up`. Volumes, home
 | CDI specification | `/etc/cdi/fakegpu.json` on the trays | one device per GPU (`/dev/nvidia<n>`), plus the fake driver, its configuration, sideband and telemetry for every GPU container |
 | Node Feature Discovery + GPU Feature Discovery | `node-feature-discovery`, `gpu-feature-discovery` namespaces | NVIDIA's GFD reads the fake NVML and labels the trays: `nvidia.com/gpu.product`, `.memory`, `.count`, `.family`, `.clique` (`<ClusterUUID>.<CliqueId>`), `.machine` (`tray_product_name`, not the host's board), CUDA versions; with MIG on, the MIG devices (`nvidia.com/mig-<profile>.count`, `.memory`, `.multiprocessors`, ...: the mixed strategy) |
 | topograph | systemd on `sched-control` | labels the trays from the live fabric: `accelerator.topograph.run/domain` (NVLink domain and clique), `fabric.topograph.run/tier-0/1` (InfiniBand leaf, spine); every minute |
-| Kueue | `kueue-system` | ClusterQueue `gpu` (the trays' CPUs, memory, 8 GPUs); per user namespace a LocalQueue `gpu` and a `default` one that takes workloads without a queue label, so nothing bypasses the quota; topology-aware scheduling over topograph's labels; admits multi-pod jobs as a gang |
+| Kueue | `kueue-system` | ClusterQueue `gpu` (the trays' CPUs, memory, 8 GPUs; with `nvidia_dra`, `nvidia.com/imex-channel`, one per tray, for ComputeDomains' IMEX channel claims); per user namespace a LocalQueue `gpu` and a `default` one that takes workloads without a queue label, so nothing bypasses the quota; topology-aware scheduling over topograph's labels; admits multi-pod jobs as a gang |
 | JobSet | `jobset-system` | multi-pod jobs with stable DNS names (rank 0 address for torchrun, Ray head) |
 | kube-state-metrics | `kube-system`, NodePort 30808 | cluster state for Prometheus |
 | NVIDIA DRA driver, ComputeDomains (`nvidia_dra: true`, the default) | `nvidia-dra-driver-gpu`; kubelet plugin on the trays | IMEX channels and daemons for GPU memory shared over NVLink between trays, as on GB200; GPUs stay with the device plugin ([ComputeDomains](compute-domains.md)) |
@@ -39,9 +39,11 @@ NVIDIA's device plugin and container toolkit need a real driver install, so the 
 
 ### MIG
 
-A GPU split into MIG devices ([Emulated GPUs](fake-gpu.md#mig)) is offered to pods as NVIDIA's device plugin does with its mixed strategy: `fakedp` stops advertising the GPU as `nvidia.com/gpu` and advertises each of its MIG devices under its profile, `nvidia.com/mig-1g.23gb`, `nvidia.com/mig-3g.93gb`, ... (`+me` as `.me`), the same names GPU Feature Discovery labels the node with (`nvidia.com/mig-1g.23gb.count`, ...). It reads the tray's MIG layout from `nvidia-smi` every 10 seconds, so a change reaches the node within about half a minute. A container given MIG devices gets their parent GPU (CDI) and `NVIDIA_VISIBLE_DEVICES` with their `MIG-` UUIDs, and sees only those: `nvidia-smi -L` lists the GPU and its one slice, CUDA has one device with the slice's memory and SMs.
+A GPU split into MIG devices ([Emulated GPUs](fake-gpu.md#mig)) is offered to pods as NVIDIA's device plugin does with its mixed strategy: `fakedp` stops advertising the GPU as `nvidia.com/gpu` and advertises each of its MIG devices under its profile, `nvidia.com/mig-1g.23gb`, `nvidia.com/mig-3g.93gb`, ... (`+me` as `.me`), the same names GPU Feature Discovery labels the node with (`nvidia.com/mig-1g.23gb.count`, ...). It reads the tray's MIG layout from `nvidia-smi` every 10 seconds, so a change reaches the node within about half a minute; it starts only once it has read it, so a GPU with MIG on is never offered whole (nor allocated whole). A container given MIG devices gets their parent GPU (CDI) and, as NVIDIA's plugin with its `volume-mounts` device list strategy, a file per `MIG-` UUID in `/var/run/nvidia-container-devices` (`NVIDIA_VISIBLE_DEVICES` names that directory), and sees only those: `nvidia-smi -L` lists the GPU and its one slice, CUDA has one device with the slice's memory and SMs. Unlike a list in `NVIDIA_VISIBLE_DEVICES`, of which kubelet keeps one value when several resources set it, the files add up, so one container can have MIG devices of several profiles, and whole GPUs besides.
 
-Kueue's ClusterQueue `gpu` covers each MIG resource, with a quota of what the trays' GPUs can hold of it (7 `1g.23gb` per GPU, ...); the trays' capacity decides the actual mix. Splitting GPUs is an administrator's job, as with NVIDIA's MIG manager: on a tray, `nvidia-smi -i 3 -mig 1` and `nvidia-smi mig -i 3 -cgi 3g.93gb,1g.23gb,1g.23gb -C` (or `mig-parted`); a GPU switches only while no process uses it. A pod then asks for a slice:
+Only MIG devices whose compute instance fills its GPU instance are offered: a GPU instance split into smaller compute instances (`nvidia-smi -L` lists them as `MIG 1c.3g.93gb`, ...) has no resource, as with NVIDIA's mixed strategy (NVIDIA's plugin refuses to start with one; `fakedp` leaves them out). A profile's resource exists while the tray has devices of it: when the last one goes, `fakedp` stops that profile's plugin, and kubelet removes the resource from the node after its grace period (5 minutes), as when NVIDIA's MIG manager restarts NVIDIA's plugin with a new layout.
+
+Kueue's ClusterQueue `gpu` covers each MIG resource, with a quota of what the trays' GPUs can hold of it (7 `1g.23gb` per GPU, ...); the trays' capacity decides the actual mix. Splitting GPUs is an administrator's job, as with NVIDIA's MIG manager: the MIG commands run as root on a tray (`bin/ssh sched-worker2` logs in as root), `bin/ssh sched-worker2 nvidia-smi -i 3 -mig 1`, then `bin/ssh sched-worker2 nvidia-smi mig -i 3 -cgi 3g.93gb,1g.23gb,1g.23gb -C` (or `mig-parted`); a GPU switches only while no process uses it. A pod then asks for a slice:
 
 ```
 resources:
@@ -61,7 +63,7 @@ topograph runs on the controller, outside the cluster, as in Slurm mode; it is g
 
 Each directory user has:
 
-- a namespace of the same name, with `edit` rights in it (plus JobSets and Kueue)
+- a namespace of the same name, with `edit` rights in it (plus JobSets and Kueue; with `nvidia_dra`, ComputeDomains, and read access to ResourceClaims and ResourceClaimTemplates)
 - a client certificate and `~/.kube/config` on `/shared`
 - read access to nodes, ClusterQueues and the topology
 
@@ -143,7 +145,7 @@ bin/ssh sched-control update-topology --dry-run     # trays with their NVLink do
 - NVIDIA's DRA driver runs with ComputeDomains only (IMEX channels); GPUs come from the lab's device plugin, not through DRA ([ComputeDomains](compute-domains.md#limitations)). NVLink placement is through Kueue topology-aware scheduling.
 - Kubernetes users authenticate with client certificates, not LDAP.
 - Fake NCCL ranks exchange only their NVLink partitions, so a pod failing does not fail its peers' collectives ([Emulated GPUs](fake-gpu.md)).
-- No GPU handover between pods. The device-plugin API the lab uses has no hook on the node after a pod ends that could reset its GPUs (DRA drivers have one; the lab's GPUs do not go through DRA). GPUs are reset at tray boot. After an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) so the labels pick up the new clique.
+- No GPU handover between pods. The device-plugin API the lab uses has no hook on the node after a pod ends that could reset its GPUs (DRA drivers have one; the lab's GPUs do not go through DRA). GPUs are reset at tray boot, and their MIG instances go (MIG mode stays, as with the real driver: split them again after a tray's boot). After an NVLink partition change, reset idle GPUs by hand (`bin/ssh sched-worker2 nvidia-smi --gpu-reset`) so the labels pick up the new clique.
 
 ## References
 

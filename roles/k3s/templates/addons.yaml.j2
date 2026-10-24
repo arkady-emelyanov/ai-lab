@@ -38,7 +38,8 @@ spec:
     controllerManager:
       nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
-      # The chart requests its limits (512 MiB); Kueue uses about 150 MiB here.
+      # The chart requests its limits (500m CPU, 512 MiB); Kueue uses little
+      # CPU and about 150 MiB here.
       manager:
         resources:
           limits: {cpu: "2", memory: 512Mi}

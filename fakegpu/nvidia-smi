@@ -4,8 +4,9 @@
 Supported: default table, -L, topo -m, nvlink -s, -q [-d FABRIC], dmon [-c N],
 --query-gpu=FIELDS / --query-compute-apps=FIELDS --format=csv[,noheader][,nounits],
 -i IDS (indices or PCI bus ids), -l SECONDS, -r / --gpu-reset [-i IDS] (root, GPUs
-without processes), MIG: -mig 0|1, mig -lgip | -lgipp | -lcip [-gi IDS] | -lgi | -lci |
--cgi PROFILES [-C] | -cci [PROFILES] -gi IDS | -dci [-gi IDS] [-ci IDS] | -dgi [-gi IDS].
+without processes), MIG: -mig 0|1, mig -lgip | -lgipp | -lcip [-gi IDS] | -lgi |
+-lci [-gi IDS] | -cgi PROFILES [-C] | -cci [PROFILES] [-gi IDS] | -dci [-gi IDS] [-ci IDS] |
+-dgi [-gi IDS] (changes as root, as NVML requires), MIG devices in the default table.
 """
 import ctypes
 import datetime
@@ -190,7 +191,8 @@ class Gpu:
 
 
 def mig_devices(h):
-    """(index, GI id, CI id, UUID, CI name, attributes) of a GPU's MIG devices."""
+    """(index, GI id, CI id, UUID, CI name, attributes, memory) of a GPU's MIG
+    devices."""
     out = []
     n = ctypes.c_uint()
     check(nvml.nvmlDeviceGetMaxMigDeviceCount(h, ctypes.byref(n)))
@@ -204,7 +206,9 @@ def mig_devices(h):
         a = Attributes()
         check(nvml.nvmlDeviceGetAttributes_v2(m, ctypes.byref(a)))
         name = string("nvmlDeviceGetName", m).split(" MIG ", 1)[1]
-        out.append((i, gi.value, ci.value, string("nvmlDeviceGetUUID", m), name, a))
+        mem = Memory()
+        check(nvml.nvmlDeviceGetMemoryInfo(m, ctypes.byref(mem)))
+        out.append((i, gi.value, ci.value, string("nvmlDeviceGetUUID", m), name, a, mem))
     return out
 
 
@@ -214,10 +218,14 @@ def process_name(pid):
 
 
 def processes(handle):
+    """(pid, name, MiB, GI id, CI id) of a GPU's processes; GI and CI None
+    off MIG devices."""
     count = ctypes.c_uint(64)
     infos = (ProcessInfo * 64)()
     check(nvml.nvmlDeviceGetComputeRunningProcesses_v3(handle, ctypes.byref(count), infos))
-    return [(infos[i].pid, process_name(infos[i].pid), infos[i].usedGpuMemory >> 20) for i in range(count.value)]
+    none = 0xFFFFFFFF
+    return [(p.pid, process_name(p.pid), p.usedGpuMemory >> 20, None if p.gpuInstanceId == none else p.gpuInstanceId,
+             None if p.computeInstanceId == none else p.computeInstanceId) for p in infos[:count.value]]
 
 
 def driver_version():
@@ -253,23 +261,66 @@ def table(devs):
         left1 = f" {g.index:>3}  {g.name[:24]:<24}"
         left2 = f" N/A   {g.temp:>2}C    P{g.pstate:<2}"
         power = f"{g.power:.0f}W / {g.power_limit}W"
-        print(f"|{left1}{'On':>{40 - len(left1)}} | {g.bus_id[4:]:<16}   Off | {0:>20} |")
-        print(f"|{left2}{power:>{40 - len(left2)}} | {f'{g.mem_used}MiB / {g.mem_total}MiB':>22} | {g.util:>6}%      Default |")
-        print(f"|{'':41}|{'':24}|{'Disabled':>21} |")
+        # A MIG-enabled GPU: ECC shown as on, utilisation per MIG device only (N/A).
+        ecc, util = ("On", "N/A") if g.mig_current else (0, f"{g.util}%")
+        print(f"|{left1}{'On':>{40 - len(left1)}} | {g.bus_id[4:]:<16}   Off | {ecc:>20} |")
+        print(f"|{left2}{power:>{40 - len(left2)}} | {f'{g.mem_used}MiB / {g.mem_total}MiB':>22} | {util:>7}      Default |")
+        print(f"|{'':41}|{'':24}|{'Enabled' if g.mig_current else 'Disabled':>21} |")
         print(sep)
     print()
+    if any(g.mig_current for g in devs):
+        mig_table(devs)
+        print()
     print("+-----------------------------------------------------------------------------------------+")
     print("| Processes:                                                                              |")
     print("|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |")
     print("|        ID   ID                                                               Usage      |")
     print("|=========================================================================================|")
-    rows = [(g.index, pid, name, mib) for g in devs for pid, name, mib in g.procs]
+    rows = [(g.index, *p) for g in devs for p in g.procs]
     if not rows:
         print("|  No running processes found                                                             |")
-    for idx, pid, name, mib in rows:
+    for idx, pid, name, mib, gi, ci in rows:
         name = name if len(name) <= 36 else "..." + name[-33:]
-        print(f"|  {idx:>3}   N/A  N/A  {pid:>14}      C   {name:<36} {mib:>8}MiB |")
+        gi, ci = ("N/A", "N/A") if gi is None else (gi, ci)
+        print(f"|  {idx:>3}  {gi:>3}  {ci:>3}  {pid:>14}      C   {name:<36} {mib:>8}MiB |")
     print("+-----------------------------------------------------------------------------------------+")
+
+
+# BAR1 of a MIG device: GB200's 1g.47gb (46592 MiB here) has 18225 MiB
+# (dra-driver-nvidia-gpu#1454); others in proportion to their memory.
+BAR1_MIB_PER_MIB = 18225 / 46592
+
+
+def mig_table(devs):
+    """The MIG devices section of the default output (R580's layout, as a
+    GB200 prints it): one row per compute instance; those of one GPU
+    instance share its memory cell."""
+    print("+-----------------------------------------------------------------------------------------+")
+    print("| MIG devices:                                                                            |")
+    sep = "+------------------+----------------------------------+-----------+-----------------------+"
+    print(sep)
+    print("| GPU  GI  CI  MIG |              Shared Memory-Usage |        Vol|        Shared         |")
+    print("|      ID  ID  Dev |                Shared BAR1-Usage | SM     Unc| CE ENC  DEC  OFA  JPG |")
+    print("|                  |                                  |        ECC|                       |")
+    print("|==================+==================================+===========+=======================|")
+    rows = [(g.index, *d) for g in devs if g.mig_current for d in g.mig_devices]
+    if not rows:
+        print("|  No MIG devices found                                                                   |")
+        print("+-----------------------------------------------------------------------------------------+")
+        return
+    for k, (gpu, i, gi, ci, _uuid, _name, a, mem) in enumerate(rows):
+        first = k == 0 or (rows[k - 1][0], rows[k - 1][2]) != (gpu, gi)
+        if k:  # a GPU instance's compute instances after its first share the memory cell
+            print(sep if first else sep.replace("+" + "-" * 34 + "+", "+" + " " * 34 + "+"))
+        usage = bar1 = ""
+        if first:
+            usage = f"{f'{mem.used >> 20}MiB':>19} / {f'{a.memorySizeMB}MiB':<12}"
+            bar1 = f"{'0MiB':>19} / {f'{round(a.memorySizeMB * BAR1_MIB_PER_MIB)}MiB':<12}"
+        print(f"|{gpu:>3}{gi:>5}{ci:>4}{i:>4}  |{usage:<34}| {a.multiprocessorCount:<3}{0:>6} |"
+              f"{a.sharedCopyEngineCount:>3}{a.sharedEncoderCount:>4}{a.sharedDecoderCount:>5}{a.sharedOfaCount:>5}"
+              f"{a.sharedJpegCount:>5} |")
+        print(f"|{'':18}|{bar1:<34}|{'':11}|{'':23}|")
+    print(sep)
 
 
 def cpu_ranges(cpus):
@@ -335,7 +386,7 @@ def query(devs):
         print(f"    MIG Mode")
         print(f"        Current                           : {'Enabled' if g.mig_current else 'Disabled'}")
         print(f"        Pending                           : {'Enabled' if g.mig_pending else 'Disabled'}")
-        for i, gi, ci, _uuid, _name, a in g.mig_devices:
+        for i, gi, ci, _uuid, _name, a, _mem in g.mig_devices:
             print(f"    MIG Device")
             print(f"        Index                             : {i}")
             print(f"        GPU Instance ID                   : {gi}")
@@ -409,7 +460,7 @@ def query_apps(devs, fields, fmt):
     if "noheader" not in opts:
         print(", ".join(f + (" [MiB]" if f in ("used_memory", "used_gpu_memory") and "nounits" not in opts else "") for f in fields))
     for g in devs:
-        for pid, name, mib in g.procs:
+        for pid, name, mib, _gi, _ci in g.procs:
             vals = {"pid": pid, "process_name": name, "gpu_uuid": g.uuid, "gpu_bus_id": g.bus_id, "gpu_name": g.name,
                     "used_memory": mib if "nounits" in opts else f"{mib} MiB"}
             vals["used_gpu_memory"] = vals["used_memory"]
@@ -529,7 +580,7 @@ def run(ids, fields, apps, fmt, rest, argv):
     elif rest[:1] in (["-L"], ["--list-gpus"]):
         for g in devs:
             print(f"GPU {g.index}: {g.name} (UUID: {g.uuid})")
-            for i, _gi, _ci, uuid, name, _a in g.mig_devices:
+            for i, _gi, _ci, uuid, name, _a, _mem in g.mig_devices:
                 print(f"  {'MIG ' + name:<16}Device {i:2d}: (UUID: {uuid})")
     elif rest[:2] == ["topo", "-m"]:
         topo(devs)
@@ -565,7 +616,8 @@ def handles(ids):
 
 def set_mig_mode(ids, mode):
     """nvidia-smi -mig 0|1: at once on an idle GPU (Hopper and later), else
-    pending until a GPU reset; disabling with instances is refused."""
+    pending until a GPU reset; disabling with instances is refused, and
+    without root NVML refuses (Insufficient Permissions, exit code 4)."""
     mode = int(mode)
     word = "enable" if mode else "disable"
     for _i, h, bus in handles(ids):
@@ -577,6 +629,11 @@ def set_mig_mode(ids, mode):
             sys.exit(ret)
         if act.value == 0:
             print(f"{'Enabled' if mode else 'Disabled'} MIG Mode for GPU {bus}")
+        elif act.value == IN_USE:
+            print(f"Warning: MIG mode is in pending {word} state for GPU {bus}:{error(act.value)}")
+            print(f"{bus} is currently being used by one or more other processes (e.g. CUDA application or a "
+                  "monitoring application such as another instance of nvidia-smi). Please first kill all processes "
+                  "using the device and retry the command or reboot the system to make MIG mode effective.")
         else:
             print(f"Warning: MIG mode is in pending {word} state for GPU {bus}:{error(act.value)}")
             print(f"Reboot the system or try nvidia-smi --gpu-reset to make MIG mode effective on GPU {bus}")
@@ -584,13 +641,14 @@ def set_mig_mode(ids, mode):
 
 
 def gi_profiles(h):
-    """GPU instance profiles: (index, info)."""
+    """GPU instance profiles: (index, info), as nvidia-smi lists them: by
+    size (1g.23gb, 1g.23gb+me, 1g.47gb, 2g.47gb, ... 7g.186gb)."""
     out = []
     for i in range(MIG_PROFILE_COUNT):
         info = GiProfileInfo(version=ctypes.sizeof(GiProfileInfo) | (2 << 24))
         if nvml.nvmlDeviceGetGpuInstanceProfileInfoV(h, i, ctypes.byref(info)) == 0:
             out.append((i, info))
-    return out
+    return sorted(out, key=lambda x: (x[1].sliceCount, x[1].memorySizeMB, x[1].name))
 
 
 def profile_arg(h, arg):
@@ -646,7 +704,8 @@ def compute_instances(gi):
     return sorted(out, key=lambda x: x[0])
 
 
-def create_ci(i, gid, gi, c):
+def create_ci(i, gid, gi, c, with_id=True):
+    """Creates a compute instance; -cgi -C names its id, -cci does not."""
     ci = ctypes.c_void_p()
     ret = nvml.nvmlGpuInstanceCreateComputeInstance(gi, c.id, ctypes.byref(ci))
     if ret != 0:
@@ -655,8 +714,8 @@ def create_ci(i, gid, gi, c):
         return ret
     info = CiInfo()
     check(nvml.nvmlComputeInstanceGetInfo_v2(ci, ctypes.byref(info)))
-    print(f"Successfully created compute instance ID {info.id:2d} on GPU {i:2d} GPU instance ID {gid:2d} "
-          f"using profile {c.name.decode()} (ID {c.id:2d})")
+    print(f"Successfully created compute instance{f' ID {info.id:2d}' if with_id else ''} on GPU {i:2d} "
+          f"GPU instance ID {gid:2d} using profile {c.name.decode()} (ID {c.id:2d})")
     return 0
 
 
@@ -729,13 +788,13 @@ def list_gi_profiles(devs):
             free = ctypes.c_uint(p.instanceCount)
             if nvml.nvmlDeviceGetGpuInstanceRemainingCapacity(h, p.id, ctypes.byref(free)) != 0:
                 free.value = p.instanceCount
-            rows.append([f"  {i:2d}  {p.name.decode():<18}{p.id:3d}     {free.value}/{p.instanceCount:<7}"
-                         f"{p.memorySizeMB / 1024:>8.2f}      No     {p.multiprocessorCount:<6} {p.decoderCount:<5} "
+            rows.append([f"{i:>4}  {p.name.decode():<18}{p.id:>4}     {f'{free.value}/{p.instanceCount}':<11}"
+                         f"{f'{p.memorySizeMB / 1024:.2f}':<11}{'No':<7}{p.multiprocessorCount:<7}{p.decoderCount:<6}"
                          f"{p.encoderCount:<4}",
-                         f"{'':>62}{p.copyEngineCount:<6} {p.jpegCount:<5} {p.ofaCount:<4}"])
+                         f"{'':62}{p.copyEngineCount:>2}     {p.jpegCount:<6}{p.ofaCount:<4}"])
     box("GPU instance profiles:",
         ["GPU   Name               ID    Instances   Memory     P2P    SM    DEC   ENC",
-         "                                Free/Total   GiB              CE    JPEG  OFA"], rows, 81)
+         "                               Free/Total   GiB              CE    JPEG  OFA"], rows, 79)
 
 
 def list_placements(devs):
@@ -761,27 +820,28 @@ def list_ci_profiles(devs, gis):
                 free = ctypes.c_uint(c.instanceCount)
                 nvml.nvmlGpuInstanceGetComputeInstanceRemainingCapacity(gi, c.id, ctypes.byref(free))
                 mark = "*" if c.id == best.id else " "
-                rows.append([f"  {i:2d}     {gid:2d}       {c.name.decode():<20}{c.id:2d}{mark}     "
-                             f"{free.value}/{c.instanceCount:<12}{c.multiprocessorCount:<9}"
+                rows.append([f"{i:>4}{gid:>7}       {c.name.decode():<20}{c.id:>2}{mark}     "
+                             f"{f'{free.value}/{c.instanceCount}':<14}{c.multiprocessorCount:<10}"
                              f"{c.sharedDecoderCount:<6}{c.sharedEncoderCount:<6}{c.sharedOfaCount:<4}",
-                             f"{'':>70}{c.sharedCopyEngineCount:<6}{c.sharedJpegCount:<4}"])
+                             f"{'':70}{c.sharedCopyEngineCount:<6}{c.sharedJpegCount:<10}"])
     box("Compute instance profiles:",
         ["GPU     GPU       Name             Profile  Instances   Exclusive       Shared",
          "      Instance                       ID     Free/Total     SM       DEC   ENC   OFA",
-         "        ID                                                          CE    JPEG"], rows, 88)
+         "        ID                                                          CE    JPEG"], rows, 86)
 
 
 def list_gis(devs):
     rows = []
-    for i, h, _bus in devs:
-        for gid, _gi, info, p in gpu_instances(h):
-            rows.append([f"  {i:2d}  {p.name.decode():<16}{p.id:4d}     {gid:4d}       "
-                         f"{info.placement.start:3d}:{info.placement.size:<6}"])
+    for i, h, _bus in devs:  # by profile, as profiles are listed, then by id
+        order = [p.id for _i, p in gi_profiles(h)]
+        for gid, _gi, info, p in sorted(gpu_instances(h), key=lambda x: (order.index(x[3].id), x[0])):
+            rows.append([f"{i:>4}  {p.name.decode():<17}{p.id:>2}{gid:>9}{info.placement.start:>11}:"
+                         f"{info.placement.size:<6}"])
     if not rows:
         print("No GPU instances found: Not Found")
         sys.exit(NOT_FOUND)
-    box("GPU instances:", ["GPU   Name             Profile  Instance   Placement",
-                           "                         ID       ID       Start:Size"], rows, 55)
+    box("GPU instances:", ["GPU   Name          Profile  Instance   Placement",
+                           "                      ID       ID       Start:Size"], rows, 52)
 
 
 def list_cis(devs, gis):
@@ -841,7 +901,7 @@ def create_cis(devs, arg, gis):
                 if c is None:
                     failed = failed or 2
                     continue
-                failed = create_ci(i, gid, gi, c) or failed
+                failed = create_ci(i, gid, gi, c, with_id=False) or failed
     if failed:
         print(f"Failed to create compute instances: {error(failed)}")
         sys.exit(failed)

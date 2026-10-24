@@ -6,10 +6,12 @@
 // not advertised as nvidia.com/gpu; its MIG devices are, as
 // nvidia.com/mig-<profile> (nvidia.com/mig-1g.23gb, ...; + becomes .), the
 // names GPU Feature Discovery labels nodes with. A container given MIG
-// devices gets their parent GPU's CDI device and NVIDIA_VISIBLE_DEVICES set
-// to their MIG- UUIDs, which the fake driver shows it only (in place of the
-// MIG capability nodes the real driver checks). The MIG layout is read from
-// nvidia-smi every 10 seconds (mig.go).
+// devices gets their parent GPU's CDI device and a file per MIG- UUID in
+// /var/run/nvidia-container-devices (NVIDIA's volume-mounts strategy),
+// which the fake driver shows it only (in place of the MIG capability nodes
+// the real driver checks). The MIG layout is read from nvidia-smi every 10
+// seconds (mig.go); a profile's plugin runs while the tray has devices of
+// it.
 //
 // NVIDIA's k8s-device-plugin cannot do this here: in CDI mode it generates
 // its own CDI specification from a real driver installation (versioned
@@ -143,7 +145,9 @@ func (p *plugin) PreStartContainer(context.Context, *pluginapi.PreStartContainer
 	return &pluginapi.PreStartContainerResponse{}, nil
 }
 
-// gpuPlugin serves nvidia.com/gpu: the GPUs without MIG.
+// gpuPlugin serves nvidia.com/gpu: the GPUs without MIG. Their UUIDs go in
+// NVIDIA_VISIBLE_DEVICES (NVIDIA's default envvar strategy), which the fake
+// driver needs for no GPU without MIG: CDI gives the container its devices.
 func gpuPlugin(gpus []gpu, inv *inventoryCache) *plugin {
 	return &plugin{
 		resource: resourceName,
@@ -168,12 +172,16 @@ func gpuPlugin(gpus []gpu, inv *inventoryCache) *plugin {
 			for _, g := range gpus {
 				known[g.UUID] = true
 			}
+			mig := inv.get()
 			cr := &pluginapi.ContainerAllocateResponse{
 				Envs: map[string]string{"NVIDIA_VISIBLE_DEVICES": strings.Join(ids, ",")},
 			}
 			for _, id := range ids {
 				if !known[id] {
 					return nil, fmt.Errorf("unknown device %q", id)
+				}
+				if mig.enabled[id] {
+					return nil, fmt.Errorf("GPU %s has MIG on: its MIG devices are the resources", id)
 				}
 				cr.CdiDevices = append(cr.CdiDevices, &pluginapi.CDIDevice{Name: cdiKind + "=" + id})
 			}
@@ -195,13 +203,13 @@ func inode(path string) uint64 {
 }
 
 // serve runs the plugin's gRPC server and registers it with kubelet. It
-// returns when kubelet restarts (it recreates its socket, and may remove
-// ours) or stops watching the GPUs, so the caller can register again, as
-// kubelet requires. A kubelet that accepts the registration while it is
+// returns when stop is closed, and when kubelet restarts (it recreates its
+// socket, and may remove ours) or stops watching the GPUs, so the caller
+// can register again, as kubelet requires. A kubelet that accepts the registration while it is
 // still starting may never open ListAndWatch, and its stream can end
 // without a restart; either way the node shows no GPUs until the plugin
 // registers again.
-func serve(dir string, p *plugin) error {
+func serve(dir string, p *plugin, stop <-chan struct{}) error {
 	kubeletSock := filepath.Join(dir, "kubelet.sock")
 	sock := filepath.Join(dir, p.socket)
 	_ = os.Remove(sock)
@@ -235,7 +243,11 @@ func serve(dir string, p *plugin) error {
 
 	unwatched := time.Now()
 	for {
-		time.Sleep(5 * time.Second)
+		select {
+		case <-stop:
+			return nil
+		case <-time.After(5 * time.Second):
+		}
 		if _, err := os.Stat(sock); err != nil || inode(kubeletSock) != kubelet {
 			log.Printf("kubelet restarted; registering again")
 			return nil
@@ -264,29 +276,35 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Without the MIG layout, GPUs with MIG on would be offered whole.
 	inv := &inventoryCache{}
-	inv.update()
-	go run(*dir, gpuPlugin(gpus, inv))
-	// A plugin per MIG profile, from when the tray first has one.
-	started := map[string]bool{}
+	for !inv.update() {
+		time.Sleep(5 * time.Second)
+	}
+	go run(*dir, gpuPlugin(gpus, inv), nil)
+	profiles := &profilePlugins{start: func(profile string, stop <-chan struct{}) {
+		run(*dir, migPlugin(profile, gpus, inv), stop)
+	}}
 	for {
-		for _, profile := range inv.get().profiles() {
-			if !started[profile] {
-				started[profile] = true
-				go run(*dir, migPlugin(profile, gpus, inv))
-			}
-		}
+		profiles.sync(inv.get().profiles())
 		time.Sleep(refresh)
 		inv.update()
 	}
 }
 
-// run serves a plugin, registering it again whenever serve returns.
-func run(dir string, p *plugin) {
+// run serves a plugin, registering it again whenever serve returns, until
+// stop is closed (never, when nil).
+func run(dir string, p *plugin, stop <-chan struct{}) {
 	for {
-		if err := serve(dir, p); err != nil {
+		var delay time.Duration
+		if err := serve(dir, p, stop); err != nil {
 			log.Printf("%s: %v; retrying", p.resource, err)
-			time.Sleep(5 * time.Second)
+			delay = 5 * time.Second
+		}
+		select {
+		case <-stop:
+			return
+		case <-time.After(delay):
 		}
 	}
 }
