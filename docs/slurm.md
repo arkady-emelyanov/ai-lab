@@ -59,7 +59,7 @@ scontrol show topology                           # NVLink blocks
 
 From your machine, a job script can be submitted on stdin: `bin/ssh login sbatch < examples/slurm/nvl8-hello.sbatch`. Give jobs submitted this way a name (`#SBATCH -J name`), otherwise `%x` in output paths becomes `(null)`.
 
-Resource requests behave as on a real GPU cluster: `--gpus-per-node`, `--gpus-per-task`, `--tmp`, `--mem`; jobs share a node when resources allow. Accounts and limits are managed with `sacctmgr`; accounts come from `slurm_accounts` in `inventory/group_vars/all.yml`.
+Resource requests behave as on a real GPU cluster: `--gpus-per-node`, `--gpus-per-task`, `--tmp`, `--mem`; jobs share a node when resources allow. Accounts and limits are managed with `sacctmgr`; accounts come from `slurm_accounts` in `inventory/group_vars/all.yml`. With `slurm_accounting: false` there is no slurmdbd: no `sacct`, accounts or limits ([Platform: Components](platform.md#components)).
 
 ## Verification
 

@@ -1,0 +1,44 @@
+# Without KubeRay (kuberay: false, k3s): its Ray clusters, jobs and services
+# deleted, then what the main tasks installed: the manifest k3s applied, the
+# charts (deleting a HelmChart uninstalls it), the dashboards and the History
+# Server with their namespace, and the per-user objects. Ray's CRDs stay, as
+# Helm leaves them; the History Server's bucket stays on RustFS.
+- name: Check for KubeRay's APIs
+  ansible.builtin.command: kubectl get crd rayclusters.ray.io --ignore-not-found -o name
+  register: ray_crd
+  changed_when: false
+
+- name: Delete the Ray clusters, jobs and services
+  ansible.builtin.command: kubectl delete rayjobs,rayservices,rayclusters --all -A --ignore-not-found --wait
+  register: ray_deleted
+  changed_when: ray_deleted.stdout != ''
+  when: ray_crd.stdout != ''
+
+- name: Remove the manifest
+  ansible.builtin.file:
+    path: "{{ kuberay_manifests_dir }}/lab-kuberay.yaml"
+    state: absent
+
+- name: Delete KubeRay's objects
+  ansible.builtin.command: >-
+    kubectl delete --ignore-not-found --wait
+    addons.k3s.cattle.io/lab-kuberay helmchart/kuberay-operator helmchart/kuberay-apiserver
+    -n kube-system
+  register: charts_deleted
+  changed_when: charts_deleted.stdout != ''
+
+- name: Delete its namespace and cluster-wide objects
+  ansible.builtin.command: >-
+    kubectl delete --ignore-not-found --wait
+    namespace/{{ kuberay_namespace }}
+    mutatingadmissionpolicy/rayjob-shutdown-after-finish mutatingadmissionpolicybinding/rayjob-shutdown-after-finish
+    clusterrole/kuberay-historyserver clusterrolebinding/kuberay-historyserver
+  register: objects_deleted
+  changed_when: objects_deleted.stdout != ''
+
+- name: Delete the per-user objects
+  ansible.builtin.command: >-
+    kubectl -n {{ item }} delete --ignore-not-found secret/ray-history-s3 configmap/ray-grafana
+  loop: "{{ cluster_users | map(attribute='name') | list + (['runai'] if runai | bool else []) }}"
+  register: user_deleted
+  changed_when: user_deleted.stdout != ''

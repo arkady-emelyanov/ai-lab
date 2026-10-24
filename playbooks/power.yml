@@ -1,7 +1,8 @@
 # Stops or starts every lab instance, keeping them and their data:
 # `make stop` (power=stop), `make start` (power=start). Starts in dependency
 # order (storage, the switch tray, the BMCs, the controller, the login node,
-# the GPU trays) and stops in the reverse order.
+# the GPU trays) and stops in the reverse order. Acts on the instances that
+# exist, whatever the settings (make provision deletes those switched off).
 - name: Stop or start the lab's instances
   hosts: localhost
   connection: local

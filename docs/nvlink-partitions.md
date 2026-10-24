@@ -86,6 +86,7 @@ The underlying RPCs, for clients of your own (`bin/grpcurl`, [grpcurl](https://g
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `nvswitch` | `true` | the switch tray host (partition controller, fabric telemetry) and, with `bmc`, its BMC; `false` leaves the GPUs in one NVLink domain with their partitions as they were, the default one on a new lab ([Platform: Components](platform.md#components)) |
 | `nvl_domain_name`, `nvl_cluster_uuid` | `nvl8`, `7f3c2a10-5b4e-4d6a-9c1e-2b8f0e6d4a91` | the NVLink domain: its name and the cluster UUID every GPU reports (NVML fabric info, GFD's `nvidia.com/gpu.clique`, topograph's blocks and labels) |
 | `nvl_clique_id` | 1 | the clique the default partition's GPUs report. A partition you create reports its own id as its clique, so its id must differ from this number, or schedulers would see both partitions as one group; the controller skips it when it picks an id and rejects it when asked for it |
 | `fakegpu_nvlinks` | 18 | NVLinks per GPU (GB200: 18; leave as is unless you approximate another GPU generation). Each link is cabled to a switch port: the links must split evenly between the switch chips and fit their ports (8 GPUs × 18 = 144 = 2 chips × 72 ports) |

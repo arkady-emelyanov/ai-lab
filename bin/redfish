@@ -18,6 +18,7 @@ shift 2
 repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 # local.yml overrides all.yml, as in Ansible.
 var() { cat "$repo/inventory/group_vars/all.yml" "$repo/local.yml" 2>/dev/null | sed -n "s/^$1: *//p" | tail -1; }
+[[ $(var bmc) != false ]] || { echo "the lab has no BMCs (bmc: false)" >&2; exit 1; }
 user=$(var bmc_username)
 pass=$(var bmc_password)
 

@@ -93,7 +93,8 @@ def assert_link(lab, tray, g, link, up):
     """The link state at every layer that shows it: BMC port, nvidia-smi, fabric telemetry."""
     assert lab.tray_bmc(tray).get(gpu_port_path(g, link))["LinkState"] == ("Enabled" if up else "Disabled")
     assert lab.link_active(tray, g, link) == up
-    assert lab.metric("nvlink_gpu_active_links", host=tray, gpu=str(g)) == lab.nvlinks - (0 if up else 1)
+    if lab.has_nvswitch:
+        assert lab.metric("nvlink_gpu_active_links", host=tray, gpu=str(g)) == lab.nvlinks - (0 if up else 1)
 
 
 def test_link_disable_applies_at_reset_and_lasts_one_reset(lab, power_tray):

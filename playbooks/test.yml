@@ -1,7 +1,24 @@
 # End-to-end checks: jobs run through the scheduler (Slurm or k3s) as a
 # directory user, frameworks see the emulated NVL8 domain, the BMCs answer,
 # metrics reach Prometheus.
-# make test (after make up; framework jobs need make frameworks).
+# make test (after make up; framework jobs need make frameworks). Checks of
+# optional components run when they are on.
+- name: Enabled instances
+  ansible.builtin.import_playbook: enabled.yml
+
+- name: Instances
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The lab has the instances its settings enable, and no others
+      ansible.builtin.command: incus list --all-projects --format json
+      register: incus_list
+      changed_when: false
+      failed_when: >-
+        incus_list.stdout | from_json | map(attribute='name')
+        | select('in', groups['all']) | sort != lab_instances | sort
+
 - name: Slurm jobs as a cluster user
   hosts: login
   vars:
@@ -72,6 +89,7 @@
               ray-cluster.sbatch: "8 tasks on"
 
         - name: Jobs are recorded in accounting
+          when: slurm_accounting | bool
           ansible.builtin.command: sacct -n -X -u {{ user }} -o JobID,State -j {{ jobs.results | rejectattr('skipped', 'defined') | map(attribute='stdout') | map('trim') | join(',') }}
           register: sacct
           changed_when: false
@@ -335,25 +353,28 @@
 - name: Shared filesystem
   hosts: cluster
   tasks:
-    - name: JuiceFS is mounted
-      ansible.builtin.command: mountpoint -q {{ juicefs_mount }}
-      changed_when: false
+    - name: JuiceFS
+      when: storage | bool
+      block:
+        - name: JuiceFS is mounted
+          ansible.builtin.command: mountpoint -q {{ juicefs_mount }}
+          changed_when: false
 
-    - name: A file written on one node is readable on every other
-      ansible.builtin.copy:
-        content: "{{ ansible_facts['date_time']['epoch'] }}\n"
-        dest: "{{ juicefs_mount }}/.test-roundtrip"
-        mode: "0644"
-      when: inventory_hostname == groups['login'][0]
+        - name: A file written on one node is readable on every other
+          ansible.builtin.copy:
+            content: "{{ ansible_facts['date_time']['epoch'] }}\n"
+            dest: "{{ juicefs_mount }}/.test-roundtrip"
+            mode: "0644"
+          when: inventory_hostname == groups['login'][0]
 
-    - name: Read it back everywhere
-      ansible.builtin.command: cat {{ juicefs_mount }}/.test-roundtrip
-      register: roundtrip
-      changed_when: false
-      failed_when: roundtrip.stdout | trim != hostvars[groups['login'][0]].ansible_facts['date_time']['epoch']
+        - name: Read it back everywhere
+          ansible.builtin.command: cat {{ juicefs_mount }}/.test-roundtrip
+          register: roundtrip
+          changed_when: false
+          failed_when: roundtrip.stdout | trim != hostvars[groups['login'][0]].ansible_facts['date_time']['epoch']
 
 - name: Object storage
-  hosts: storage
+  hosts: storage:&enabled
   tasks:
     - name: RustFS is healthy
       ansible.builtin.uri:
@@ -368,60 +389,63 @@
       rc cp /tmp/s3test-$$ s3/{{ cluster_users[0].name }}/test/ && rc ls s3/{{ cluster_users[0].name }}/test/ &&
       ! rc ls s3/{{ juicefs_bucket }}/ 2>/dev/null; rc rm --recursive --force s3/{{ cluster_users[0].name }}/test/ >/dev/null
   tasks:
-    - name: A user can write and list their own bucket, but not others (Slurm job)
-      ansible.builtin.command:
-        cmd: su - {{ user }} -c 'srun -N1 bash -c "{{ s3_script }}"'
-      register: s3test
-      changed_when: false
-      failed_when: s3test.rc != 0 or s3test.stdout is not search('s3test')
-      when: scheduler == 'slurm'
-
-    - name: The same from a pod (k3s)
-      when: scheduler == 'k3s'
+    - name: S3
+      when: storage | bool
       block:
-        - name: Write the test job
-          ansible.builtin.copy:
-            dest: "{{ shared_mount }}/home/{{ user }}/examples/kubernetes/s3test.yaml"
-            owner: "{{ user }}"
-            group: "{{ user }}"
-            mode: "0644"
-            content: |
-              apiVersion: jobset.x-k8s.io/v1alpha2
-              kind: JobSet
-              metadata:
-                name: "@NAME@"
-                labels: {kueue.x-k8s.io/queue-name: {{ k3s_queue }}}
-              spec:
-                replicatedJobs:
-                  - name: s3
-                    template:
-                      spec:
-                        backoffLimit: 0
-                        template:
-                          spec:
-                            restartPolicy: Never
-                            securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
-                            containers:
-                              - name: s3
-                                image: {{ k3s_pod_image }}
-                                env: [{name: HOME, value: "@HOME@"}]
-                                command: [bash, -c, {{ s3_script | to_json }}]
-                                resources: {requests: {cpu: 100m, memory: 64Mi}}
-                                volumeMounts:
-                                  - {name: shared, mountPath: /shared}
-                                  - {name: rc, mountPath: /usr/local/bin/rc}
-                            volumes:
-                              - {name: shared, hostPath: {path: /shared, type: Directory}}
-                              - {name: rc, hostPath: {path: /usr/local/bin/rc, type: File}}
-
-        - name: A user can write and list their own bucket, but not others (pod)
+        - name: A user can write and list their own bucket, but not others (Slurm job)
           ansible.builtin.command:
-            cmd: su - {{ user }} -c 'cd examples/kubernetes && name=$(./submit --wait s3test.yaml) && cat $name.out'
+            cmd: su - {{ user }} -c 'srun -N1 bash -c "{{ s3_script }}"'
           register: s3test
           changed_when: false
           failed_when: s3test.rc != 0 or s3test.stdout is not search('s3test')
+          when: scheduler == 'slurm'
 
-- name: Tray BMCs
+        - name: The same from a pod (k3s)
+          when: scheduler == 'k3s'
+          block:
+            - name: Write the test job
+              ansible.builtin.copy:
+                dest: "{{ shared_mount }}/home/{{ user }}/examples/kubernetes/s3test.yaml"
+                owner: "{{ user }}"
+                group: "{{ user }}"
+                mode: "0644"
+                content: |
+                  apiVersion: jobset.x-k8s.io/v1alpha2
+                  kind: JobSet
+                  metadata:
+                    name: "@NAME@"
+                    labels: {kueue.x-k8s.io/queue-name: {{ k3s_queue }}}
+                  spec:
+                    replicatedJobs:
+                      - name: s3
+                        template:
+                          spec:
+                            backoffLimit: 0
+                            template:
+                              spec:
+                                restartPolicy: Never
+                                securityContext: {runAsUser: @UID@, runAsGroup: @GID@}
+                                containers:
+                                  - name: s3
+                                    image: {{ k3s_pod_image }}
+                                    env: [{name: HOME, value: "@HOME@"}]
+                                    command: [bash, -c, {{ s3_script | to_json }}]
+                                    resources: {requests: {cpu: 100m, memory: 64Mi}}
+                                    volumeMounts:
+                                      - {name: shared, mountPath: /shared}
+                                      - {name: rc, mountPath: /usr/local/bin/rc}
+                                volumes:
+                                  - {name: shared, hostPath: {path: /shared, type: Directory}}
+                                  - {name: rc, hostPath: {path: /usr/local/bin/rc, type: File}}
+
+            - name: A user can write and list their own bucket, but not others (pod)
+              ansible.builtin.command:
+                cmd: su - {{ user }} -c 'cd examples/kubernetes && name=$(./submit --wait s3test.yaml) && cat $name.out'
+              register: s3test
+              changed_when: false
+              failed_when: s3test.rc != 0 or s3test.stdout is not search('s3test')
+
+- name: BMCs and the partition controller
   hosts: controller
   tasks:
     - name: Redfish reports each tray powered on with its GPUs
@@ -432,6 +456,7 @@
         force_basic_auth: true
         validate_certs: false
       loop: "{{ groups['tray_bmc'] }}"
+      when: bmc | bool
       register: systems
       failed_when: systems.json.PowerState != 'On' or systems.json.ProcessorSummary.Count != fakegpu_count
 
@@ -443,6 +468,7 @@
         force_basic_auth: true
         validate_certs: false
       loop: "{{ range(nvswitch_count) | list }}"
+      when: bmc | bool and nvswitch | bool
       register: ports
       failed_when: ports.json['Members@odata.count'] != nvswitch_ports
 
@@ -451,6 +477,7 @@
         host: "{{ groups['nvswitch'][0] }}"
         port: "{{ nmxc_port }}"
         timeout: 5
+      when: nvswitch | bool
 
 - name: Partition state reaches the trays
   hosts: workers
@@ -469,7 +496,24 @@
       register: topo
       changed_when: false
       failed_when: topo.stdout is not search('BlockName=\\S+ Nodes=' ~ (groups['workers'] | first | regex_replace('[0-9]+$', '')) ~ '\\[')
-      when: scheduler == 'slurm'
+      when: scheduler == 'slurm' and topology | bool
+
+    # Without topograph: the topology from the settings.
+    - name: Slurm has the trays in one NVLink block (Slurm, no topograph)
+      ansible.builtin.command: scontrol show topology
+      register: topo
+      changed_when: false
+      failed_when: topo.stdout is not search('BlockName=' ~ nvl_domain_name ~ ' ')
+      when: scheduler == 'slurm' and not topology | bool
+
+    - name: The trays carry the NVLink domain and IB switch labels (k3s, no topograph)
+      ansible.builtin.command: >-
+        kubectl get nodes -l accelerator.topograph.run/domain={{ nvl_cluster_uuid }}.{{ nvl_clique_id }},fabric.topograph.run/tier-0
+        -o name
+      register: labelled
+      changed_when: false
+      failed_when: labelled.stdout_lines | length != groups['workers'] | length
+      when: scheduler == 'k3s' and not topology | bool
 
     - name: topograph labels every tray with the NVLink domain and the IB switches (k3s)
       ansible.builtin.command: update-topology --dry-run
@@ -478,7 +522,7 @@
       failed_when: >-
         topo.stdout_lines | select('search', nvl_cluster_uuid ~ '.' ~ nvl_clique_id ~ ' +S-') | list | length
         != groups['workers'] | length
-      when: scheduler == 'k3s'
+      when: scheduler == 'k3s' and topology | bool
 
     # Trays run only per-node agents (DaemonSets) and jobs; the add-ons'
     # controllers belong on the control-plane node (k3s' own kube-system
@@ -656,6 +700,7 @@
               changed_when: false
 
             - name: Prometheus scrapes its metrics
+              when: monitoring | bool
               ansible.builtin.uri:
                 url: http://localhost:9090/api/v1/query?query={{ ('ray_node_cpu_count{ray_io_cluster="' ~ cluster ~ '"}') | urlencode }}
               register: ray_metrics
@@ -687,7 +732,7 @@
         url: http://localhost:{{ grafana_port }}/api/dashboards/uid/rayDefaultDashboard
       register: ray_dashboard
       failed_when: ray_dashboard.status != 200 or ray_dashboard.json.meta.folderTitle != 'Ray'
-      when: scheduler == 'k3s' and kuberay | bool
+      when: scheduler == 'k3s' and kuberay | bool and monitoring | bool
 
 # Run:ai (runai: true): the cluster connected to its control plane, GPU
 # metrics from the DCGM exporter in Run:ai's Prometheus, and a training
@@ -942,6 +987,7 @@
               changed_when: false
 
             - name: Prometheus scrapes its metrics
+              when: monitoring | bool
               ansible.builtin.uri:
                 url: http://localhost:9090/api/v1/query?query={{ ('ray_node_cpu_count{ray_io_cluster="' ~ ray_cluster ~ '"}') | urlencode }}
               register: ray_metrics
@@ -1067,45 +1113,88 @@
 - name: Metrics
   hosts: controller
   tasks:
-    # Retried: a target just added (a Ray pod) is unknown until its first
-    # scrape, and one just gone (a deleted Ray pod) lingers until ray-targets
-    # and Prometheus' file discovery drop it, within about 30 seconds.
-    - name: All Prometheus targets are up
-      ansible.builtin.uri:
-        url: http://localhost:9090/api/v1/targets
-      register: targets
-      until: targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up') | list | length == 0
-      retries: 6
-      delay: 10
-      failed_when: targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up') | list | length > 0
+    - name: Prometheus and Grafana
+      when: monitoring | bool
+      block:
+        # Retried: a target just added (a Ray pod) is unknown until its first
+        # scrape, and one just gone (a deleted Ray pod) lingers until ray-targets
+        # and Prometheus' file discovery drop it, within about 30 seconds.
+        - name: All Prometheus targets are up
+          ansible.builtin.uri:
+            url: http://localhost:9090/api/v1/targets
+          register: targets
+          until: targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up') | list | length == 0
+          retries: 6
+          delay: 10
+          failed_when: targets.json.data.activeTargets | rejectattr('health', 'equalto', 'up') | list | length > 0
 
-    - name: Grafana serves the provisioned dashboards
-      ansible.builtin.uri:
-        url: http://localhost:{{ grafana_port }}/api/search?type=dash-db
-        user: admin
-        password: "{{ grafana_admin_password }}"
-        force_basic_auth: true
-      register: dashboards
-      failed_when: dashboards.json | length < grafana_dashboards | length + 2
+        - name: Grafana serves the provisioned dashboards
+          ansible.builtin.uri:
+            url: http://localhost:{{ grafana_port }}/api/search?type=dash-db
+            user: admin
+            password: "{{ grafana_admin_password }}"
+            force_basic_auth: true
+          register: dashboards
+          failed_when: dashboards.json | length < grafana_dashboards | length + 2
 
-    - name: Scheduler GPU allocation and NVLink fabric metrics are collected
-      ansible.builtin.uri:
-        url: http://localhost:9090/api/v1/query?query={{ item.query | urlencode }}
-      loop:
-        - { query: sched_node_gpus_alloc, count: "{{ groups['workers'] | length }}" }
-        - { query: nvlink_gpu_links, count: "{{ fakegpu_count * groups['workers'] | length }}" }
-        - { query: nvswitch_ports_up, count: "{{ nvswitch_count }}" }
-        - { query: idrac_system_power_on == 1, count: "{{ groups['bmc'] | length }}" }
-        - { query: node_infiniband_port_data_transmitted_bytes_total, count: "{{ ib_hcas_per_node * groups['workers'] | length }}" }
-      loop_control:
-        label: "{{ item.query }}"
-      register: series
-      retries: 6
-      delay: 10
-      until: series.json.data.result | length == item.count | int
+        # A component switched off has no series left (count 0).
+        - name: Scheduler GPU allocation and NVLink fabric metrics are collected
+          ansible.builtin.uri:
+            url: http://localhost:9090/api/v1/query?query={{ item.query | urlencode }}
+          loop:
+            - { query: sched_node_gpus_alloc, count: "{{ groups['workers'] | length }}" }
+            - { query: nvlink_gpu_links, count: "{{ fakegpu_count * groups['workers'] | length if nvswitch | bool else 0 }}" }
+            - { query: nvswitch_ports_up, count: "{{ nvswitch_count if nvswitch | bool else 0 }}" }
+            - { query: idrac_system_power_on == 1, count: "{{ groups['bmc'] | select('in', lab_instances) | list | length }}" }
+            - { query: node_infiniband_port_data_transmitted_bytes_total, count: "{{ ib_hcas_per_node * groups['workers'] | length }}" }
+          loop_control:
+            label: "{{ item.query }}"
+          register: series
+          retries: 6
+          delay: 10
+          until: series.json.data.result | length == item.count | int
 
-    - name: GPU metrics for every GPU
-      ansible.builtin.uri:
-        url: http://localhost:9090/api/v1/query?query=nvidia_smi_power_draw_watts
-      register: power
-      failed_when: power.json.data.result | length != fakegpu_count * groups['workers'] | length
+        - name: GPU metrics for every GPU
+          ansible.builtin.uri:
+            url: http://localhost:9090/api/v1/query?query=nvidia_smi_power_draw_watts
+          register: power
+          failed_when: power.json.data.result | length != fakegpu_count * groups['workers'] | length
+
+# Components switched off leave nothing running on the instances that stay.
+- name: Components switched off
+  hosts: cluster
+  tasks:
+    - name: No JuiceFS mount without the storage node
+      ansible.builtin.command: mountpoint -q {{ juicefs_mount }}
+      register: pfs
+      changed_when: false
+      failed_when: pfs.rc == 0
+      when: not storage | bool
+
+    - name: No services of components switched off
+      ansible.builtin.shell: |
+        for unit in {{ units | join(' ') }}; do
+            systemctl is-active --quiet $unit && echo "$unit"
+        done
+        true
+      vars:
+        units: >-
+          {{ (['prometheus-node-exporter', 'nvidia_gpu_exporter', 'prometheus', 'grafana-server', 'prometheus-slurm-exporter']
+              if not monitoring | bool else [])
+             + (['redfish-exporter'] if not bmc | bool else [])
+             + (['topograph', 'update-topology.timer'] if not topology | bool else [])
+             + (['slurmdbd', 'mariadb'] if not slurm_accounting | bool else [])
+             + (['juicefs'] if not storage | bool else []) }}
+      register: running
+      changed_when: false
+      failed_when: running.stdout != ''
+
+- name: KubeRay switched off
+  hosts: controller
+  tasks:
+    - name: No KubeRay without kuberay (k3s)
+      ansible.builtin.command: kubectl get namespace {{ kuberay_namespace | default('kuberay') }} --ignore-not-found -o name
+      register: kuberay_ns
+      changed_when: false
+      failed_when: kuberay_ns.stdout != ''
+      when: scheduler == 'k3s' and not kuberay | bool

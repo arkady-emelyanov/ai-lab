@@ -33,7 +33,7 @@ Commands that need the Incus socket run under `sg incus-admin`, so a group membe
 - `local.yml`: your own values (created by `make init`, git-ignored); it overrides `all.yml`.
 - `inventory/hosts.yml`: the instances, groups, static addresses (`ip_host`) and tray numbers.
 
-After a change, run `make configure`, or `make provision` for instance settings such as limits and devices (it applies changed CPU and memory limits to running instances and restarts k3s there, so its nodes report their new capacity). The exceptions are `scheduler` (`slurm` or `k3s`), which decides what is installed, and turning `kuberay` or `nvidia_dra` off: `make configure` does not remove what they installed, so these take `make down` and `make up` (volumes are kept).
+After a change, run `make configure`, or `make provision` for instance settings such as limits and devices (it applies changed CPU and memory limits to running instances and restarts k3s there, so its nodes report their new capacity). The exceptions are `scheduler` (`slurm` or `k3s`), which decides what is installed, and turning `nvidia_dra` off: `make configure` does not remove what it installed, so both take `make down` and `make up` (volumes are kept). Turning `kuberay` off, `make configure` deletes KubeRay with its Ray clusters and jobs (Ray's CRDs stay).
 
 | Group | Instances |
 |---|---|
@@ -41,6 +41,27 @@ After a change, run `make configure`, or `make provision` for instance settings 
 | `storage` | `sched-storage` |
 | `nvswitch` | `sched-nvswitch` |
 | `bmc` (`tray_bmc`, `nvswitch_bmc`) | the three BMCs |
+
+### Components
+
+The controller, the login node, the GPU trays, the scheduler and the directory are always there; the components below can be switched off (and on again) in `local.yml`. All are on by default.
+
+| Setting | Component | Instances | Without it |
+|---|---|---|---|
+| `bmc` | Redfish BMCs of the GPU trays and the NVLink switch tray ([BMCs](bmc-redfish.md)) | `sched-worker1-bmc`, `sched-worker2-bmc`, `sched-nvswitch-bmc` | no out-of-band power, sensors or NVLink port control; no Redfish exporter, no BMC panels in Grafana; `bin/redfish` and `make test-bmc` have nothing to talk to |
+| `nvswitch` | NVLink switch tray host: partition controller and fabric telemetry ([NVLink partitions](nvlink-partitions.md)) | `sched-nvswitch` (and `sched-nvswitch-bmc`) | the GPUs keep one NVLink domain and their partitions (the default one on a new lab); no `bin/nvlink`, no fabric metrics or NVLink fabric panels |
+| `storage` | storage node: RustFS (S3) and Redis, JuiceFS at `/pfs` and per-user S3 on every node ([Storage](storage.md)) | `sched-storage` | no `/pfs`, no S3 (`rc`, `~/.aws`); `/shared` and `/scratch` stay. KubeRay needs it (`kuberay: false` without it) |
+| `monitoring` | Prometheus, Grafana and the exporters: node, GPU, Slurm, Redfish, kube-state-metrics ([Monitoring](monitoring.md)) | none | no metrics or dashboards; Ray's dashboard shows no metrics. Run:ai keeps its own Prometheus |
+| `topology` | topograph: the scheduler's topology follows NVLink partitions and the InfiniBand fabric ([Topology](topology.md)) | none | the topology comes from the settings once: one NVLink block in Slurm's `topology.conf`, the same node labels in Kubernetes (Kueue's topology-aware scheduling still works), not following partition changes |
+| `slurm_accounting` | Slurm accounting: slurmdbd and MariaDB on the controller ([Slurm](slurm.md)) | none | no `sacct`, `sreport`, accounts or limits (Slurm mode only) |
+
+A change takes `make provision` and `make configure`, or `make up`, which runs both:
+
+- `make provision` creates the instances of a component switched on, and deletes those of one switched off, as `make down` would (their volumes stay). Before that it clears what the instance set on the trays: a tray BMC's disabled NVLink ports, the switch tray BMC's disabled switch ports, the partition controller's partitions (the GPUs return to the default partition at their next reset). Without BMCs it also revokes their Incus certificates and closes the Incus API listener they used.
+- `make configure` installs the component, or removes it from the instances that stay, and reconfigures what uses it: `/etc/hosts`, Prometheus' scrape jobs, Grafana's dashboards, Slurm's configuration, Ray's metrics settings, `endpoints.md`. A component removed has its services stopped and disabled, with their data kept (Prometheus' history, the accounting database, `/pfs` on its volumes), so switching it on again brings them back. The users' S3 settings in their homes go with `storage`.
+- `make configure` refuses combinations that cannot work: `kuberay: true` (k3s) needs `storage: true`.
+
+`make test` checks that the lab has exactly the instances its settings give it, and skips the checks of components that are off. `make stop`, `make start`, `make down` and `make purge` act on every instance that exists, whatever the settings.
 
 **Package mirror.** Instances install Ubuntu packages from `apt_mirror`, with short apt timeouts so an unresponsive mirror fails in seconds.
 
@@ -94,6 +115,8 @@ Keep `.secrets/` when you move or re-clone the checkout, and drive a lab from on
 5. emulated InfiniBand, topograph
 6. monitoring and Grafana
 7. BMCs and the switch tray host
+
+Each optional component is installed when it is on and removed (its `absent` tasks) when it is off; `enabled.yml`, imported first, groups the instances the settings enable, so plays on optional instances run on `<group>:&enabled`.
 
 ## Verification
 

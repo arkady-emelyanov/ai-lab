@@ -152,15 +152,24 @@ class Lab:
         self.gpus, self.nvlinks = int(v["fakegpu_count"]), int(v["fakegpu_nvlinks"])
         self.switches, self.switch_ports = int(v["nvswitch_count"]), int(v["nvswitch_ports"])
         self.scheduler = v.get("scheduler", "slurm")
+        # nvswitch: false leaves out the switch tray, its host and its BMC
+        self.has_nvswitch = v.get("nvswitch", "true").lower() in ("true", "yes")
+
+    def need_nvswitch(self):
+        """Skips the test without the NVLink switch tray (nvswitch: false)."""
+        if not self.has_nvswitch:
+            pytest.skip("no NVLink switch tray (nvswitch: false)")
 
     def bmc(self, name):
+        if name == self.switch_bmc:
+            self.need_nvswitch()
         return BMC(name, self.ips[name], self.user, self.password)
 
     def tray_bmc(self, tray):
         return self.bmc(f"{tray}-bmc")
 
     def all_bmcs(self):
-        return [f"{t}-bmc" for t in self.trays] + [self.switch_bmc]
+        return [f"{t}-bmc" for t in self.trays] + ([self.switch_bmc] if self.has_nvswitch else [])
 
     # -- the trays as the OS sees them --
 
@@ -196,8 +205,14 @@ class Lab:
     def link_active(self, tray, g, link):
         return link not in self.inactive_links(tray).get(g, set())
 
+    def nvswitch_address(self):
+        """The partition controller's address; skips the test without it."""
+        self.need_nvswitch()
+        return self.ips[self.nvswitch]
+
     def metrics(self):
         """Fabric telemetry of the partition controller: [(name, labels, value)]."""
+        self.need_nvswitch()
         return scrape(f"http://{self.ips[self.nvswitch]}:{self.vars['nmxc_metrics_port']}/metrics")
 
     def metric(self, name, **labels):
@@ -207,6 +222,10 @@ class Lab:
     def oob_metric(self, bmc, metric, **labels):
         """A series from the Redfish exporter on the controller, scraping bmc
         now (out-of-band monitoring, as Prometheus sees it)."""
+        if bmc == self.switch_bmc:
+            self.need_nvswitch()
+        if self.vars.get("monitoring", "true").lower() not in ("true", "yes"):
+            pytest.skip("no Redfish exporter (monitoring: false)")
         url = f"http://{self.ips[CONTROLLER]}:{self.vars['redfish_exporter_port']}/metrics?target={bmc}"
         return one(scrape(url), metric, **labels)
 
@@ -265,9 +284,12 @@ def _lab():
     if _LAB is None:
         ips = _read_instances()
         _LAB = Lab(ips=ips, vars=_read_vars())
+        if _LAB.vars.get("bmc", "true").lower() not in ("true", "yes"):
+            pytest.exit("the lab has no BMCs (bmc: false): nothing to test", returncode=0)
         # sched-worker1, sched-worker2: the order the switch tray is cabled in
         _LAB.trays = sorted(n.removesuffix("-bmc") for n in ips if n.endswith("-bmc") and n != _LAB.switch_bmc)
-        if not _LAB.trays or _LAB.switch_bmc not in ips or _LAB.nvswitch not in ips:
+        switch = [_LAB.switch_bmc, _LAB.nvswitch] if _LAB.has_nvswitch else []
+        if not _LAB.trays or not all(n in ips for n in switch):
             pytest.exit("the lab is not running (make up)", returncode=2)
     return _LAB
 

@@ -11,13 +11,14 @@
   run_once: true
   changed_when: false
 
-# Static addresses (provision.yml) of every instance, BMCs included.
+# Static addresses (provision.yml) of every instance the settings enable,
+# BMCs included.
 - name: Resolve cluster hostnames via /etc/hosts
   ansible.builtin.blockinfile:
     path: /etc/hosts
     marker: "# {mark} slurm cluster"
     block: |
-      {% for name in groups['all'] | sort %}
+      {% for name in lab_instances | sort %}
       {{ bridge.stdout.split('/')[0].rsplit('.', 1)[0] }}.{{ hostvars[name].ip_host }} {{ name }}
       {% endfor %}
   notify: Re-resolve peers

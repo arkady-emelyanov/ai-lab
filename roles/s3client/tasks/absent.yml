@@ -1,0 +1,16 @@
+# Without the storage node (storage: false): no S3 client, and no S3
+# credentials in the users' homes (written by the main tasks, from the login
+# node: homes are shared).
+- name: Remove rc
+  ansible.builtin.file:
+    path: /usr/local/bin/rc
+    state: absent
+
+- name: Remove the users' S3 settings
+  ansible.builtin.file:
+    path: "{{ shared_mount }}/home/{{ item.0.name }}/{{ item.1 }}"
+    state: absent
+  loop: "{{ cluster_users | product(['.aws/credentials', '.aws/config', '.config/rc/config.toml']) | list }}"
+  loop_control:
+    label: "{{ item.0.name }}: {{ item.1 }}"
+  when: inventory_hostname in groups['login']

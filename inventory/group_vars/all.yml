@@ -37,14 +37,53 @@ instance_limits:
   bmc: { cpu: 1, memory: 256MiB }
   storage: { cpu: 2, memory: 4GiB }
   nvswitch: { cpu: 1, memory: 256MiB }
+# ---- Components -------------------------------------------------------------------
+# Optional parts of the lab (the controller, the login node, the GPU trays,
+# the scheduler and the directory are always there). Switched on a built
+# lab: make provision creates or deletes its instances, make configure
+# installs or removes it and reconfigures what uses it (make up does both).
+# See docs/platform.md#components.
+# Redfish BMCs of the GPU trays and of the NVLink switch tray (tray power,
+# sensors, NVLink ports; 3 instances).
+bmc: true
+# NVLink switch tray host: partition controller and fabric telemetry (1
+# instance). Without it the GPUs stay in their last NVLink partitions, the
+# default one on a new lab, until their next reset puts them back there.
+nvswitch: true
+# Storage node (RustFS object store, Redis) with JuiceFS at /pfs and
+# per-user S3 on every node (1 instance). KubeRay needs it (History Server).
+# /shared and /scratch are Incus volumes and stay.
+storage: true
+# Prometheus, Grafana and the exporters (node, GPU, Slurm, Redfish,
+# kube-state-metrics). Run:ai brings its own Prometheus and does not need it.
+monitoring: true
+# topograph: the scheduler's topology (Slurm topology.conf, Kubernetes node
+# labels for Kueue) follows NVLink partitions and the InfiniBand fabric.
+# Without it the topology is set once from the settings: one NVLink domain
+# under one InfiniBand leaf.
+topology: true
+# Slurm accounting: slurmdbd and MariaDB on the controller (sacct, sreport,
+# accounts and limits). Slurm mode only.
+slurm_accounting: true
+# The instances these settings give the lab; plays on optional ones run on
+# <group>:&enabled (playbooks/enabled.yml).
+lab_instances: >-
+  {{ groups['cluster']
+     + (groups['storage'] if storage | bool else [])
+     + (groups['nvswitch'] if nvswitch | bool else [])
+     + (groups['tray_bmc'] if bmc | bool else [])
+     + (groups['nvswitch_bmc'] if bmc | bool and nvswitch | bool else []) }}
+
 # ---- Scheduler --------------------------------------------------------------------
 # Workload layer on the same emulated hardware: slurm or k3s (Kubernetes).
 # Changing it on a built cluster: make down && make up (volumes are kept).
 scheduler: slurm
 # k3s mode: the server (control plane, add-ons) shares the controller with
-# LDAP, Prometheus and Grafana; kubelet and pods need more room on the trays.
+# LDAP, Prometheus and Grafana, and with KubeRay (its Ray dashboard for
+# finished clusters alone takes about 0.5 GiB; at 3 GiB the controller
+# thrashes); kubelet and pods need more room on the trays.
 instance_limits_k3s:
-  controller: { cpu: 2, memory: 3GiB }
+  controller: { cpu: 2, memory: 5GiB }
   workers: { cpu: 4, memory: 10GiB }
 k3s_version: v1.36.5+k3s1
 k3s_sha256: d73847bcd3c5fccef0115b372e2f9a91f3032dc84bbf71518a4617565294d313

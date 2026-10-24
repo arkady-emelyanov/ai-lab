@@ -5,7 +5,11 @@ import "fmt"
 // GPU identities computed exactly like fakegpu/fakegpu.h, so UUIDs, serials
 // and PCI addresses seen over Redfish match nvidia-smi on the tray.
 
-var pciBus = [8]uint{0x18, 0x2A, 0x3A, 0x5D, 0x9A, 0xAB, 0xBA, 0xDB}
+// As on a GB200 tray: each GPU in a PCI domain of its own, on bus 01
+// (fg_pci_domain, FG_PCI_BUS).
+var pciDomain = [8]uint{0x0008, 0x0009, 0x0018, 0x0019, 0x0028, 0x0029, 0x0038, 0x0039}
+
+const pciBus = 0x01
 
 func gpuUUIDBytes(host string, idx int) [16]byte {
 	h := uint64(1469598103934665603) // FNV-1a
@@ -32,7 +36,7 @@ func gpuSerial(host string, idx int) string {
 }
 
 func gpuPCIBusID(idx int) string {
-	return fmt.Sprintf("%08X:%02X:00.0", 0, pciBus[idx])
+	return fmt.Sprintf("%08X:%02X:00.0", pciDomain[idx], pciBus)
 }
 
 // traySerial is the tray's (or switch tray's) serial number, stable per name.

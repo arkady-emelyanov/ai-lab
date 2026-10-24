@@ -1,0 +1,12 @@
+# Without Slurm accounting (slurm_accounting: false): slurmdbd and MariaDB
+# stopped and disabled. The database stays, so accounts and job history come
+# back when accounting is switched on again.
+- name: Stop and disable slurmdbd and MariaDB
+  ansible.builtin.shell: |
+    for unit in slurmdbd.service mariadb.service; do
+        systemctl is-enabled --quiet $unit 2>/dev/null || systemctl is-active --quiet $unit || continue
+        systemctl disable --now $unit
+        echo changed
+    done
+  register: stopped
+  changed_when: "'changed' in stopped.stdout"

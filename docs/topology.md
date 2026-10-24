@@ -44,6 +44,7 @@ topograph's API is also available directly on `sched-control:49021` (`POST /v1/g
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `topology` | `true` | topograph; `false` sets the topology once from these settings (one NVLink block, one leaf and spine), which no longer follows partition changes ([Platform: Components](platform.md#components)) |
 | `ib_spine`, `ib_leaf`, `ib_hcas_per_node` | `LAB-IBSPINE-01`, `LAB-IBLEAF-01`, 4 | emulated fabric (`/etc/fakeib.json` on the trays) |
 | `ib_link_rate` | `NDR` | link rate `ibnetdiscover` reports (`4xNDR`; SDR to XDR), and the per-GPU InfiniBand bandwidth NCCL uses between NVLink partitions (NDR: 400 Gb/s) |
 | `topograph_ref` | pinned commit | topograph source built by `make init` |

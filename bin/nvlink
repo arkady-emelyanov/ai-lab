@@ -50,12 +50,15 @@ def controller_address():
                            stdin=subprocess.DEVNULL)
     if p.returncode != 0:
         fail(f"incus list: {p.stderr.strip()}")
+    # local.yml overrides all.yml, as in Ansible.
+    text = "".join(p.read_text() for p in (REPO / "inventory/group_vars/all.yml", REPO / "local.yml") if p.exists())
+    switch = re.findall(r"^nvswitch:\s*(\S+)", text, re.M)
+    if switch and switch[-1].lower() in ("false", "no"):
+        fail("the lab has no NVLink switch tray (nvswitch: false)")
     for inst in json.loads(p.stdout):
         if inst["name"] == "sched-nvswitch" and inst["status"] == "Running":
             for a in ((inst.get("state") or {}).get("network") or {}).get("eth0", {}).get("addresses", []):
                 if a["family"] == "inet":
-                    # local.yml overrides all.yml, as in Ansible.
-                    text = "".join(p.read_text() for p in (REPO / "inventory/group_vars/all.yml", REPO / "local.yml") if p.exists())
                     port = re.findall(r"^nmxc_port:\s*(\d+)", text, re.M)
                     return f"{a['address']}:{port[-1] if port else 9370}"
     fail("sched-nvswitch is not running (make up)")

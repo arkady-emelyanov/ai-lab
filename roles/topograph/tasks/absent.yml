@@ -1,0 +1,54 @@
+# Without topology discovery (topology: false): topograph and its refresh
+# timer stopped and disabled. The scheduler gets its topology from the
+# settings instead: Slurm the static topology.conf (slurm role), Kubernetes
+# the node labels topograph would write, for one NVLink domain under one
+# InfiniBand leaf and spine (Kueue's topology-aware scheduling needs them).
+- name: Stop and disable topograph and its timer
+  ansible.builtin.shell: |
+    for unit in update-topology.timer topograph.service; do
+        systemctl is-enabled --quiet $unit 2>/dev/null || systemctl is-active --quiet $unit || continue
+        systemctl disable --now $unit
+        echo changed
+    done
+  register: stopped
+  changed_when: "'changed' in stopped.stdout"
+
+- name: Remove topograph's units and update-topology
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/topograph.service
+    - /etc/systemd/system/update-topology.service
+    - /etc/systemd/system/update-topology.timer
+    - /usr/local/sbin/update-topology
+  register: removed
+
+- name: Forget the units
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: removed is changed
+
+# The slurm role writes it too, but topograph's timer may have rewritten it
+# since; it is stopped now.
+- name: Put back the topology from the settings (Slurm)
+  ansible.builtin.template:
+    src: "{{ role_path }}/../slurm/templates/topology.conf.j2"
+    dest: /etc/slurm/topology.conf
+    mode: "0644"
+  register: topology_conf
+  when: scheduler == 'slurm'
+
+- name: Reconfigure Slurm with it
+  ansible.builtin.command: scontrol reconfigure
+  when: topology_conf is changed
+
+- name: Label the trays with the topology from the settings (k3s)
+  ansible.builtin.command: >-
+    kubectl label node {{ item }} --overwrite
+    fabric.topograph.run/tier-1={{ ib_spine }} fabric.topograph.run/tier-0={{ ib_leaf }}
+    accelerator.topograph.run/domain={{ nvl_cluster_uuid }}.{{ nvl_clique_id }}
+  loop: "{{ groups['workers'] }}"
+  register: labelled
+  changed_when: labelled.stdout is not search('not labeled')
+  when: scheduler == 'k3s'

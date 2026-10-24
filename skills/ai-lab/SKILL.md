@@ -5,7 +5,7 @@ description: Operate a running ai-lab, the emulated GPU cluster modelled on NVID
 
 # Operating ai-lab
 
-The lab runs on the user's machine; commands run from the repository's root (the checkout with `AGENTS.md`). Deploying it is described in `AGENTS.md`. Before acting, find out what the lab runs: `cat inventory/group_vars/all.yml local.yml 2>/dev/null | grep '^scheduler:' | tail -1` (`slurm` or `k3s`; `local.yml` holds the user's settings and wins) and whether it is up (`bin/ssh sched-control true`).
+The lab runs on the user's machine; commands run from the repository's root (the checkout with `AGENTS.md`). Deploying it is described in `AGENTS.md`. Before acting, find out what the lab runs: `cat inventory/group_vars/all.yml local.yml 2>/dev/null | grep '^scheduler:' | tail -1` (`slurm` or `k3s`; `local.yml` holds the user's settings and wins), which optional components it has (`bin/ssh sched-control cat /etc/hosts`: the BMCs and `sched-nvswitch` are there only with `bmc` and `nvswitch` on) and whether it is up (`bin/ssh sched-control true`).
 
 ## Rules
 
@@ -24,8 +24,8 @@ The lab runs on the user's machine; commands run from the repository's root (the
 | `bin/ssh login` | login node as the directory user `joe` (key-based); `bin/ssh root@<instance>` as root (`sched-control`, `sched-worker1`, `sched-worker2`, `sched-storage`, `sched-nvswitch`, BMCs) |
 | `bin/scp -r examples login:` | copy the example jobs to joe's home |
 | `bin/kubectl` | k3s as cluster admin (k3s mode) |
-| `bin/nvlink` | NVLink domain and partitions (partition controller) |
-| `bin/redfish <tray> <path> [curl args]` | Redfish request to `<tray>-bmc` (`sched-worker1`, `sched-worker2`, `sched-nvswitch`) |
+| `bin/nvlink` | NVLink domain and partitions (partition controller); not with `nvswitch: false` |
+| `bin/redfish <tray> <path> [curl args]` | Redfish request to `<tray>-bmc` (`sched-worker1`, `sched-worker2`, `sched-nvswitch`); not with `bmc: false` |
 | Grafana `http://<bridge>.10:3000` (admin, `.secrets/grafana.pass`), Prometheus `http://<bridge>.10:9090` | dashboards "Lab overview", "Scheduler & NVLink fabric"; with KubeRay also Ray's (folder **Ray**) and read-only without a login (anonymous viewers); `<bridge>` from `incus network get incusbr0 ipv4.address` (10.107.111 in the docs) |
 
 ## Run jobs

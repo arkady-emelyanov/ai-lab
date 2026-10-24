@@ -6,6 +6,19 @@
     fail_msg: "scheduler must be slurm or k3s, not {{ scheduler }}"
     quiet: true
 
+- name: Component switches are booleans
+  ansible.builtin.assert:
+    that: lookup('vars', item) | string | lower in ['true', 'false', 'yes', 'no']
+    fail_msg: "{{ item }} must be true or false, not {{ lookup('vars', item) }}"
+    quiet: true
+  loop: [bmc, nvswitch, storage, monitoring, topology, slurm_accounting]
+
+- name: KubeRay has the storage node
+  ansible.builtin.assert:
+    that: not (scheduler == 'k3s' and kuberay | bool) or storage | bool
+    fail_msg: "kuberay: true needs storage: true (KubeRay's History Server keeps Ray's logs in RustFS); set kuberay: false or storage: true"
+    quiet: true
+
 - name: Run:ai runs on Kubernetes
   ansible.builtin.assert:
     that: not runai | bool or scheduler == 'k3s'

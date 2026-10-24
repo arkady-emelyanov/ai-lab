@@ -78,6 +78,8 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
 | `sched-nvswitch-bmc` | .33 | Redfish BMC of the NVLink switch tray | default | shared | [BMCs](bmc-redfish.md) |
 | `sched-nvswitch` | .34 | switch tray host: NVLink partition controller and fabric telemetry | default | shared | [NVLink partitions](nvlink-partitions.md) |
 
+The BMCs, `sched-nvswitch` and `sched-storage` are optional components (`bmc`, `nvswitch`, `storage`), as are monitoring, topograph and Slurm accounting; all are on by default ([Platform: Components](platform.md#components)).
+
 Addresses are pinned on the Incus bridge (`incusbr0`, `10.107.111.0/24` here; the last octet comes from `ip_host` in `inventory/hosts.yml`). Every instance has the others in `/etc/hosts`. The instance name is also the hostname, the Slurm or Kubernetes node name and the `bin/ssh` alias.
 
 **Host cores.** Each GPU tray gets whole physical cores of its own, so the trays never compete with the rest of the lab for a core ([Platform: CPU placement](platform.md#configuration)).

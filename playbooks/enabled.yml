@@ -1,0 +1,12 @@
+# The instances the settings enable (lab_instances, inventory/group_vars/all.yml)
+# as group `enabled`: plays on optional instances run on <group>:&enabled, so
+# they skip the ones switched off. No connection: it runs on the host.
+# Imported by site.yml and test.yml.
+- name: Instances of the enabled components
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Group the enabled instances
+      ansible.builtin.group_by:
+        key: enabled
+      when: inventory_hostname in lab_instances

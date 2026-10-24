@@ -141,7 +141,7 @@ def test_link_down_shows_at_both_ends(lab, downed_link):
 def _grpc(lab, method, **req):
     req.setdefault("gateway_id", "bmc-tests")
     p = subprocess.run([str(REPO / "bin/grpcurl"), "-plaintext", "-d", json.dumps(req),
-                        f"{lab.ips[lab.nvswitch]}:{lab.vars['nmxc_port']}", f"nmxlab.v1.NMXController/{method}"],
+                        f"{lab.nvswitch_address()}:{lab.vars['nmxc_port']}", f"nmxlab.v1.NMXController/{method}"],
                        capture_output=True, text=True, timeout=30)
     assert p.returncode == 0, f"{method}: {p.stderr.strip()}"
     return json.loads(p.stdout or "{}")

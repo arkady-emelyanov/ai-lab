@@ -11,7 +11,7 @@ When the user asks to set up, install, deploy or try the lab, offer to do it end
 ### 1. Check the host (no changes)
 
 - Linux, x86-64. The lab is developed and tested on Ubuntu 24.04 (Incus and Go from its packages; the Makefile fetches a newer Go toolchain when a build needs one). On other distributions install Incus from their packages or [Incus' own instructions](https://linuxcontainers.org/incus/docs/main/installing/).
-- Resources: at least 4 CPU cores, 16 GiB of free RAM (the running lab uses about 10 GiB; container limits add up to 27 GiB, 32 GiB in k3s mode), about 25 GB free under `/var/lib/incus`. Report what the machine has; if it falls short, say so and let the user decide.
+- Resources: at least 4 CPU cores, 16 GiB of free RAM (the running lab uses about 10 GiB; container limits add up to 27 GiB, 34 GiB in k3s mode), about 25 GB free under `/var/lib/incus`. Report what the machine has; if it falls short, say so and let the user decide.
 - Tools: `incus`, `make`, `python3` with `venv`, `go`, `jq`, `git`. Note what is missing.
 - Incus state: `incus info` (as the user, or through `sg incus-admin -c 'incus info'` when the group was just added). An Incus that was never initialised needs `incus admin init --minimal`.
 - Run `make check` once the tools are there: it reports every host setting the lab still needs, with the exact command.
@@ -43,6 +43,7 @@ make test          # end-to-end checks, ~10 minutes
 - `scheduler: slurm` (default) or `scheduler: k3s` in `local.yml` selects Slurm or Kubernetes; ask the user which one if they did not say, before `make up`.
 - With `scheduler: k3s`, KubeRay (Ray clusters and jobs, its dashboard; [KubeRay](docs/kuberay.md)) and NVIDIA's DRA driver with ComputeDomains (IMEX; [ComputeDomains](docs/compute-domains.md)) are on by default (`kuberay: true`, `nvidia_dra: true`); mention them, and turn one off only if the user does not want it.
 - `runai: true` (with `scheduler: k3s`) adds NVIDIA Run:ai (control plane, KAI Scheduler, web UI) on the Kubernetes cluster ([NVIDIA Run:ai](docs/runai.md)); it gives the controller 6 CPUs and 16 GiB. Offer it when the user picks k3s, do not enable it unasked. On a running k3s lab: `make provision`, then `make configure`.
+- Optional components (`bmc`, `nvswitch`, `storage`, `monitoring`, `topology`, `slurm_accounting`; [Platform: Components](docs/platform.md#components)) are all on by default: leave them on unless the user wants a smaller lab, and say what goes with each.
 - `make frameworks` installs PyTorch and Ray into the lab (several GB, needed for the DDP and Ray examples); offer it, do not run it unasked.
 - If a step fails, read the log, check [Platform: Troubleshooting](docs/platform.md#troubleshooting), fix the cause and rerun the step: every target is idempotent.
 

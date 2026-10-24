@@ -93,6 +93,7 @@ curl -s 'http://10.107.111.10:9348/metrics?target=sched-worker1-bmc' | grep powe
 
 | Variable | Default |
 |---|---|
+| `monitoring` | `true`; `false` stops Prometheus, Grafana and the exporters, keeping their data ([Platform: Components](platform.md#components)) |
 | `gpu_exporter_version`, `gpu_exporter_port` | 1.15.1, 9835 |
 | `slurm_exporter_version`, `slurm_exporter_port` | 1.8.0, 9092 (Slurm mode) |
 | `redfish_exporter_version`, `redfish_exporter_port` | 2.6.3, 9348 |

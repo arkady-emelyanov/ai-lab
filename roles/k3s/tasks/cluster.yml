@@ -64,6 +64,14 @@
     dest: "{{ k3s_manifests_dir }}/lab-addons.yaml"
     mode: "0600"
 
+# Taken out of the manifest, a chart stays installed: deleting its HelmChart
+# uninstalls it.
+- name: No kube-state-metrics without monitoring
+  ansible.builtin.command: kubectl -n kube-system delete helmchart kube-state-metrics --ignore-not-found
+  register: ksm_deleted
+  changed_when: ksm_deleted.stdout != ''
+  when: not monitoring | bool
+
 - name: Install GPU Feature Discovery
   ansible.builtin.template:
     src: gfd.yaml.j2

@@ -1,6 +1,6 @@
 # Lab endpoints
 
-Written by `make configure` for this machine's lab ({{ ansible_managed }}); not in git. Settings: `scheduler: {{ scheduler }}`{% if scheduler == 'k3s' %}, `kuberay: {{ kuberay | bool | lower }}`, `runai: {{ runai | bool | lower }}`{% endif %}. Passwords are in the files named, under `.secrets/`. All endpoints and their docs: [docs/endpoints.md](docs/endpoints.md).
+Written by `make configure` for this machine's lab ({{ ansible_managed }}); not in git. Settings: `scheduler: {{ scheduler }}`{% if scheduler == 'k3s' %}, `kuberay: {{ kuberay | bool | lower }}`, `runai: {{ runai | bool | lower }}`{% endif %}{% for c in ['bmc', 'nvswitch', 'storage', 'monitoring', 'topology'] + (['slurm_accounting'] if scheduler == 'slurm' else []) %}, `{{ c }}: {{ lookup('vars', c) | bool | lower }}`{% endfor %}. Passwords are in the files named, under `.secrets/`. All endpoints and their docs: [docs/endpoints.md](docs/endpoints.md).
 
 {% macro ip(host) %}{{ prefix }}.{{ hostvars[host].ip_host }}{% endmacro %}
 {% set ctrl = groups['controller'][0] %}
@@ -8,13 +8,19 @@ Written by `make configure` for this machine's lab ({{ ansible_managed }}); not 
 |---|---|---|
 | Login node (SSH) | `bin/ssh login` ({{ ip(groups['login'][0]) }}:22) | {% for u in cluster_users %}`{{ u.name }}` / `{{ u.password }}`{{ ', ' if not loop.last }}{% endfor %}, or your key |
 | Any instance as root (SSH) | `bin/ssh root@<instance>` | `.secrets/ssh/id_ed25519` |
+{% if monitoring | bool %}
 | Grafana | http://{{ ip(ctrl) }}:{{ grafana_port }} | `admin` / `.secrets/grafana.pass`{{ '; anonymous read-only (KubeRay)' if scheduler == 'k3s' and kuberay | bool }} |
 | Prometheus | http://{{ ip(ctrl) }}:9090 | none |
+{% endif %}
 {% if scheduler == 'slurm' %}
+{% if monitoring | bool %}
 | Slurm exporter | http://{{ ip(ctrl) }}:{{ slurm_exporter_port }}/metrics | none |
+{% endif %}
 {% else %}
 | Kubernetes API | https://{{ ip(ctrl) }}:{{ k3s_port }} (`bin/kubectl`) | admin: `.secrets/kubeconfig`; users: `~/.kube/config` on the login node |
+{% if monitoring | bool %}
 | kube-state-metrics | http://{{ ip(ctrl) }}:{{ ksm_node_port }}/metrics | none |
+{% endif %}
 {% if kuberay | bool %}
 | KubeRay dashboard (jobs, clusters, History) and API server | http://{{ kuberay_name }} | none |
 | Ray's dashboard for finished Ray clusters | http://{{ kuberay_history_name }} | none |
@@ -23,18 +29,31 @@ Written by `make configure` for this machine's lab ({{ ansible_managed }}); not 
 | NVIDIA Run:ai UI and API | https://{{ runai_name }} (`bin/ssh sched-control runai-api …`) | `{{ runai_admin_email }}` / `.secrets/runai-admin.pass`; certificate authority `.secrets/runai/ca.crt` |
 {% endif %}
 {% endif %}
+{% if topology | bool %}
 | topograph API | http://{{ ip(ctrl) }}:{{ topograph_port }} | none |
+{% endif %}
+{% if storage | bool %}
 | RustFS S3 API | http://{{ ip(storage_host) }}:{{ rustfs_port }} | admin: `.secrets/rustfs.access` / `.secrets/rustfs.secret`; users: `<name>` / `.secrets/users/<name>.s3` |
 | RustFS console | http://{{ ip(storage_host) }}:{{ rustfs_console_port }}/rustfs/console/ | as S3 API |
-{% for bmc in groups['tray_bmc'] %}
-| {{ bmc | regex_replace('-bmc$', '') }} BMC (Redfish) | https://{{ ip(bmc) }} (`bin/redfish {{ bmc | regex_replace('-bmc$', '') }} …`) | `{{ bmc_username }}` / `{{ bmc_password }}` |
+{% endif %}
+{% for host in groups['tray_bmc'] | select('in', lab_instances) %}
+| {{ host | regex_replace('-bmc$', '') }} BMC (Redfish) | https://{{ ip(host) }} (`bin/redfish {{ host | regex_replace('-bmc$', '') }} …`) | `{{ bmc_username }}` / `{{ bmc_password }}` |
 {% endfor %}
-{% for bmc in groups['bmc'] | difference(groups['tray_bmc']) %}
-| {{ bmc | regex_replace('-bmc$', '') }} BMC (Redfish, NVLink switch tray) | https://{{ ip(bmc) }} (`bin/redfish {{ bmc | regex_replace('-bmc$', '') }} …`) | `{{ bmc_username }}` / `{{ bmc_password }}` |
+{% for host in groups['nvswitch_bmc'] | select('in', lab_instances) %}
+| {{ host | regex_replace('-bmc$', '') }} BMC (Redfish, NVLink switch tray) | https://{{ ip(host) }} (`bin/redfish {{ host | regex_replace('-bmc$', '') }} …`) | `{{ bmc_username }}` / `{{ bmc_password }}` |
 {% endfor %}
+{% if nvswitch | bool %}
 | NVLink partition controller (gRPC) | {{ ip(groups['nvswitch'][0]) }}:{{ nmxc_port }} (`bin/nvlink`; plaintext, reflection) | none |
 | Fabric telemetry | http://{{ ip(groups['nvswitch'][0]) }}:{{ nmxc_metrics_port }}/metrics | none |
+{% endif %}
+{% if monitoring | bool %}
 | GPU exporters | {% for w in groups['workers'] %}http://{{ ip(w) }}:{{ gpu_exporter_port }}/metrics{{ ', ' if not loop.last }}{% endfor %} | none |
-| node_exporter, JuiceFS metrics | `:9100/metrics`, `:9567/metrics` on {% for h in groups['cluster'] %}{{ ip(h) }}{{ ', ' if not loop.last }}{% endfor %} | none |
+| node_exporter | `:9100/metrics` on {% for h in groups['cluster'] %}{{ ip(h) }}{{ ', ' if not loop.last }}{% endfor %} | none |
+{% endif %}
+{% if storage | bool %}
+| JuiceFS metrics | `:9567/metrics` on {% for h in groups['cluster'] %}{{ ip(h) }}{{ ', ' if not loop.last }}{% endfor %} | none |
+{% endif %}
 
+{% if bmc | bool %}
 The BMCs use self-signed certificates (`curl -k`).
+{% endif %}

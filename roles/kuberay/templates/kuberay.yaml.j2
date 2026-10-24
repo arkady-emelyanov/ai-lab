@@ -405,11 +405,16 @@ kind: ConfigMap
 metadata:
   name: ray-grafana
   namespace: {{ namespace }}
+{% if monitoring | bool %}
 data:
   RAY_PROMETHEUS_HOST: http://{{ groups['controller'][0] }}:9090
   RAY_PROMETHEUS_NAME: Prometheus
   RAY_GRAFANA_HOST: http://{{ groups['controller'][0] }}:{{ grafana_port }}
   RAY_GRAFANA_IFRAME_HOST: http://{{ kuberay_controller_address }}:{{ grafana_port }}
+{% else %}
+# No monitoring (monitoring: false): Ray's dashboard shows no metrics.
+data: {}
+{% endif %}
 {% endfor %}
 {% if runai | bool %}
 ---
@@ -422,9 +427,14 @@ metadata:
   name: ray-grafana
   namespace: runai
   labels: {run.ai/cluster-wide: "true", run.ai/name: ray-grafana}
+{% if monitoring | bool %}
 data:
   RAY_PROMETHEUS_HOST: http://{{ groups['controller'][0] }}:9090
   RAY_PROMETHEUS_NAME: Prometheus
   RAY_GRAFANA_HOST: http://{{ groups['controller'][0] }}:{{ grafana_port }}
   RAY_GRAFANA_IFRAME_HOST: http://{{ kuberay_controller_address }}:{{ grafana_port }}
+{% else %}
+# No monitoring (monitoring: false): Ray's dashboard shows no metrics.
+data: {}
+{% endif %}
 {% endif %}

@@ -13,6 +13,15 @@ scheduler: slurm
 # NVIDIA Run:ai on the Kubernetes cluster (needs scheduler: k3s); see docs/runai.md.
 # runai: true
 
+# Optional components, all on by default (docs/platform.md#components); on a
+# built lab a change takes make provision and make configure (or make up).
+# bmc: false                # no Redfish BMCs
+# nvswitch: false           # no NVLink switch tray host (partition controller)
+# storage: false            # no storage node (/pfs, S3); needs kuberay: false
+# monitoring: false         # no Prometheus, Grafana, exporters
+# topology: false           # no topograph; a fixed topology from the settings
+# slurm_accounting: false   # no slurmdbd (sacct, accounts)
+
 # More examples (any variable from inventory/group_vars/all.yml):
 # apt_mirror: http://mirrors.edge.kernel.org/ubuntu   # a fixed mirror instead of the fastest (auto)
 # fakegpu_coherent_gpu_memory: driver

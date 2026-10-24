@@ -1,0 +1,18 @@
+# Without monitoring (monitoring: false): the exporters and Prometheus
+# stopped and disabled on every node. Prometheus' data stays, so the history
+# is back when monitoring is switched on again.
+- name: Stop and disable the exporters and Prometheus
+  ansible.builtin.shell: |
+    for unit in {{ units | join(' ') }}; do
+        systemctl is-enabled --quiet $unit 2>/dev/null || systemctl is-active --quiet $unit || continue
+        systemctl disable --now $unit
+        echo changed
+    done
+  vars:
+    units: >-
+      {{ ['prometheus-node-exporter.service']
+         + (['nvidia_gpu_exporter.service'] if inventory_hostname in groups['workers'] else [])
+         + (['prometheus.service', 'prometheus-slurm-exporter.service', 'slurm-gpu-metrics.timer',
+             'ray-targets.timer', 'redfish-exporter.service'] if inventory_hostname in groups['controller'] else []) }}
+  register: stopped
+  changed_when: "'changed' in stopped.stdout"

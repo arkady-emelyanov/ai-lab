@@ -31,11 +31,16 @@ Epilog=/etc/slurm/epilog.sh
 {% endif %}
 JobAcctGatherType=jobacct_gather/linux
 JobAcctGatherFrequency=30
+{% if slurm_accounting | bool %}
 AccountingStorageType=accounting_storage/slurmdbd
 AccountingStorageHost={{ groups['controller'][0] }}
 AccountingStorageEnforce=associations,limits,qos
 # Account GPUs per job, user and account (sacct, sreport, metrics).
 AccountingStorageTRES=gres/gpu
+{% else %}
+# No accounting (slurm_accounting: false): no sacct, accounts or limits.
+AccountingStorageType=accounting_storage/none
+{% endif %}
 
 SchedulerType=sched/backfill
 SelectType=select/cons_tres

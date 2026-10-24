@@ -1,6 +1,7 @@
-# Deletes all cluster instances. Volumes (shared, per-worker scratch, object
-# data and its JuiceFS metadata) and the secrets are kept; `make purge` also
-# deletes the volumes and scratch pool.
+# Deletes all cluster instances, those of components switched off included
+# (every instance the inventory names, whatever the settings). Volumes
+# (shared, per-worker scratch, object data and its JuiceFS metadata) and the
+# secrets are kept; `make purge` also deletes the volumes and scratch pool.
 - name: Destroy Incus instances
   hosts: localhost
   connection: local
@@ -33,8 +34,8 @@
       failed_when: del.rc != 0 and 'not found' not in del.stderr
 
     - name: Delete sideband volumes
-      ansible.builtin.command: incus storage volume delete {{ shared_pool }} sideband-{{ hostvars[item].bmc_tray }}
-      loop: "{{ groups['tray_bmc'] }}"
+      ansible.builtin.command: incus storage volume delete {{ shared_pool }} sideband-{{ item }}
+      loop: "{{ groups['workers'] }}"
       register: del
       changed_when: del.rc == 0
       failed_when: del.rc != 0 and 'not found' not in del.stderr

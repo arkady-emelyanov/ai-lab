@@ -1,6 +1,8 @@
 # Configures the cluster and the BMCs on the instances created by
 # provision.yml. The workload layer is Slurm or k3s (scheduler in
-# inventory/group_vars/all.yml); everything else is shared.
+# inventory/group_vars/all.yml); everything else is shared. Optional
+# components (bmc, nvswitch, ...) are configured when they are on, and
+# removed from the instances that stay when they are off.
 - name: Check the settings
   hosts: localhost
   connection: local
@@ -9,8 +11,11 @@
     - name: Check the settings
       ansible.builtin.include_tasks: tasks/check-settings.yml
 
+- name: Enabled instances
+  ansible.builtin.import_playbook: enabled.yml
+
 - name: Package sources
-  hosts: all:!localhost
+  hosts: enabled
   roles: [apt]
 
 - name: Base system
@@ -44,8 +49,11 @@
 
 - name: Slurm accounting
   hosts: controller
-  roles:
-    - role: slurmdbd
+  tasks:
+    - name: slurmdbd and MariaDB, or none (slurm_accounting)
+      ansible.builtin.include_role:
+        name: slurmdbd
+        tasks_from: "{{ 'main' if slurm_accounting | bool else 'absent' }}"
       when: scheduler == 'slurm'
 
 - name: Kubernetes control plane (k3s server)
@@ -95,20 +103,28 @@
       when: scheduler == 'k3s'
 
 - name: Storage node (RustFS, Redis, per-user S3)
-  hosts: storage
+  hosts: storage:&enabled
   roles: [ssh, storage, s3users]
 
 - name: Shared filesystem (JuiceFS) and S3 clients
   hosts: cluster
-  roles: [juicefs, s3client]
+  tasks:
+    - name: JuiceFS and S3 clients, or none (storage)
+      ansible.builtin.include_role:
+        name: "{{ client }}"
+        tasks_from: "{{ 'main' if storage | bool else 'absent' }}"
+      loop: [juicefs, s3client]
+      loop_control:
+        loop_var: client
 
 - name: KubeRay (operator, API server, dashboard, History Server on RustFS)
   hosts: controller
   tasks:
-    - name: KubeRay
+    - name: KubeRay, or none (kuberay)
       ansible.builtin.include_role:
         name: kuberay
-      when: scheduler == 'k3s' and kuberay | bool
+        tasks_from: "{{ 'main' if kuberay | bool else 'absent' }}"
+      when: scheduler == 'k3s'
 
 - name: Emulated InfiniBand fabric
   hosts: workers
@@ -116,22 +132,34 @@
 
 - name: Topology generation (topograph)
   hosts: controller
-  roles: [topograph]
+  tasks:
+    - name: topograph, or a topology from the settings (topology)
+      ansible.builtin.include_role:
+        name: topograph
+        tasks_from: "{{ 'main' if topology | bool else 'absent' }}"
 
 - name: Monitoring
   hosts: cluster
-  roles: [monitoring]
+  tasks:
+    - name: Exporters and Prometheus, or none (monitoring)
+      ansible.builtin.include_role:
+        name: monitoring
+        tasks_from: "{{ 'main' if monitoring | bool else 'absent' }}"
 
 - name: Dashboards
   hosts: controller
-  roles: [grafana]
+  tasks:
+    - name: Grafana, or none (monitoring)
+      ansible.builtin.include_role:
+        name: grafana
+        tasks_from: "{{ 'main' if monitoring | bool else 'absent' }}"
 
 - name: BMCs (Redfish)
-  hosts: bmc
+  hosts: bmc:&enabled
   roles: [ssh, fakebmc]
 
 - name: NVLink switch tray host (partition controller)
-  hosts: nvswitch
+  hosts: nvswitch:&enabled
   roles: [ssh, fakenmxc]
 
 # A list of this lab's endpoints for this machine: addresses from the bridge,

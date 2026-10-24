@@ -1,12 +1,17 @@
-# Creates the Incus containers, volumes and wiring (idempotent).
+# Creates the Incus containers, volumes and wiring (idempotent), and deletes
+# the instances of components switched off (bmc, nvswitch, ...).
 # Runs on the host; needs membership in the incus-admin group.
 - name: Provision Incus instances
   hosts: localhost
   connection: local
   gather_facts: false
   vars:
-    instances: "{{ groups['cluster'] + groups['storage'] + groups['nvswitch'] + groups['bmc'] }}"
+    # The instances the settings enable, and every instance the lab can have.
+    instances: "{{ lab_instances }}"
+    all_instances: "{{ groups['cluster'] + groups['storage'] + groups['nvswitch'] + groups['bmc'] }}"
     secrets: "{{ playbook_dir | dirname }}/.secrets"
+    # The BMCs reach the Incus API here (with BMCs only).
+    incus_api_address: "{{ api.results[0].stdout.split('/')[0] }}:{{ incus_api_port }}"
     # --project flag for an instance
     proj: "--project {{ hostvars[item].ansible_incus_project }}"
     limits: >-
@@ -75,39 +80,58 @@
 
     - name: Expose the Incus API on the bridge only
       ansible.builtin.command: incus config set core.https_address {{ incus_api_address }}
-      when: api.results[1].stdout != incus_api_address
-      vars:
-        incus_api_address: "{{ api.results[0].stdout.split('/')[0] }}:{{ incus_api_port }}"
+      when: bmc | bool and api.results[1].stdout != incus_api_address
 
-    - name: Create the BMC secrets directory
-      ansible.builtin.file:
-        path: "{{ secrets }}/bmc"
-        state: directory
-        mode: "0700"
+    # Without BMCs nothing uses it; another listener is left alone.
+    - name: Close the BMCs' Incus API listener without BMCs
+      ansible.builtin.command: incus config unset core.https_address
+      when: not bmc | bool and api.results[1].stdout == incus_api_address
 
-    - name: Generate a client certificate per BMC
-      ansible.builtin.command: >-
-        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650
-        -subj /CN={{ item }} -keyout {{ secrets }}/bmc/{{ item }}.key -out {{ secrets }}/bmc/{{ item }}.crt
+    # `trust remove` takes a fingerprint, not the certificate's name.
+    - name: Revoke the BMC certificates without BMCs
+      ansible.builtin.shell: |
+        set -o pipefail
+        incus config trust list --format csv -c nf | awk -F, -v n={{ item }} '$1 == n {print $2}' |
+            while read -r fp; do incus config trust remove "$fp"; echo removed; done
       args:
-        creates: "{{ secrets }}/bmc/{{ item }}.crt"
+        executable: /bin/bash
       loop: "{{ groups['tray_bmc'] }}"
+      when: not bmc | bool
+      register: revoked
+      changed_when: "'removed' in revoked.stdout"
 
-    - name: List trusted certificates
-      ansible.builtin.command: incus config trust list --format json
-      register: trust
-      changed_when: false
+    - name: BMC credentials for tray power control
+      when: bmc | bool
+      block:
+        - name: Create the BMC secrets directory
+          ansible.builtin.file:
+            path: "{{ secrets }}/bmc"
+            state: directory
+            mode: "0700"
 
-    - name: Trust BMC certificates for the trays project only
-      ansible.builtin.command: >-
-        incus config trust add-certificate {{ secrets }}/bmc/{{ item }}.crt
-        --name {{ item }} --restricted --projects {{ trays_project }}
-      loop: "{{ groups['tray_bmc'] }}"
-      when: item not in (trust.stdout | from_json | map(attribute='name'))
+        - name: Generate a client certificate per BMC
+          ansible.builtin.command: >-
+            openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650
+            -subj /CN={{ item }} -keyout {{ secrets }}/bmc/{{ item }}.key -out {{ secrets }}/bmc/{{ item }}.crt
+          args:
+            creates: "{{ secrets }}/bmc/{{ item }}.crt"
+          loop: "{{ groups['tray_bmc'] }}"
 
-    - name: Save the Incus server certificate for pinning
-      ansible.builtin.shell: incus query /1.0 | jq -r .environment.certificate > {{ secrets }}/bmc/incus-server.crt
-      changed_when: false
+        - name: List trusted certificates
+          ansible.builtin.command: incus config trust list --format json
+          register: trust
+          changed_when: false
+
+        - name: Trust BMC certificates for the trays project only
+          ansible.builtin.command: >-
+            incus config trust add-certificate {{ secrets }}/bmc/{{ item }}.crt
+            --name {{ item }} --restricted --projects {{ trays_project }}
+          loop: "{{ groups['tray_bmc'] }}"
+          when: item not in (trust.stdout | from_json | map(attribute='name'))
+
+        - name: Save the Incus server certificate for pinning
+          ansible.builtin.shell: incus query /1.0 | jq -r .environment.certificate > {{ secrets }}/bmc/incus-server.crt
+          changed_when: false
 
     # ---- instances ----------------------------------------------------------------
 
@@ -115,6 +139,27 @@
       ansible.builtin.command: incus list --all-projects --format json
       register: incus_list
       changed_when: false
+
+    # Instances of components switched off go, as with make down (volumes
+    # stay). The trays' sideband volumes outlive them, so what they set there
+    # goes first: a tray BMC's disabled NVLink ports, the switch tray BMC's
+    # disabled switch ports, the partition controller's partitions (the GPUs
+    # return to the default one at their next reset).
+    - name: Delete the instances of disabled components
+      ansible.builtin.shell: |
+        set -e
+        p="--project {{ hostvars[item].ansible_incus_project }}"
+        if [ -n "{{ leftovers }}" ]; then
+            incus start {{ item }} $p 2>/dev/null || true
+            incus exec {{ item }} $p -- sh -c 'rm -f {{ leftovers }}'
+        fi
+        incus delete --force {{ item }} $p
+      vars:
+        leftovers: >-
+          {{ sideband_bmc_path ~ '/nvlink-disabled' if item in groups['tray_bmc']
+             else '/var/lib/fakebmc/sideband/*/nvlink-disabled-switch' if item in groups['nvswitch_bmc']
+             else '/var/lib/fakenmxc/sideband/*/fabric-clique' if item in groups['nvswitch'] else '' }}
+      loop: "{{ incus_list.stdout | from_json | map(attribute='name') | select('in', all_instances) | reject('in', instances) | list }}"
 
     # Fixed addresses from the first boot. They lie in the bridge's DHCP
     # range, so an instance booting unpinned can lease another's address and
@@ -273,6 +318,7 @@
     - name: Attach the object storage data volume
       ansible.builtin.command: >-
         incus storage volume attach {{ shared_pool }} {{ rustfs_volume }} {{ storage_host }} /var/lib/rustfs
+      when: storage | bool
       register: ra
       changed_when: ra.rc == 0
       failed_when: ra.rc != 0 and 'already exists' not in ra.stderr
@@ -286,6 +332,7 @@
     - name: Attach the JuiceFS metadata volume
       ansible.builtin.command: >-
         incus storage volume attach {{ shared_pool }} {{ juicefs_meta_volume }} {{ storage_host }} /var/lib/redis
+      when: storage | bool
       register: ma
       changed_when: ma.rc == 0
       failed_when: ma.rc != 0 and 'already exists' not in ma.stderr
@@ -358,25 +405,23 @@
       changed_when: kmsg.rc == 0
       failed_when: kmsg.rc != 0 and 'already exists' not in kmsg.stderr
 
+    # The tray's own, whichever management services write into it.
     - name: Create a sideband volume per tray
-      ansible.builtin.command: incus storage volume create {{ shared_pool }} sideband-{{ hostvars[item].bmc_tray }}
-      loop: "{{ groups['tray_bmc'] }}"
+      ansible.builtin.command: incus storage volume create {{ shared_pool }} sideband-{{ item }}
+      loop: "{{ groups['workers'] }}"
       register: sb
       changed_when: sb.rc == 0
       failed_when: sb.rc != 0 and 'already exists' not in sb.stderr
 
-    - name: Attach sideband volumes to BMCs (read-write) and trays (read-only)
+    - name: Attach sideband volumes to trays (read-only) and their BMCs (read-write)
       ansible.builtin.command: >-
-        incus config device add {{ target }} sideband disk
-        pool={{ shared_pool }} source=sideband-{{ hostvars[item.0].bmc_tray }}
-        path={{ item.1.path }} readonly={{ item.1.readonly }} --project {{ hostvars[target].ansible_incus_project }}
+        incus config device add {{ item }} sideband disk
+        pool={{ shared_pool }} source=sideband-{{ tray }}
+        path={{ sideband_tray_path if tray == item else sideband_bmc_path }} readonly={{ tray == item }}
+        --project {{ hostvars[item].ansible_incus_project }}
       vars:
-        target: "{{ item.0 if item.1.side == 'bmc' else hostvars[item.0].bmc_tray }}"
-      loop: >-
-        {{ groups['tray_bmc'] | product([{'side': 'bmc', 'path': sideband_bmc_path, 'readonly': false},
-                                         {'side': 'tray', 'path': sideband_tray_path, 'readonly': true}]) | list }}
-      loop_control:
-        label: "{{ target }}:{{ item.1.path }}"
+        tray: "{{ hostvars[item].bmc_tray | default(item) }}"
+      loop: "{{ groups['workers'] + groups['tray_bmc'] | select('in', instances) | list }}"
       register: sbdev
       changed_when: sbdev.rc == 0
       failed_when: sbdev.rc != 0 and 'already exists' not in sbdev.stderr
@@ -388,7 +433,7 @@
         incus config device add {{ item.1 }} sideband-{{ item.0 }} disk
         pool={{ shared_pool }} source=sideband-{{ item.0 }}
         path={{ '/var/lib/fakebmc' if item.1 in groups['bmc'] else '/var/lib/fakenmxc' }}/sideband/{{ item.0 }}
-      loop: "{{ groups['workers'] | product(groups['nvswitch'] + groups['nvswitch_bmc']) | list }}"
+      loop: "{{ groups['workers'] | product((groups['nvswitch'] + groups['nvswitch_bmc']) | select('in', instances)) | list }}"
       register: swsb
       changed_when: swsb.rc == 0
       failed_when: swsb.rc != 0 and 'already exists' not in swsb.stderr
@@ -410,8 +455,9 @@
                 else '/var/lib/fakenmxc/telemetry/' ~ item.0 }}
         readonly={{ item.1 != item.0 }} --project {{ hostvars[item.1].ansible_incus_project }}
       loop: >-
-        {{ (groups['workers'] | zip(groups['workers']) | list) + (groups['workers'] | product(groups['nvswitch']) | list)
-           + (groups['tray_bmc'] | map('extract', hostvars, 'bmc_tray') | zip(groups['tray_bmc']) | list) }}
+        {{ ((groups['workers'] | zip(groups['workers']) | list) + (groups['workers'] | product(groups['nvswitch']) | list)
+            + (groups['tray_bmc'] | map('extract', hostvars, 'bmc_tray') | zip(groups['tray_bmc']) | list))
+           | selectattr(1, 'in', instances) | list }}
       loop_control:
         label: "{{ item.1 }}: telemetry-{{ item.0 }}"
       register: tdev

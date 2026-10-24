@@ -73,6 +73,7 @@ bin/ssh sched-worker1 nvidia-smi topo -m           # GPU2 pairs now NV16
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `bmc` | `true` | the BMCs at all; `false` leaves out all three, with the Redfish exporter and their panels ([Platform: Components](platform.md#components)) |
 | `bmc_username`, `bmc_password` | `root`, `0penBmc` | credentials of every BMC |
 | `bmc_firmware_version` | `fakebmc-1.0.0` | host BMC firmware: `FW_BMC_0` (switch tray: `MGX_FW_BMC_0`) and manager `BMC_0`'s `FirmwareVersion` |
 | `hmc_firmware_version` | `fakebmc-hmc-1.0.0` | HGX Management Controller firmware: `HGX_FW_BMC_0` and manager `HGX_BMC_0` |

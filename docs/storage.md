@@ -51,6 +51,7 @@ Admin access (all buckets): keys in `.secrets/rustfs.access` and `.secrets/rustf
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `storage` | `true` | the storage node with `/pfs` and S3; `false` leaves them out (`/shared` and `/scratch` stay, the data volumes are kept), and needs `kuberay: false` ([Platform: Components](platform.md#components)) |
 | `scratch_size_gib`, `scratch_pool_size` | 50, 200GiB | per-tray scratch quota, btrfs pool (sparse loop file) |
 | `rustfs_version`, `rustfs_port`, `rustfs_console_port` | 1.0.1, 9000, 9001 | RustFS |
 | `juicefs_version`, `juicefs_mount`, `juicefs_cache_mib` | 1.4.1, `/pfs`, 10240 | JuiceFS client |

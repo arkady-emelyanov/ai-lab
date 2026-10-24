@@ -73,7 +73,7 @@ As changing MIG state needs root, the MIG tests run NVML and `nvidia-smi` as roo
 
 ## BMC integration tests
 
-`make test-bmc` runs `tests/bmc` (pytest, from the host against the running lab). The tests talk Redfish to the BMCs the way a management client does and check the effect where real hardware shows it: `nvidia-smi` on the tray, the partition controller's fabric telemetry, the scheduler. Every change a test makes is undone afterwards.
+`make test-bmc` runs `tests/bmc` (pytest, from the host against the running lab). The tests talk Redfish to the BMCs the way a management client does and check the effect where real hardware shows it: `nvidia-smi` on the tray, the partition controller's fabric telemetry, the scheduler. Every change a test makes is undone afterwards. Without BMCs (`bmc: false`) there is nothing to test; without the switch tray (`nvswitch: false`) the switch BMC's and partition controller's tests are skipped.
 
 | Target | Tier | Checks |
 |---|---|---|

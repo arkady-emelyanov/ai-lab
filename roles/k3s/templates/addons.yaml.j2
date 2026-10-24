@@ -133,6 +133,7 @@ spec:
       tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
       resources:
         requests: {cpu: 50m, memory: 64Mi}
+{% if monitoring | bool %}
 ---
 # Cluster state for the controller's Prometheus (GPU requests per pod, node
 # allocatable, jobs), on a NodePort of the control-plane node.
@@ -152,6 +153,7 @@ spec:
       nodePort: {{ ksm_node_port }}
     nodeSelector: {node-role.kubernetes.io/control-plane: "true"}
     tolerations: [{key: CriticalAddonsOnly, operator: Exists}]
+{% endif %}
 {% if nvidia_dra | bool %}
 ---
 # NVIDIA's DRA driver for GPUs, unchanged, ComputeDomains only (IMEX channels

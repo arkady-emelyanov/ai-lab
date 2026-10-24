@@ -1,0 +1,30 @@
+# Without the storage node (storage: false): no JuiceFS mount. The
+# filesystem's data and metadata stay on their volumes for when storage is
+# switched on again.
+- name: Unmount JuiceFS and disable its unit
+  ansible.builtin.shell: |
+    systemctl is-enabled --quiet juicefs.service 2>/dev/null || systemctl is-active --quiet juicefs.service || exit 0
+    systemctl disable --now juicefs.service
+    echo changed
+  register: stopped
+  changed_when: "'changed' in stopped.stdout"
+
+- name: Remove the mount unit and the credentials
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: [/etc/systemd/system/juicefs.service, /etc/default/juicefs]
+  register: removed
+
+- name: Forget the mount unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: removed is changed
+
+# Only once nothing is mounted there.
+- name: Remove the mount point
+  ansible.builtin.command: rmdir {{ juicefs_mount }}
+  args:
+    removes: "{{ juicefs_mount }}"
+  register: rmdir
+  failed_when: rmdir.rc != 0 and 'No such file' not in rmdir.stderr

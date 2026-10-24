@@ -29,12 +29,14 @@ scrape_configs:
         labels:
           nvl_domain: {{ nvl_domain_name }}
 
+{% if storage | bool %}
   - job_name: juicefs
     static_configs:
       - targets:
 {% for host in groups['cluster'] %}
           - {{ host }}:9567
 {% endfor %}
+{% endif %}
 
 {% if scheduler == 'slurm' %}
   - job_name: slurm
@@ -56,21 +58,17 @@ scrape_configs:
         refresh_interval: 15s
 {% endif %}
 {% endif %}
+{% if bmc | bool %}
 
   # Out of band: every BMC through the Redfish exporter (target = BMC).
   - job_name: redfish
     scrape_interval: 30s
     scrape_timeout: 20s
     static_configs:
-{% for bmc in groups['tray_bmc'] %}
-      - targets: [{{ bmc }}]
+{% for host in groups['bmc'] | select('in', lab_instances) %}
+      - targets: [{{ host }}]
         labels:
-          tray: {{ hostvars[bmc].bmc_tray }}
-{% endfor %}
-{% for bmc in groups['nvswitch_bmc'] %}
-      - targets: [{{ bmc }}]
-        labels:
-          tray: {{ groups['nvswitch'][0] }}
+          tray: {{ hostvars[host].bmc_tray | default(groups['nvswitch'][0]) }}
 {% endfor %}
     relabel_configs:
       - source_labels: [__address__]
@@ -79,6 +77,8 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: localhost:{{ redfish_exporter_port }}
+{% endif %}
+{% if nvswitch | bool %}
 
   - job_name: nvlink
     static_configs:
@@ -88,3 +88,4 @@ scrape_configs:
 {% endfor %}
         labels:
           nvl_domain: {{ nvl_domain_name }}
+{% endif %}

@@ -74,7 +74,7 @@ Outputs no kernel computed hold whatever their memory held. Fresh GPU allocation
 
   ```yaml
   instance_limits_k3s:
-    controller: { cpu: 2, memory: 3GiB }
+    controller: { cpu: 2, memory: 5GiB }
     workers: { cpu: 8, memory: 24GiB }
   ```
 

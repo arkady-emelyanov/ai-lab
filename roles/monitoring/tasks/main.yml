@@ -201,6 +201,14 @@
             enabled: true
             daemon_reload: true
 
+    # Before the configuration, whose check needs the rule files it names.
+    - name: Configure scheduler recording rules
+      ansible.builtin.template:
+        src: sched-rules.yml.j2
+        dest: /etc/prometheus/sched-rules.yml
+        mode: "0644"
+      notify: Reload prometheus
+
     # Prometheus keeps its old configuration when a reload fails, silently
     # for make configure: check the new one first.
     - name: Configure Prometheus
@@ -209,13 +217,6 @@
         dest: /etc/prometheus/prometheus.yml
         mode: "0644"
         validate: promtool check config %s
-      notify: Reload prometheus
-
-    - name: Configure scheduler recording rules
-      ansible.builtin.template:
-        src: sched-rules.yml.j2
-        dest: /etc/prometheus/sched-rules.yml
-        mode: "0644"
       notify: Reload prometheus
 
     - name: Set retention
@@ -235,8 +236,18 @@
 # Out-of-band view of the trays: a generic Redfish exporter (idrac_exporter
 # works with any Redfish BMC) on the controller, scraped per BMC through
 # ?target=, like blackbox_exporter. Runs as prometheus (after its install).
+- name: No Ray targets without KubeRay
+  ansible.builtin.shell: |
+    systemctl is-enabled --quiet ray-targets.timer 2>/dev/null || exit 0
+    systemctl disable --now ray-targets.timer
+    rm -f /etc/prometheus/ray-targets.json
+    echo changed
+  register: ray_targets_stopped
+  changed_when: "'changed' in ray_targets_stopped.stdout"
+  when: inventory_hostname in groups['controller'] and not (scheduler == 'k3s' and kuberay | bool)
+
 - name: Redfish exporter
-  when: inventory_hostname in groups['controller']
+  when: inventory_hostname in groups['controller'] and bmc | bool
   block:
     - name: Download idrac_exporter
       ansible.builtin.get_url:
@@ -291,3 +302,29 @@
         state: started
         enabled: true
         daemon_reload: true
+
+- name: No Redfish exporter without BMCs
+  when: inventory_hostname in groups['controller'] and not bmc | bool
+  block:
+    - name: Stop the Redfish exporter
+      ansible.builtin.systemd_service:
+        name: redfish-exporter
+        state: stopped
+        enabled: false
+      register: redfish_stopped
+      failed_when: redfish_stopped is failed and 'Could not find the requested service' not in redfish_stopped.msg | default('')
+
+    - name: Remove the Redfish exporter
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/redfish-exporter.service
+        - /etc/prometheus/idrac.yml
+        - /usr/local/bin/idrac_exporter
+      register: redfish_removed
+
+    - name: Forget the Redfish exporter's unit
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: redfish_removed is changed

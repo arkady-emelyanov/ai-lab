@@ -1,0 +1,9 @@
+# Without monitoring (monitoring: false): Grafana stopped and disabled; its
+# database (users, settings) stays.
+- name: Stop and disable Grafana
+  ansible.builtin.shell: |
+    systemctl is-enabled --quiet grafana-server.service 2>/dev/null || systemctl is-active --quiet grafana-server.service || exit 0
+    systemctl disable --now grafana-server.service
+    echo changed
+  register: stopped
+  changed_when: "'changed' in stopped.stdout"

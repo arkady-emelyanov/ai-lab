@@ -75,14 +75,30 @@
   loop_control:
     label: "{{ item.file }}"
 
+# Without the panels of components switched off (their metrics are gone).
+- name: Leave out the panels of disabled components
+  ansible.builtin.command:
+    argv: [jq, -c, --argjson, drop, "{{ drop | to_json }}", -f, "{{ role_path }}/files/drop-panels.jq", "{{ role_path }}/files/{{ item }}"]
+  vars:
+    drop: >-
+      {{ ([] if bmc | bool else ['idrac_', 'job="redfish"'])
+         + ([] if nvswitch | bool else ['nvlink_', 'nvswitch_'])
+         + ([] if storage | bool else ['juicefs_']) }}
+  loop: [lab-overview.json, sched-fabric.json]
+  register: lab_dashboards
+  delegate_to: localhost
+  changed_when: false
+
 - name: Install the lab dashboards
   ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: /var/lib/grafana/dashboards/{{ item }}
+    content: "{{ item.stdout }}"
+    dest: /var/lib/grafana/dashboards/{{ item.item }}
     owner: grafana
     group: grafana
     mode: "0644"
-  loop: [lab-overview.json, sched-fabric.json]
+  loop: "{{ lab_dashboards.results }}"
+  loop_control:
+    label: "{{ item.item }}"
 
 # KubeRay (k3s mode): Ray's own Grafana dashboards, which Ray's dashboard
 # embeds panels of. Embedding needs Grafana to allow it, and to show the
