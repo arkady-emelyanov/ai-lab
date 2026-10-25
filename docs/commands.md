@@ -36,6 +36,18 @@ All from the repository's root.
 | `bin/ssh sched-control update-topology` | regenerate the scheduler's topology now; a timer does it every minute ([Topology discovery](topology.md)) |
 | `bin/grpcurl` | raw gRPC calls to the partition controller ([NVLink partitions](nvlink-partitions.md)) |
 
+## Jobs in containers and the REST API (Slurm mode)
+
+On the login node (`bin/ssh login`); details in [Slurm](slurm.md#containers):
+
+| Command | Purpose |
+|---|---|
+| `srun --gpus-per-node=2 --container-image=mirror.gcr.io#library/ubuntu:24.04 nvidia-smi -L` | a step in a container (Pyxis and enroot) |
+| `srun --gpus-per-node=1 apptainer exec --nv docker://mirror.gcr.io/library/ubuntu:24.04 nvidia-smi -L` | the same with Apptainer |
+| `srun --gpus-per-node=2 --container=<OCI bundle> sh -c 'nvidia-smi -L'` | the same with Slurm's OCI support (a bundle from `skopeo copy` and `umoci unpack --rootless`) |
+| `SCRUN_GPUS_PER_NODE=1 podman run --rm mirror.gcr.io/library/ubuntu:24.04 nvidia-smi -L` | podman, run as a Slurm job by scrun |
+| `export $(scontrol token)`, then `curl -H "X-SLURM-USER-NAME: $USER" -H "X-SLURM-USER-TOKEN: $SLURM_JWT" http://sched-control:6820/slurm/v0.0.40/jobs` | Slurm's REST API ([Slurm](slurm.md#rest-api)) |
+
 ## Tests
 
 | Command | Purpose |

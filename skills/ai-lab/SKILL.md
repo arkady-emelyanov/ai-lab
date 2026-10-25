@@ -24,6 +24,8 @@ The lab runs on the user's machine; commands run from the repository's root (the
 | `bin/ssh login` | login node as the directory user `joe` (key-based); `bin/ssh root@<instance>` as root (`sched-control`, `sched-worker1`, `sched-worker2`, `sched-storage`, `sched-nvswitch`, BMCs) |
 | `bin/scp -r examples login:` | copy the example jobs to joe's home |
 | `bin/kubectl` | k3s as cluster admin (k3s mode) |
+| `bin/ssh alice@login` | the second directory user (Slurm account `research`; `joe` is in `lab`) |
+| `.secrets/slurm-jwt`, `.secrets/chassis-kubeconfig`, `.secrets/chassis.s3` | for clients on the host: a Slurm token acting for any user, a Kubernetes service account that impersonates the users, an S3 user with its bucket (`docs/endpoints.md`, Clients on the host) |
 | `bin/nvlink` | NVLink domain and partitions (partition controller); not with `nvswitch: false` |
 | `bin/redfish <tray> <path> [curl args]` | Redfish request to `<tray>-bmc` (`sched-worker1`, `sched-worker2`, `sched-nvswitch`); not with `bmc: false` |
 | Grafana `http://<bridge>.10:3000` (admin, `.secrets/grafana.pass`), Prometheus `http://<bridge>.10:9090` | dashboards "Lab overview", "Scheduler & NVLink fabric"; with KubeRay also Ray's (folder **Ray**) and read-only without a login (anonymous viewers); `<bridge>` from `incus network get incusbr0 ipv4.address` (10.107.111 in the docs) |

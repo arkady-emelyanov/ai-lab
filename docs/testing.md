@@ -28,6 +28,7 @@ A full rebuild from nothing: `make purge && make up && make frameworks && make t
 | Accounting (Slurm mode) | every job above is `COMPLETED` in `sacct` |
 | REST API and containers (Slurm mode) | slurmrestd answers with `joe`'s token (`scontrol token`), refuses requests without one, and runs a job submitted through it; a container sees exactly its step's GPUs with Pyxis and enroot, Apptainer (`--nv`), `srun --container` and podman with scrun, and one without GPUs has no driver |
 | GPU handover | the Slurm epilog reset the jobs' GPUs (Slurm mode); no GPU needs a reset or other recovery |
+| Clients on the host | uv on the login node; what `joe` creates in `/shared/chassis` `alice` can change; each client's S3 user writes its bucket and is denied `joe`'s; each client's Kubernetes service account reads nodes and queues, acts as `joe` in his namespace and cannot list secrets (k3s); a job's `/dev/shm/chassis-<job id>` is gone after it ends (Slurm epilog) |
 | Shared filesystem | `/pfs` mounted on every cluster node; a file written on the login node reads back everywhere |
 | Object storage | RustFS healthy; from a job (Slurm) or a pod (k3s), `joe` writes and lists his bucket and is denied the JuiceFS bucket |
 | BMCs | tray BMCs report their tray powered on with 4 GPUs, also through the Redfish exporter; the switch BMC exposes 72 ports per switch |

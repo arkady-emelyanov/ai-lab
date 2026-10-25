@@ -70,10 +70,10 @@ A real GB200 NVL72 rack spreads each GPU's 18 links over 9 switch trays (one lin
 
 | Instance | Address | Role | Incus project | Host cores | Docs |
 |---|---|---|---|---|---|
-| `sched-control` | 10.107.111.10 | slurmctld, slurmdbd + MariaDB, Slurm exporter (or k3s server and add-ons, kube-state-metrics, HAProxy ingress, KubeRay, with `nvidia_dra` NVIDIA's DRA driver controller (ComputeDomains), with Run:ai its control plane and cluster services), OpenLDAP, Prometheus, Redfish exporter, Grafana, topograph | default | shared | [Slurm](slurm.md), [Kubernetes](kubernetes.md), [Identity](identity-and-access.md), [Monitoring](monitoring.md), [Topology](topology.md) |
+| `sched-control` | 10.107.111.10 | slurmctld, slurmdbd + MariaDB, slurmrestd (REST API, JWT), Slurm exporter (or k3s server and add-ons, kube-state-metrics, HAProxy ingress, KubeRay, with `nvidia_dra` NVIDIA's DRA driver controller (ComputeDomains), with Run:ai its control plane and cluster services), OpenLDAP, Prometheus, Redfish exporter, Grafana, topograph | default | shared | [Slurm](slurm.md), [Kubernetes](kubernetes.md), [Identity](identity-and-access.md), [Monitoring](monitoring.md), [Topology](topology.md) |
 | `sched-login` | 10.107.111.11 | login node: Slurm client or kubectl, tools, user shells | default | shared | [Identity & access](identity-and-access.md) |
 | `sched-storage` | 10.107.111.12 | RustFS (S3), Redis (JuiceFS metadata) | default | shared | [Storage](storage.md) |
-| `sched-worker1`, `sched-worker2` | .21, .22 | GPU trays: slurmd (or k3s agent, device plugin and, with `nvidia_dra`, the DRA driver's kubelet plugin), 4 emulated GB200 each, GPU exporter | `trays` | own, per tray | [Emulated GPUs](fake-gpu.md), [Slurm](slurm.md), [Kubernetes](kubernetes.md) |
+| `sched-worker1`, `sched-worker2` | .21, .22 | GPU trays: slurmd with Pyxis and enroot, Apptainer and crun for jobs in containers (or k3s agent, device plugin and, with `nvidia_dra`, the DRA driver's kubelet plugin), 4 emulated GB200 each, GPU exporter | `trays` | own, per tray | [Emulated GPUs](fake-gpu.md), [Slurm](slurm.md), [Kubernetes](kubernetes.md) |
 | `sched-worker1-bmc`, `sched-worker2-bmc` | .31, .32 | Redfish BMC per GPU tray | default | shared | [BMCs](bmc-redfish.md) |
 | `sched-nvswitch-bmc` | .33 | Redfish BMC of the NVLink switch tray | default | shared | [BMCs](bmc-redfish.md) |
 | `sched-nvswitch` | .34 | switch tray host: NVLink partition controller and fabric telemetry | default | shared | [NVLink partitions](nvlink-partitions.md) |
